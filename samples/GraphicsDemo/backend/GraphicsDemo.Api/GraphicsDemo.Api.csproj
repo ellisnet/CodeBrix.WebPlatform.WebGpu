@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!--
+      wwwroot holds the developer's own page at the site root (index.html, its stylesheet and the
+      site icon) and the built frontend applications, which the build program copies in beside
+      them. They are served as plain files from that folder. The SDK's static-web-assets layer is
+      switched off so that a development or test host serves exactly its own web root.
+    -->
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
+    <RootNamespace>GraphicsDemo.Api</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!--
+      Local builds until the packages are published; see the nuget.config at the repository root.
+      ONE version for every CodeBrix.WebPlatform package.
+    -->
+    <WebPlatformPackageVersion>1.0.324.293</WebPlatformPackageVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The platform's backend library; it brings CodeBrix.WebPlatform.Core with it. -->
+    <PackageReference Include="CodeBrix.WebPlatform.Backend.ApacheLicenseForever" Version="$(WebPlatformPackageVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The sample's models and their conversion from glTF to the model data format
+      (GraphicsDemo.Assets, the sample's own project): ModelsController serves them.
+    -->
+    <ProjectReference Include="..\GraphicsDemo.Assets\GraphicsDemo.Assets.csproj" />
+  </ItemGroup>
+
+</Project>

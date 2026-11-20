@@ -1,0 +1,75 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>GraphicsDemo.BuildFrontend</AssemblyName>
+    <RootNamespace>GraphicsDemo.BuildFrontend</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!--
+      Local builds until the packages are published; see the nuget.config at the repository root.
+      ONE version for every CodeBrix.WebPlatform package (they are built and refreshed together),
+      and the ONE version of this repository's own packages (WebGpu, Graphics and Animation are
+      built and published together and pin each other exactly). The sample takes this repository's
+      packages as PACKAGES, never as project references into src/: it consumes them exactly as
+      any application does.
+    -->
+    <WebPlatformPackageVersion>1.0.324.293</WebPlatformPackageVersion>
+    <WebGpuPackageVersion>1.0.324.716</WebGpuPackageVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      CodeBrix.WebPlatform.FrontendBuilder brings Core, BackendMapper, WasmShrink (wasm-opt),
+      CodeBrix.LibGit2 and CodeBrix.RustTools with it, and copies the platform's crates beside
+      this program (frontend-crates/).
+    -->
+    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="$(WebPlatformPackageVersion)" />
+    <!--
+      The wgpu crates and the first-party crate codebrix-webgpu, as a crate bundle: the package
+      copies webgpu-crates/ (the archive and its notices) beside this program, and Program
+      registers the bundle before materializing.
+    -->
+    <PackageReference Include="CodeBrix.WebPlatform.WebGpu.ApacheLicenseForever" Version="$(WebGpuPackageVersion)" />
+    <!--
+      The graphics crate codebrix-webgpu-graphics, as a crate bundle: the package copies
+      webgpu-graphics-crates/ beside this program, and Program registers it (GraphicsCrates.Register
+      registers the WebGpu bundle first).
+    -->
+    <PackageReference Include="CodeBrix.WebPlatform.WebGpu.Graphics.ApacheLicenseForever" Version="$(WebGpuPackageVersion)" />
+    <!--
+      The animation crates (codebrix-webgpu-animation and the third-party crates only it needs:
+      kurbo, peniko and what they bring), as a crate bundle: the package copies
+      webgpu-animation-crates/ beside this program, and Program registers it
+      (AnimationCrates.Register registers the WebGpu bundle first; once, whichever comes first).
+    -->
+    <PackageReference Include="CodeBrix.WebPlatform.WebGpu.Animation.ApacheLicenseForever" Version="$(WebGpuPackageVersion)" />
+  </ItemGroup>
+
+  <!--
+    dx and wasm-bindgen: the host-tools package of the machine this program is built and run on.
+    All five are named, each only on its own platform; the package copies its programs beside
+    this program (frontend-tools/<rid>/).
+  -->
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Linux')) And '$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)' == 'X64'">
+    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.LinuxX64.ApacheLicenseForever" Version="$(WebPlatformPackageVersion)" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Linux')) And '$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)' == 'Arm64'">
+    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.LinuxArm64.ApacheLicenseForever" Version="$(WebPlatformPackageVersion)" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) And '$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)' == 'X64'">
+    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.WindowsX64.ApacheLicenseForever" Version="$(WebPlatformPackageVersion)" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX')) And '$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)' == 'Arm64'">
+    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.MacOSArm64.ApacheLicenseForever" Version="$(WebPlatformPackageVersion)" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX')) And '$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)' == 'X64'">
+    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.MacOSX64.ApacheLicenseForever" Version="$(WebPlatformPackageVersion)" />
+  </ItemGroup>
+
+</Project>

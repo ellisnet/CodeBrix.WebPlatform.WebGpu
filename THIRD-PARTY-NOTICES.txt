@@ -1,0 +1,315 @@
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+CodeBrix.WebPlatform.WebGpu is a set of libraries that bring the Rust crates
+for WebGPU in the browser to the frontends of CodeBrix.WebPlatform
+applications: the CodeBrix.WebPlatform.WebGpu,
+CodeBrix.WebPlatform.WebGpu.Graphics and CodeBrix.WebPlatform.WebGpu.Animation
+assemblies and their NuGet packages. The assemblies do not incorporate any
+third-party source code. Two packages CARRY third-party software, listed
+below with where their generated notices are: the CodeBrix.WebPlatform.WebGpu
+package carries the wgpu crates and the glam crate (beside codebrix-webgpu,
+a crate of this repository, which is covered by its LICENSE), and the
+CodeBrix.WebPlatform.WebGpu.Animation package carries the kurbo, peniko,
+harfrust, i_overlay, png, usvg and velato crates and the crates they bring
+(beside codebrix-webgpu-animation, also this repository's own; its renderer
+contains code taken from vello, and inside it a few lines that vello took
+from Skia, listed below). The
+CodeBrix.WebPlatform.WebGpu.Graphics package carries the crate
+codebrix-webgpu-graphics, also this repository's own; three tone-mapping
+functions in it and the logic of its Radiance .hdr decoder follow outside
+sources, listed below.
+
+Each package depends on CodeBrix.WebPlatform.Core, which is distributed
+separately under its own license and is not part of it; the Graphics and
+Animation packages also depend on the CodeBrix.WebPlatform.WebGpu package.
+
+Jeremy Ellis and contributors license the CodeBrix.WebPlatform.WebGpu project
+to you under the terms set forth in the LICENSE file, which is located at
+the root of this repository. The LICENSE covers the code written for this
+project. Everything third-party that the repository carries keeps its own
+license, as recorded below and in the generated notices.
+
+If you have any questions about any third-party code or services referenced
+here, or if you believe that any third-party code has been included in
+CodeBrix.WebPlatform.WebGpu in error, please open a new issue at:
+https://github.com/ellisnet/CodeBrix.WebPlatform.WebGpu/issues
+
+================================================================================
+
+The wgpu crates - carried by CodeBrix.WebPlatform.WebGpu
+
+  Where:    in the package, tools/webgpu-crates/webgpu-crates.zip (one
+            archive; a consuming build gets it beside the build program as
+            webgpu-crates/webgpu-crates.zip, and the platform's frontend
+            build writes the crates into the application's frontend). In
+            this repository: src/CodeBrix.WebPlatform.WebGpu/Rust/vendor.
+  What:     the wgpu crate of the wgpu project (https://wgpu.rs,
+            https://github.com/gfx-rs/wgpu) for a WebGPU-only browser build,
+            and every crate its resolution names - those compiled into an
+            application's WebAssembly file, and those cargo needs only to
+            resolve the frontend offline, which are carried but not compiled
+            in - each EXACTLY as crates.io published it, unmodified, with its
+            own license files. The crates that the CodeBrix.WebPlatform
+            platform also carries are at the platform's versions, with the
+            same content.
+  Licenses: each crate keeps its own permissive license (the wgpu project's
+            crates offer "MIT OR Apache-2.0"; others offer MIT, Apache-2.0
+            or Zlib, or a choice among such licenses), within the license
+            allowlist the repository's maintainer gate enforces
+            (tools/licensing). Every crate, with its declared license, the
+            license it is used under, its origin, its checksum and the text
+            of its license files, is listed in the GENERATED file
+            THIRD-PARTY-NOTICES-WebGpuCrates.txt, which travels with the
+            package (tools/webgpu-crates/; beside the build program as
+            webgpu-crates/THIRD-PARTY-NOTICES-WebGpuCrates.txt). Part 1 of
+            it lists the crates compiled into an application's WebAssembly
+            file, Part 2 the rest. An application serves it with its own
+            notices and the platform's.
+            In this repository:
+            src/CodeBrix.WebPlatform.WebGpu/Rust/notices.
+
+================================================================================
+
+The glam crate - carried by CodeBrix.WebPlatform.WebGpu
+
+  Where:    in the same archive as the wgpu crates
+            (tools/webgpu-crates/webgpu-crates.zip). In this repository:
+            src/CodeBrix.WebPlatform.WebGpu/Rust/vendor.
+  What:     the glam crate of the glam-rs project
+            (https://github.com/bitshifter/glam-rs): vectors, matrices and
+            quaternions for Rust, exactly as crates.io published it,
+            unmodified, with its own license files. The crate
+            codebrix-webgpu of this repository re-exports it.
+  Licenses: MIT OR Apache-2.0 (used under Apache-2.0). glam contains code
+            ported from DirectXMath (Copyright (c) 2011-2020 Microsoft
+            Corp), Realtime Math (Copyright (c) 2018 Nicholas Frechette)
+            and GLM (Copyright (c) 2005 - G-Truc Creation), each under the
+            MIT License; their notices are carried in full in the header of
+            THIRD-PARTY-NOTICES-WebGpuCrates.txt, and glam's own entry, with
+            its licence text, in that file's list of crates.
+
+================================================================================
+
+Three tone-mapping functions - in codebrix-webgpu-graphics, carried by
+CodeBrix.WebPlatform.WebGpu.Graphics
+
+  Where:    the WGSL file tone_map.wgsl of the crate codebrix-webgpu-graphics,
+            compiled into the crate, and the same curves on the CPU in its
+            ToneMapper::map (in the package,
+            tools/webgpu-graphics-crates/webgpu-graphics-crates.zip). In this
+            repository: src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/
+            codebrix-webgpu-graphics/src/shaders/wgsl/tone_map.wgsl and
+            src/lighting/tone_mapper.rs.
+  What:     aces_fitted - the matrices and constants of Stephen Hill's fit of
+            the ACES RRT and ODT, as in ACES.hlsl of the BakingLab
+            repository (https://github.com/TheRealMJP/BakingLab);
+            aces_narkowicz - the curve of Krzysztof Narkowicz's "ACES Filmic
+            Tone Mapping Curve" (2016); pbr_neutral - the Khronos PBR
+            Neutral tone mapper, following pbrNeutral.glsl of
+            https://github.com/KhronosGroup/ToneMapping.
+  Licenses: aces_fitted MIT (Copyright (c) 2016 MJP); aces_narkowicz offered
+            as public domain CC0 or MIT, used under CC0; pbr_neutral
+            Apache-2.0. The entries, with the MIT license text in full, are in
+            the hand-written file THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt,
+            which travels with the package (tools/webgpu-graphics-crates/;
+            beside the build program as webgpu-graphics-crates/). In this
+            repository: src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/notices.
+
+================================================================================
+
+The logic of a Radiance .hdr decoder - in codebrix-webgpu-graphics, carried by
+CodeBrix.WebPlatform.WebGpu.Graphics
+
+  Where:    the crate's RadianceHdrDecoder (in this repository:
+            src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/
+            codebrix-webgpu-graphics/src/lighting/radiance_hdr_decoder.rs).
+  What:     the decoding logic of the HDR loader of stb_image.h by Sean
+            Barrett (https://github.com/nothings/stb), rewritten in Rust by
+            way of the C# library's port: the header, flat and run-length
+            encoded scanlines, the RGBE to float conversion. No code copied.
+  License:  stb_image.h is available under the MIT License (Copyright (c)
+            2017 Sean Barrett) or as Public Domain (www.unlicense.org), at the
+            user's choice; used here as Public Domain, which asks for no
+            notice. The entry is in THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt
+            too.
+
+================================================================================
+
+The kurbo and peniko crates - carried by CodeBrix.WebPlatform.WebGpu.Animation
+
+  Where:    in the package, tools/webgpu-animation-crates/
+            webgpu-animation-crates.zip (one archive; a consuming build gets
+            it beside the build program as webgpu-animation-crates/, and the
+            platform's frontend build writes the crates into the
+            application's frontend). In this repository:
+            src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendor.
+  What:     the kurbo crate (curves, flattening, strokes and dashes) and the
+            peniko crate (brushes, gradients, images, blend modes) of the
+            Linebender project (https://github.com/linebender), and the
+            crates their resolution adds beyond those the platform and the
+            WebGpu package already carry - each EXACTLY as crates.io
+            published it, unmodified, with its own license files. The crates
+            they share with the platform and the WebGpu package come from
+            those, at the same versions and with the same content.
+  Licenses: each offers "Apache-2.0 OR MIT" (used under Apache-2.0), within
+            the license allowlist the repository's maintainer gate enforces.
+            Every crate, with its declared license, the license it is used
+            under, its origin, its checksum and the text of its license
+            files, is listed in the GENERATED file
+            THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt, which travels with
+            the package (tools/webgpu-animation-crates/; beside the build
+            program as webgpu-animation-crates/). An application serves it
+            with its own notices, the platform's and the WebGpu package's.
+            In this repository:
+            src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/notices.
+
+================================================================================
+
+The harfrust crate - carried by CodeBrix.WebPlatform.WebGpu.Animation
+
+  Where:    in the same archive as kurbo and peniko (above). In this
+            repository: src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendor.
+  What:     harfrust (text shaping - a Rust port of HarfBuzz - and glyph
+            outlines through its own font reader) with read-fonts and
+            font-types of the Fontations project, each EXACTLY as crates.io
+            published it. harfrust's tables are generated from the Unicode
+            Character Database.
+  Licenses: harfrust is MIT ("Copyright (c) HarfBuzz developers", "Copyright
+            (c) 2020 Yevhenii Reizner"); read-fonts and font-types offer
+            "MIT OR Apache-2.0" (used under Apache-2.0); the Unicode data in
+            harfrust's tables is under the Unicode License V3. The generated
+            THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt (above) carries
+            every license text, the Unicode one in its hand-written header.
+            read-fonts also carries the Adobe Glyph List (BSD-3-Clause), which
+            is compiled only with a feature this repository keeps off.
+
+================================================================================
+
+The i_overlay crate - carried by CodeBrix.WebPlatform.WebGpu.Animation
+
+  Where:    in the same archive as kurbo and peniko (above). In this
+            repository: src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendor.
+  What:     i_overlay (path combining on an integer grid) with i_float,
+            i_shape, i_tree and i_key_sort of the iShape-Rust project, each
+            EXACTLY as crates.io published it. It brings libm, which the
+            CodeBrix.WebPlatform.WebGpu package carries.
+  Licenses: i_overlay offers "MIT OR Apache-2.0" (used under Apache-2.0);
+            i_float, i_shape and i_tree are MIT ("Copyright (c) 2023
+            iShape-Rust", "Copyright (c) 2024 iShape-Rust"); i_key_sort is
+            MIT. i_overlay and i_key_sort publish no license file of their
+            own: their declared license is the evidence, and the generated
+            THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt (above) supplies the
+            texts in its hand-written header, with libm's source notices.
+
+================================================================================
+
+The png crate - carried by CodeBrix.WebPlatform.WebGpu.Animation
+
+  Where:    in the same archive as kurbo and peniko (above). In this
+            repository: src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendor.
+  What:     png (reading PNG files, the image-rs project) with fdeflate,
+            flate2, miniz_oxide (0.8.9 and 0.9.1), crc32fast, adler2 and
+            simd-adler32, each EXACTLY as crates.io published it, and zlib-rs
+            (carried, not compiled). bitflags and cfg-if are carried by the
+            CodeBrix.WebPlatform.WebGpu package.
+  Licenses: png, fdeflate, flate2 and crc32fast offer "MIT OR Apache-2.0",
+            miniz_oxide "MIT OR Zlib OR Apache-2.0", adler2 "0BSD OR MIT OR
+            Apache-2.0" (all used under Apache-2.0); simd-adler32 is MIT;
+            zlib-rs is Zlib. Their licence files are in the generated
+            THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt (above), whose
+            hand-written header (part F) also names png's public-domain Paeth
+            predictor and zlib-rs's carried test PDF.
+
+================================================================================
+
+The usvg crate - carried by CodeBrix.WebPlatform.WebGpu.Animation
+
+  Where:    in the same archive as kurbo and peniko (above). In this
+            repository: src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendor.
+  What:     usvg (SVG documents resolved into a tree; its `text` feature on,
+            system fonts off) with roxmltree, simplecss, svgtypes,
+            tiny-skia-path, siphasher, data-url, imagesize, pico-args,
+            float-cmp, strict-num, arrayref, fontdb, skrifa, unicode-bidi,
+            unicode-script, unicode-vo and xmlwriter, each EXACTLY as
+            crates.io published it.
+  Licenses: usvg and the dual crates offer "Apache-2.0 OR MIT" (used under
+            Apache-2.0); arrayref is BSD-2-Clause, tiny-skia-path
+            BSD-3-Clause (a Skia port; "Copyright (c) 2011 Google Inc."),
+            float-cmp, imagesize, pico-args, strict-num, fontdb and xmlwriter
+            MIT. fontdb carries a public-domain test font (tests/fonts/
+            Tuffy.ttf) that is never compiled. The generated
+            THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt (above) has every
+            entry and text, and its header's part G the details.
+
+================================================================================
+
+The velato crate - carried by CodeBrix.WebPlatform.WebGpu.Animation
+
+  Where:    in the same archive as kurbo and peniko (above). In this
+            repository: src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendor.
+  What:     velato (Lottie documents: the JSON read into a composition and
+            evaluated for a frame; the Linebender project), WITH ITS DEFAULT
+            FEATURES OFF, and serde_repr (a procedural macro it uses, run at
+            build time), each EXACTLY as crates.io published it. It uses
+            kurbo and peniko (above) and serde and serde_json, which the
+            platform carries.
+  Licenses: velato and serde_repr offer "Apache-2.0 OR MIT" / "MIT OR
+            Apache-2.0" (both used under Apache-2.0); the generated
+            THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt (above) carries the
+            texts, and velato's AUTHORS list in its hand-written header (part H).
+
+================================================================================
+
+Code taken from vello - in codebrix-webgpu-animation, carried by
+CodeBrix.WebPlatform.WebGpu.Animation
+
+  Where:    the renderer of the crate codebrix-webgpu-animation (in this
+            repository: src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/
+            codebrix-webgpu-animation/src/rendering/core/composite.wgsl,
+            paint.wgsl and paint.rs).
+  What:     from the vello project (https://github.com/linebender/vello), as
+            the crates vello_shaders 0.12.0 and vello_encoding 0.12.0
+            published it: the blend and compose shader code of blend.wgsl
+            (copied), the extend modes and the radial and sweep gradient
+            parameters of fine.wgsl and the gradient set-up of draw_leaf.wgsl
+            (translated), and the gradient ramp of ramp_cache.rs (adapted).
+            vello itself is not a dependency and is not carried.
+  License:  "Apache-2.0 OR MIT" (the shader files also offer the Unlicense);
+            used under Apache-2.0. Copyright 2022 the Vello Authors. The
+            entry is in the hand-written header of
+            THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt.
+
+================================================================================
+
+Skia's sweep-gradient angle - inside the vello code above
+
+  Where:    src/rendering/core/paint.wgsl of codebrix-webgpu-animation (about
+            ten lines).
+  What:     the function vello's fine.wgsl marks as "xy_to_unit_angle from
+            Skia" (src/opts/SkRasterPipeline_opts.h of
+            https://github.com/google/skia): a polynomial for the angle of a
+            point and the selects around it.
+  License:  BSD-3-Clause, Copyright (c) 2011 Google Inc. The license text, in
+            full, is in the header of
+            THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt.
+
+================================================================================
+
+Fonts in the tests and the sample - not in any package
+
+  Where:    tests/CodeBrix.WebPlatform.WebGpu.Animation.Tests/Fonts/ (the
+            Animation crate's text tests) and
+            samples/GraphicsDemo/backend/GraphicsDemo.Assets/Fonts/ (the
+            GraphicsDemo sample, whose own THIRD-PARTY-NOTICES.txt records
+            them).
+  What:     Roboto Regular (Copyright 2011 The Roboto Project Authors) and
+            Open Sans Regular (Copyright 2020 The Open Sans Project Authors,
+            Reserved Font Name "Open Sans"), unchanged, each beside its
+            original OFL.txt.
+  License:  SIL Open Font License, Version 1.1 (the text is in each OFL.txt).
+            OFL fonts are allowed in this repository's tests and samples
+            only; no package and no crate carries them.
+
+================================================================================
+
+END OF THIRD-PARTY SOFTWARE NOTICES AND INFORMATION

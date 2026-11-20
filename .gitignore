@@ -424,3 +424,54 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+
+# ---------------------------------------------------------------------------
+# Temporary local NuGet packages (see nuget.config beside this file): builds of CodeBrix
+# packages that are not on nuget.org yet.
+# ---------------------------------------------------------------------------
+/temp-packages/
+
+# ---------------------------------------------------------------------------
+# The WebGpu library's Rust material
+# ---------------------------------------------------------------------------
+# cargo's build output from cargo commands on the crate set.
+src/CodeBrix.WebPlatform.WebGpu/Rust/webgpu-crates/target/
+# The first-party crate: cargo's build output and a lock file, should cargo ever be run inside its
+# folder (the crate is a library: an application's own lock decides its dependencies, and neither
+# file enters the crate archive).
+src/CodeBrix.WebPlatform.WebGpu/Rust/codebrix-webgpu/target/
+src/CodeBrix.WebPlatform.WebGpu/Rust/codebrix-webgpu/Cargo.lock
+# The Graphics package's first-party crate, for the same reason.
+src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/codebrix-webgpu-graphics/target/
+src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/codebrix-webgpu-graphics/Cargo.lock
+# The Animation package's first-party crate, for the same reason, and cargo's build output from
+# cargo commands on its crate set.
+src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/codebrix-webgpu-animation/target/
+src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/codebrix-webgpu-animation/Cargo.lock
+src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/animation-crates/target/
+
+# ---------------------------------------------------------------------------
+# The GraphicsDemo sample (samples/GraphicsDemo; see its MAINTAINER-README.txt)
+# ---------------------------------------------------------------------------
+# The built frontend applications, the frontend manifest and the site's notices, written into
+# the backend's static-file folder by the build program. The developer's own page at the site
+# root (index.html, site.css, favicon.ico) is committed.
+samples/GraphicsDemo/backend/GraphicsDemo.Api/wwwroot/*
+!samples/GraphicsDemo/backend/GraphicsDemo.Api/wwwroot/index.html
+!samples/GraphicsDemo/backend/GraphicsDemo.Api/wwwroot/site.css
+!samples/GraphicsDemo/backend/GraphicsDemo.Api/wwwroot/favicon.ico
+# Build output written into each frontend when it is materialized (the platform's
+# FrontendBuilder library): the shared crate, the platform's crates and the wgpu crate bundle
+# (platform/), the client code generated from the backend, the cargo configuration that points
+# cargo at the crates, and the generated Tailwind stylesheet; and cargo's and dx's output.
+samples/GraphicsDemo/frontends/*/platform/
+samples/GraphicsDemo/frontends/*/src/generated/
+samples/GraphicsDemo/frontends/*/.cargo/
+samples/GraphicsDemo/frontends/*/assets/tailwind.css
+samples/GraphicsDemo/frontends/*/target/
+
+# The vendored crate folders are exact copies of what crates.io published. Every vendored file has
+# a recorded checksum and cargo refuses to build when one is missing, so NOTHING above may hide a
+# file inside them. These two lines must stay last.
+!src/CodeBrix.WebPlatform.WebGpu/Rust/vendor/**
+!src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendor/**

@@ -1,0 +1,18 @@
+{
+  "comment": "The licenses this repository accepts in the third-party code it carries outside samples/ (the vendored wgpu crates the WebGpu package ships), as approved by the repository owner. Only the owner edits this file. The maintainer tool (libs/CodeBrix.WebPlatform.WebGpu.LibraryChecker) fails for anything else. Identifiers are SPDX license identifiers.",
+
+  "everywhere": [
+    "Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "CC0-1.0", "ISC", "PostgreSQL",
+    "Unicode-3.0", "Unicode-DFS-2016", "Zlib"
+  ],
+
+  "vendoredButNotCompiledIntoTheApplication": [
+    "CDLA-Permissive-2.0", "BSL-1.0"
+  ],
+
+  "preferredWhenACrateOffersAChoice": [
+    "Apache-2.0", "MIT"
+  ],
+
+  "bundledLicenseOverrides": {}
+}

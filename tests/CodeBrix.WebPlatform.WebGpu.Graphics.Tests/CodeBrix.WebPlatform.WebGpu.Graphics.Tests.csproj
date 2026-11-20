@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CodeBrix.WebPlatform.WebGpu.Graphics\CodeBrix.WebPlatform.WebGpu.Graphics.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.12.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="xunit.v3" Version="4.0.3" />
+    <PackageReference Include="SilverAssertions.ApacheLicenseForever" Version="1.0.320.258" />
+  </ItemGroup>
+
+  <!--
+    THE REAL-MATERIALIZE TESTS (Materialize/): they run the platform's PlatformFrontend.MaterializeAsync
+    on a small frontend with GraphicsCrates.Register() called (the WebGpu bundle, then this
+    package's). FrontendBuilder is referenced at the exact version of the Core package that the
+    libraries pin (from the temporary feed until it is on nuget.org); its buildTransitive targets
+    copy the platform's crates archive beside the test assembly (frontend-crates/), as in a build
+    program. The fixture backend of the WebGpu tests is built with this project and found beside
+    it. Both archives come through the project reference, as in a build program through the
+    packages.
+  -->
+  <ItemGroup>
+    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.324.293" />
+    <ProjectReference Include="..\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend.csproj" />
+  </ItemGroup>
+
+  <!--
+    Also beside the test assembly: the Cargo.toml of this package's crate (its name and version),
+    the Cargo.toml of codebrix-webgpu (its version and the dioxus line the test frontend copies),
+    and the test frontend's main.rs.
+  -->
+  <ItemGroup>
+    <None Include="..\..\src\CodeBrix.WebPlatform.WebGpu.Graphics\Rust\codebrix-webgpu-graphics\Cargo.toml"
+          Link="codebrix-webgpu-graphics\Cargo.toml"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
+    <None Include="..\..\src\CodeBrix.WebPlatform.WebGpu\Rust\codebrix-webgpu\Cargo.toml"
+          Link="codebrix-webgpu\Cargo.toml"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
+    <None Update="Materialize\frontend-main.rs" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

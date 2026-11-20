@@ -1,0 +1,83 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>GraphicsDemo.Assets</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!--
+      The ONE version of this repository's own packages, the same value as in the build program's
+      project file (build/GraphicsDemo.BuildFrontend): a local build from the temporary feed (see
+      the nuget.config at the repository root). The sample takes this repository's packages as
+      PACKAGES, never as project references into src/.
+    -->
+    <WebGpuPackageVersion>1.0.324.716</WebGpuPackageVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The model data types and the writer of the model data format (CodeBrix.WebPlatform.WebGpu.Graphics.Models).
+      The package also carries the graphics crates for a frontend build program, and its
+      buildTransitive targets would copy them (and, through its dependency, the wgpu crates) into the
+      output folder of every project that references it. A backend never builds a frontend, so that
+      copy is left out here: only the library is used.
+    -->
+    <PackageReference Include="CodeBrix.WebPlatform.WebGpu.Graphics.ApacheLicenseForever" Version="$(WebGpuPackageVersion)" ExcludeAssets="build;buildTransitive" />
+    <!--
+      The writer of the picture-pixels form (CodeBrix.WebPlatform.WebGpu.Animation.Pictures): decoded pictures for the
+      "animation" frontend. Like the Graphics package, only the library is used here (no crate copy).
+    -->
+    <PackageReference Include="CodeBrix.WebPlatform.WebGpu.Animation.ApacheLicenseForever" Version="$(WebGpuPackageVersion)" ExcludeAssets="build;buildTransitive" />
+    <!-- glTF 2.0 reading (the models are converted on the backend, never in the browser). -->
+    <PackageReference Include="CodeBrix.Graphics3D.Gltf2.MitLicenseForever" Version="1.0.290.996" />
+    <!-- Image decoding: the models' PNG textures become RGBA8 pixels. -->
+    <PackageReference Include="CodeBrix.Imaging.ApacheLicenseForever" Version="1.0.320.279" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The models, their shared textures and each pack's licence file, embedded in the assembly. The
+      resource name is the path below Models/ (for example "survival-kit/Textures/colormap.png");
+      ModelLibrary reads them by that name. See THIRD-PARTY-NOTICES.txt at the sample's root.
+    -->
+    <EmbeddedResource Include="Models\**\*" LogicalName="Models/%(RecursiveDir)%(Filename)%(Extension)" />
+    <!--
+      The environment panoramas (Radiance .hdr) and each pack's licence file, embedded the same way: the resource
+      name is the path below the project (for example "Environments/polyhaven-small-cathedral/small_cathedral_1k.hdr");
+      EnvironmentLibrary reads them by that name and the backend serves them unchanged.
+    -->
+    <EmbeddedResource Include="Environments\**\*" LogicalName="Environments/%(RecursiveDir)%(Filename)%(Extension)" />
+    <!--
+      The fonts of the "animation" application (TrueType, SIL Open Font License 1.1 - allowed in the sample only,
+      never in a package), each pack with its original OFL.txt, embedded the same way: the resource name is the path
+      below the project (for example "Fonts/roboto/Roboto-Regular.ttf"); FontLibrary reads them by that name and the
+      backend serves them unchanged.
+    -->
+    <EmbeddedResource Include="Fonts\**\*" LogicalName="Fonts/%(RecursiveDir)%(Filename)%(Extension)" />
+    <!--
+      The caption file of the "animation" application's captions scene (SubRip text, the C# demo's own cues), embedded
+      the same way ("Captions/caption-scene.srt"); CaptionLibrary reads it and the backend serves it unchanged.
+    -->
+    <EmbeddedResource Include="Captions\**\*" LogicalName="Captions/%(RecursiveDir)%(Filename)%(Extension)" />
+    <!--
+      The SVG documents of the "animation" application's SVG scenes (written for the sample, or generated as the C#
+      demo generates its own), embedded the same way ("SvgDocuments/clock.svg"); SvgDocumentLibrary reads them and the
+      backend serves them unchanged.
+    -->
+    <EmbeddedResource Include="SvgDocuments\**\*" LogicalName="SvgDocuments/%(RecursiveDir)%(Filename)%(Extension)" />
+    <!--
+      The Lottie animations of the "animation" application (Lottie JSON: the renderer trial's three INVENTED files and
+      the sample's own features file), embedded the same way ("Lottie/A_many_shapes.json"); LottieLibrary reads them
+      and the backend serves them unchanged. The animation crate's own tests read the same files from this folder
+      (CODEBRIX_ANIMATION_TEST_LOTTIE), so the crate does not carry them.
+    -->
+    <EmbeddedResource Include="Lottie\**\*" LogicalName="Lottie/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

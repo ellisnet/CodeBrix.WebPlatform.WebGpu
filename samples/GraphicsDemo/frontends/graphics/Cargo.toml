@@ -1,0 +1,38 @@
+[package]
+name = "graphicsdemo-graphics"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The graphics frontend application of the GraphicsDemo sample: WebGPU scenes (the complete model viewer scene with its animated actors, image-based lighting, skybox, HDR and tone mapping; two layers on one clock; the built-in shaders compiled; a textured quad; sprites; lit shapes under an orbit camera; a skinned model; a morph-target shape; animated textures, a panorama background, a render bundle, compute, an indirect draw and GPU timing) drawn through codebrix-webgpu-graphics, in Rust and Dioxus compiled to WebAssembly."
+license = "Apache-2.0"
+
+[dependencies]
+# The platform's shared crate (the one set-up call, REST transport, SignalR client), written
+# into `platform/` by the build program; the generated client code (src/generated) uses it.
+codebrix-webplatform = { path = "platform/codebrix-webplatform" }
+dioxus = { version = "=0.7.10", default-features = false, features = ["minimal", "web", "document", "mounted", "asset"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The WebGPU context, the canvas host with its layers and clock, and the maths, from the
+# CodeBrix.WebPlatform.WebGpu package's crate bundle (the build program registers it). It
+# re-exports wgpu (WebGPU in the browser only, no WebGL) and glam, so the application names
+# neither itself.
+codebrix-webgpu = "1.0"
+# The graphics library - the GraphicsContext, resources, pipelines and frames of
+# CodeBrix.WebGpu.Graphics - from the CodeBrix.WebPlatform.WebGpu.Graphics package's crate bundle
+# (the build program registers it, and with it the WebGpu package's bundle it builds on).
+codebrix-webgpu-graphics = "1.6"
+# The browser bindings the Viewer scene reads its query switches (?ldr, ?no-skybox) and the page's
+# clock (for a build-time read-out) through - the version the platform's crate set carries.
+web-sys = { version = "=0.3.107", features = ["Location", "Performance", "Window"] }
+
+[features]
+# Hot reload for `dx serve`; never enabled for a build that ships.
+devtools = ["dioxus/devtools"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+# No `strip`: wasm-bindgen needs the custom sections the linker writes; wasm-opt shrinks the file afterwards.

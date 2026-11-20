@@ -1,0 +1,30 @@
+# codebrix-webgpu-graphics: the first-party crate of the CodeBrix.WebPlatform.WebGpu.Graphics
+# package. It is NOT published on crates.io: the package carries it in its crate archive
+# (webgpu-graphics-crates.zip) in vendored form, and the platform's frontend build writes it into
+# the application's vendor folder beside the crates of the WebGpu package (wgpu, glam and
+# codebrix-webgpu), which this package depends on. A frontend names it like any crate:
+#     codebrix-webgpu-graphics = "1.0"
+#
+# EVERY DEPENDENCY IS AN EXACT VERSION that the WebGpu package's crates carry (the maintainer
+# tool checks it). It depends on codebrix-webgpu and NEVER on anything of the Animation package.
+#
+# Change `version` whenever the crate's content changes in a release of the package: cargo treats
+# a name and version from a vendor folder as unchanging.
+[package]
+name = "codebrix-webgpu-graphics"
+version = "1.6.0"
+edition = "2021"
+publish = false
+description = "2D and 3D graphics through WebGPU for CodeBrix.WebPlatform frontends: the GraphicsContext, frames, resources, pipelines, sprites, lit meshes, PBR models with skinning, morph targets and animation playback, image-based lighting and tone mapping, animated textures, render bundles, indirect draws, compute, queries and texture readback of CodeBrix.WebGpu.Graphics, as a layer on the codebrix-webgpu canvas host."
+license = "Apache-2.0"
+repository = "https://github.com/ellisnet/CodeBrix.WebPlatform.WebGpu"
+
+[dependencies]
+# The context, the canvas host, its layers and its one clock; and through it wgpu and glam.
+codebrix-webgpu = "=1.1.1"
+# WebGPU in the browser only: the WebGpu package's features, no WebGL, no native backend.
+wgpu = { version = "=30.0.2", default-features = false, features = ["std", "webgpu", "wgsl"] }
+# The maths types (System.Numerics' counterparts), under glam's own names.
+glam = { version = "=0.34.3", features = ["bytemuck"] }
+# Plain-old-data values written into buffers as bytes (no derive: no procedural macro).
+bytemuck = "=1.25.2"

@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400">
+  <!-- Written for the GraphicsDemo sample: the document animates itself with CSS @keyframes. -->
+  <style>
+    .spinner { animation: spin 1.6s linear infinite; transform-box: fill-box; transform-origin: center; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .bar { animation: load 3s ease-in-out infinite; transform-origin: 0 0; }
+    @keyframes load { 0% { transform: scaleX(0); } 70% { transform: scaleX(1); } 100% { transform: scaleX(1); opacity: 0; } }
+    .dot { animation: hop 0.9s cubic-bezier(0.3, 0, 0.7, 1) infinite alternate; }
+    .dot.b { animation-delay: -0.3s; }
+    .dot.c { animation-delay: -0.6s; }
+    @keyframes hop { from { transform: translateY(0); } to { transform: translateY(-36px); } }
+    #heart { animation: beat 1.2s steps(6, end) infinite; transform-box: fill-box; transform-origin: center; }
+    @keyframes beat { 0% { transform: scale(1); } 50% { transform: scale(1.25); } 100% { transform: scale(1); } }
+    #signal { animation: hue 4s linear infinite; }
+    @keyframes hue { 0% { fill: #78b4ff; } 33% { fill: #e0506e; } 66% { fill: #8ce6a0; } 100% { fill: #78b4ff; } }
+    #signal .keep { fill: #ecedf4; }
+    .trace { animation: trace 3s ease-out 0.5s both; }
+    @keyframes trace { from { stroke-dashoffset: 300; stroke: #848aa4; } to { stroke-dashoffset: 0; stroke: #f0a848; } }
+    .blink { animation: blink 1s step-start infinite; }
+    @keyframes blink { 50% { visibility: hidden; } }
+    .swing { animation: swing 2s ease-in-out infinite alternate; transform-origin: 470px 220px; }
+    @keyframes swing { from { transform: rotate(-30deg); } to { transform: rotate(30deg); } }
+    @media (prefers-reduced-motion) { .spinner { animation: none; } }
+  </style>
+  <rect width="600" height="400" rx="18" fill="#1b1f30"/>
+  <!-- A spinner turning about its own centre (transform-box: fill-box). -->
+  <g class="spinner"><circle cx="90" cy="90" r="40" fill="none" stroke="#3a4060" stroke-width="10"/><path d="M 90 50 A 40 40 0 0 1 130 90" fill="none" stroke="#78b4ff" stroke-width="10" stroke-linecap="round"/></g>
+  <!-- A loading bar filling from the left, then fading. -->
+  <rect x="170" y="80" width="240" height="20" rx="10" fill="#3a4060"/>
+  <rect class="bar" x="170" y="80" width="240" height="20" rx="10" fill="#8ce6a0" style="transform-origin: 170px 90px"/>
+  <!-- Three dots hopping one after another (negative delays). -->
+  <circle class="dot" cx="460" cy="100" r="12" fill="#f0a848"/>
+  <circle class="dot b" cx="500" cy="100" r="12" fill="#f0a848"/>
+  <circle class="dot c" cx="540" cy="100" r="12" fill="#f0a848"/>
+  <!-- A heart beating in six steps. -->
+  <path id="heart" d="M 90 270 C 40 230, 60 180, 90 205 C 120 180, 140 230, 90 270 Z" fill="#e0506e"/>
+  <!-- A group whose fill animates; the square with its own CSS rule (.keep) stays white. -->
+  <g id="signal" fill="#78b4ff">
+    <rect x="180" y="190" width="40" height="40" rx="6"/>
+    <rect class="keep" x="230" y="190" width="40" height="40" rx="6"/>
+    <rect x="280" y="190" width="40" height="40" rx="6"/>
+  </g>
+  <!-- A trace drawing itself while its colour warms. -->
+  <path class="trace" d="M 180 330 L 220 330 L 235 290 L 255 360 L 270 310 L 285 330 L 380 330" fill="none" stroke-width="4" stroke-dasharray="300" stroke-linejoin="round"/>
+  <!-- A caret blinking (visibility, stepped). -->
+  <rect class="blink" x="400" y="300" width="6" height="40" fill="#ecedf4"/>
+  <!-- A pendulum swinging about a pivot given in px. -->
+  <g class="swing"><line x1="470" y1="220" x2="470" y2="330" stroke="#848aa4" stroke-width="4"/><circle cx="470" cy="340" r="18" fill="#78b4ff"/></g>
+  <circle cx="470" cy="220" r="5" fill="#ecedf4"/>
+</svg>

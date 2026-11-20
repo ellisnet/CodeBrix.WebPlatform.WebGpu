@@ -1,0 +1,85 @@
+struct FrameUniforms {
+    view_projection: mat4x4<f32>,
+    camera_position: vec4<f32>,
+    light_direction: vec4<f32>,
+    light_color: vec4<f32>,
+    ambient_color: vec4<f32>,
+};
+
+struct MaterialUniforms {
+    base_color: vec4<f32>,
+    params: vec4<f32>,
+    uv_row0: vec4<f32>,
+    uv_row1: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> frame: FrameUniforms;
+@group(1) @binding(0) var<uniform> material: MaterialUniforms;
+@group(1) @binding(1) var base_texture: texture_2d<f32>;
+@group(1) @binding(2) var base_sampler: sampler;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) color: vec4<f32>,
+    @location(4) model0: vec4<f32>,
+    @location(5) model1: vec4<f32>,
+    @location(6) model2: vec4<f32>,
+    @location(7) model3: vec4<f32>,
+    @location(8) normal0: vec4<f32>,
+    @location(9) normal1: vec4<f32>,
+    @location(10) normal2: vec4<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world_position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) color: vec4<f32>,
+};
+
+@vertex
+fn vs_main(input: VertexInput) -> VertexOutput {
+    let model = mat4x4<f32>(input.model0, input.model1, input.model2, input.model3);
+    let normal_matrix = mat3x3<f32>(input.normal0.xyz, input.normal1.xyz, input.normal2.xyz);
+    let world = model * vec4<f32>(input.position, 1.0);
+    var output: VertexOutput;
+    output.clip = frame.view_projection * world;
+    output.world_position = world.xyz;
+    output.normal = normal_matrix * input.normal;
+    output.uv = input.uv;
+    output.color = input.color;
+    return output;
+}
+
+@fragment
+fn fs_main(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    let uv = vec3<f32>(input.uv, 1.0);
+    let transformed = vec2<f32>(dot(material.uv_row0.xyz, uv), dot(material.uv_row1.xyz, uv));
+    var albedo = material.base_color * input.color * textureSample(base_texture, base_sampler, transformed);
+    if (material.params.w > 0.0) {
+        if (albedo.a < material.params.w) {
+            discard;
+        }
+        albedo.a = 1.0;
+    } else if (material.params.w < 0.0) {
+        albedo.a = 1.0;
+    }
+    var n = normalize(input.normal);
+    if (!front_facing) {
+        n = -n;
+    }
+    let l = normalize(-frame.light_direction.xyz);
+    let v = normalize(frame.camera_position.xyz - input.world_position);
+    let h = normalize(l + v);
+    let diffuse = max(dot(n, l), 0.0);
+    var specular = 0.0;
+    if (diffuse > 0.0) {
+        specular = pow(max(dot(n, h), 0.0), material.params.x) * material.params.y;
+    }
+    let lit = albedo.rgb * (frame.ambient_color.rgb + diffuse * frame.light_color.rgb) + specular * frame.light_color.rgb;
+    let rgb = mix(lit, albedo.rgb, material.params.z);
+    return vec4<f32>(rgb, albedo.a);
+}

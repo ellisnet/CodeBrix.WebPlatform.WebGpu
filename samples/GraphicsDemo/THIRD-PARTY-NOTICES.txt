@@ -1,0 +1,151 @@
+================================================================================
+THIRD-PARTY NOTICES: the 3D models, the HDR panorama and the fonts of the GraphicsDemo sample
+================================================================================
+
+What this file covers: the model files the sample carries in
+backend/GraphicsDemo.Assets/Models/, which the GraphicsDemo.Assets project
+embeds in its assembly and the backend serves, converted, as model data; and
+the HDR panorama it carries in backend/GraphicsDemo.Assets/Environments/,
+which the same project embeds and the backend serves unchanged (the browser
+decodes it); and the fonts it carries in backend/GraphicsDemo.Assets/Fonts/,
+which the same project embeds and the backend serves unchanged (the
+"animation" application reads and shapes them in the browser). The site
+serves this file at /SAMPLE-THIRD-PARTY-NOTICES.txt. The
+sample is never packed. The NuGet packages the sample uses (among them
+CodeBrix.Graphics3D.Gltf2 and CodeBrix.Imaging in GraphicsDemo.Assets) bring
+their own notices and are not listed here. The notices of what the frontend
+applications compile in are written by the frontend build into
+backend/GraphicsDemo.Api/wwwroot/THIRD-PARTY-NOTICES.txt.
+
+The sample copies only third-party model files whose source and licence are
+recorded here, and each such pack's own licence file sits beside its models.
+The files of the first two packs are the same files the CodeBrix.WebGpu
+repository's model viewer sample carries (samples/WebGpuModelViewer/Assets
+there), the Mini Forest archer the same file its Graphics tests carry, where
+the same sources and licences are recorded. Every model and panorama pack
+listed here is dedicated to the public domain under
+Creative Commons Zero (CC0 1.0 Universal,
+https://creativecommons.org/publicdomain/zero/1.0/): they may be used for
+personal, educational and commercial purposes, and credit is appreciated but
+not required.
+
+The other resources of the "animation" application - the caption file
+(Captions/), the SVG documents (SvgDocuments/) and the Lottie files (Lottie/)
+of GraphicsDemo.Assets - were written or generated for this sample and hold
+no third-party content; its picture is the Cube Pets pack's colormap.png
+(below).
+
+
+--------------------------------------------------------------------------------
+Cube Pets - created and distributed by Kenney (www.kenney.nl)
+--------------------------------------------------------------------------------
+
+  What:     low-poly animal characters with animations.
+  Licence:  CC0 1.0 Universal.
+            backend/GraphicsDemo.Assets/Models/cube-pets/LICENSE-Kenney-cube-pets.txt
+  Files:    backend/GraphicsDemo.Assets/Models/cube-pets/: animal-bunny,
+            animal-cat, animal-cow, animal-dog, animal-fox, animal-panda,
+            animal-penguin, animal-pig (.glb) and Textures/colormap.png (also
+            decoded by the backend and shown as a picture by the "animation"
+            application's "images" scene, and served there as the PNG file
+            itself, which the animation crate decodes in the browser).
+
+
+--------------------------------------------------------------------------------
+Survival Kit - created and distributed by Kenney (www.kenney.nl)
+--------------------------------------------------------------------------------
+
+  What:     low-poly camp props.
+  Licence:  CC0 1.0 Universal.
+            backend/GraphicsDemo.Assets/Models/survival-kit/LICENSE-Kenney-survival-kit.txt
+  Files:    backend/GraphicsDemo.Assets/Models/survival-kit/: barrel,
+            campfire-pit, chest, fence, patch-grass-large, rock-a, rock-b,
+            rock-c, tree, tree-autumn, tree-tall (.glb) and
+            Textures/colormap.png.
+
+
+--------------------------------------------------------------------------------
+Mini Forest - created and distributed by Kenney (www.kenney.nl)
+--------------------------------------------------------------------------------
+
+  What:     the archer, a small skinned character with animation clips - the
+            "graphics" application's "Skinned model" scene.
+  Licence:  CC0 1.0 Universal.
+            backend/GraphicsDemo.Assets/Models/kenney-mini-forest/LICENSE-Kenney-mini-forest.txt
+  Files:    backend/GraphicsDemo.Assets/Models/kenney-mini-forest/:
+            character-archer.glb and Textures/colormap.png.
+  Copied:   byte for byte from the CodeBrix.WebGpu repository, where they are
+            tests/CodeBrix.WebGpu.Graphics.Tests/Assets/kenney-mini-forest/
+            and recorded (Kenney Mini Forest, CC0) in that repository's
+            THIRD-PARTY-NOTICES.txt.
+
+
+--------------------------------------------------------------------------------
+Small Cathedral (HDRI) - from Poly Haven (polyhaven.com)
+--------------------------------------------------------------------------------
+
+  What:     an equirectangular high-dynamic-range panorama of a small
+            cathedral interior (1024 x 512 Radiance .hdr), the second light of
+            the "graphics" application's Viewer scene.
+  Licence:  CC0 1.0 Universal (https://polyhaven.com/license).
+            backend/GraphicsDemo.Assets/Environments/polyhaven-small-cathedral/LICENSE-PolyHaven-small_cathedral.txt
+  Files:    backend/GraphicsDemo.Assets/Environments/polyhaven-small-cathedral/:
+            small_cathedral_1k.hdr.
+  Copied:   byte for byte from the CodeBrix.WebGpu repository, where it is
+            tests/CodeBrix.WebGpu.Graphics.Tests/Assets/polyhaven-small-cathedral/
+            and recorded (from Poly Haven, CC0) in that repository's
+            THIRD-PARTY-NOTICES.txt.
+
+
+
+THE FONTS are licensed under the SIL Open Font License, Version 1.1 (OFL), not
+CC0: font files under the OFL are allowed in this repository's samples and
+tests only, never in a package. Each font sits beside its ORIGINAL OFL.txt
+(copied with it), which carries its copyright line and Reserved Font Name and
+the licence text; the OFL allows the fonts to be used, embedded and
+redistributed with software, but not sold by themselves. The fonts are not
+changed.
+
+
+--------------------------------------------------------------------------------
+Roboto Regular - Copyright 2011 The Roboto Project Authors
+--------------------------------------------------------------------------------
+
+  What:     the font of every header, label and read-out of the "animation"
+            application (the font the C# AnimationDemoApp of
+            CodeBrix.Imaging.Drawing draws all of its text with).
+  Source:   https://github.com/googlefonts/roboto-classic (as its OFL.txt
+            says).
+  Licence:  SIL Open Font License, Version 1.1.
+            backend/GraphicsDemo.Assets/Fonts/roboto/OFL.txt
+  Files:    backend/GraphicsDemo.Assets/Fonts/roboto/: Roboto-Regular.ttf.
+  Copied:   the font byte for byte, and its OFL.txt (the same text, with
+            this repository's line endings), from the
+            CodeBrix.Platform.Fonts.Roboto repository (the family's Roboto),
+            where they are
+            src/CodeBrix.Platform.Fonts.Roboto/Fonts/Roboto-Regular.ttf and
+            OFL.txt at the repository root.
+
+
+--------------------------------------------------------------------------------
+Open Sans Regular - Copyright 2020 The Open Sans Project Authors
+--------------------------------------------------------------------------------
+
+  What:     the second font of the "animation" application: in the
+            missing-characters scene its .notdef glyph, which has no ink,
+            shows how the three missing-character modes differ, and the
+            svg-features scene draws SVG text in it.
+  Source:   https://github.com/googlefonts/opensans (as its OFL.txt says),
+            with the Reserved Font Name "Open Sans".
+  Licence:  SIL Open Font License, Version 1.1.
+            backend/GraphicsDemo.Assets/Fonts/open-sans/OFL.txt
+  Files:    backend/GraphicsDemo.Assets/Fonts/open-sans/: OpenSans-Regular.ttf.
+  Copied:   byte for byte, the font and its OFL.txt, from the
+            CodeBrix.Platform.Fonts.OpenSans repository (the family's Open
+            Sans), where they are
+            src/CodeBrix.Platform.Fonts.OpenSans/Fonts/OpenSans-Regular.ttf
+            and OFL.txt at the repository root.
+
+
+Thank you, Kenney, thank you, Poly Haven, and thank you, the Roboto and Open
+Sans authors.

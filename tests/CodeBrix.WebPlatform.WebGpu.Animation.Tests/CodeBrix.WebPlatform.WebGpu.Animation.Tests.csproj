@@ -1,0 +1,80 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CodeBrix.WebPlatform.WebGpu.Animation\CodeBrix.WebPlatform.WebGpu.Animation.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.12.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="xunit.v3" Version="4.0.3" />
+    <PackageReference Include="SilverAssertions.ApacheLicenseForever" Version="1.0.320.258" />
+  </ItemGroup>
+
+  <!--
+    THE REAL-MATERIALIZE TESTS (Materialize/): they run the platform's PlatformFrontend.MaterializeAsync
+    on a small frontend with AnimationCrates.Register() called (the WebGpu bundle, then this
+    package's), and then on a second frontend with GraphicsCrates.Register() called as well - the
+    proof that an application can pull in either package, or both. FrontendBuilder is referenced at
+    the exact version of the Core package that the libraries pin (from the temporary feed until it
+    is on nuget.org); its buildTransitive targets copy the platform's crates archive beside the
+    test assembly (frontend-crates/), as in a build program. The fixture backend of the WebGpu tests
+    is built with this project and found beside it.
+    THE GRAPHICS PROJECT IS REFERENCED BY THIS TEST PROJECT ONLY, for that second frontend, as an
+    application references both packages; the Animation LIBRARY never references it (the
+    dependency rule, which the gate and AnimationPackageDependenciesTests check).
+  -->
+  <ItemGroup>
+    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.324.293" />
+    <ProjectReference Include="..\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend.csproj" />
+    <ProjectReference Include="..\..\src\CodeBrix.WebPlatform.WebGpu.Graphics\CodeBrix.WebPlatform.WebGpu.Graphics.csproj" />
+  </ItemGroup>
+
+  <!--
+    Also beside the test assembly: the Cargo.toml of this package's crate (its name and version),
+    the Cargo.toml of codebrix-webgpu (its version and the dioxus line the test frontends copy),
+    the Cargo.toml of codebrix-webgpu-graphics (its version, for the second frontend), and the
+    test frontends' main.rs files.
+  -->
+  <ItemGroup>
+    <None Include="..\..\src\CodeBrix.WebPlatform.WebGpu.Animation\Rust\codebrix-webgpu-animation\Cargo.toml"
+          Link="codebrix-webgpu-animation\Cargo.toml"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
+    <None Include="..\..\src\CodeBrix.WebPlatform.WebGpu\Rust\codebrix-webgpu\Cargo.toml"
+          Link="codebrix-webgpu\Cargo.toml"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
+    <None Include="..\..\src\CodeBrix.WebPlatform.WebGpu.Graphics\Rust\codebrix-webgpu-graphics\Cargo.toml"
+          Link="codebrix-webgpu-graphics\Cargo.toml"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
+    <None Update="Materialize\frontend-main.rs" CopyToOutputDirectory="PreserveNewest" />
+    <!--
+      THE TEST FONTS (SIL Open Font License 1.1 - allowed in tests and samples only, never in a
+      package or a crate): Roboto and Open Sans, each with its original OFL.txt. The crate's own
+      text tests read them from the folder the environment variable CODEBRIX_ANIMATION_TEST_FONTS
+      names, which the cargo test above sets to this copy beside the test assembly.
+    -->
+    <None Update="Fonts\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <!--
+      THE LOTTIE TRIAL FILES (invented for the renderer trial) and the sample's own features file: they are the
+      GraphicsDemo sample's assets, NOT the crate's (the crate travels inside the package). The crate's Lottie tests
+      that use them read them from the folder CODEBRIX_ANIMATION_TEST_LOTTIE names, which the cargo test above sets
+      to this copy beside the test assembly.
+    -->
+    <None Include="..\..\samples\GraphicsDemo\backend\GraphicsDemo.Assets\Lottie\*.json"
+          Link="Lottie\%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
+    <None Update="Materialize\frontend-both-main.rs" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

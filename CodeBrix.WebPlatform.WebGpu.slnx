@@ -1,0 +1,26 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".gitignore" />
+    <File Path="AGENT-README.txt" />
+    <File Path="EXTRAS-README.txt" />
+    <File Path="global.json" />
+    <File Path="icon-codebrix-128.png" />
+    <File Path="LICENSE" />
+    <File Path="MAINTAINER-README.txt" />
+    <File Path="nuget.config" />
+    <File Path="README-INDEX.txt" />
+    <File Path="README.md" />
+    <File Path="THIRD-PARTY-NOTICES.txt" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="tests/CodeBrix.WebPlatform.WebGpu.Animation.Tests/CodeBrix.WebPlatform.WebGpu.Animation.Tests.csproj" />
+    <Project Path="tests/CodeBrix.WebPlatform.WebGpu.Graphics.Tests/CodeBrix.WebPlatform.WebGpu.Graphics.Tests.csproj" />
+    <Project Path="tests/CodeBrix.WebPlatform.WebGpu.LibraryChecker.Tests/CodeBrix.WebPlatform.WebGpu.LibraryChecker.Tests.csproj" />
+    <Project Path="tests/CodeBrix.WebPlatform.WebGpu.Tests/CodeBrix.WebPlatform.WebGpu.Tests.csproj" />
+    <Project Path="tests/CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend/CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend.csproj" />
+  </Folder>
+  <Project Path="libs/CodeBrix.WebPlatform.WebGpu.LibraryChecker/CodeBrix.WebPlatform.WebGpu.LibraryChecker.csproj" />
+  <Project Path="src/CodeBrix.WebPlatform.WebGpu/CodeBrix.WebPlatform.WebGpu.csproj" />
+  <Project Path="src/CodeBrix.WebPlatform.WebGpu.Animation/CodeBrix.WebPlatform.WebGpu.Animation.csproj" />
+  <Project Path="src/CodeBrix.WebPlatform.WebGpu.Graphics/CodeBrix.WebPlatform.WebGpu.Graphics.csproj" />
+</Solution>

@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="MAINTAINER-README.txt" />
+    <File Path="THIRD-PARTY-NOTICES.txt" />
+  </Folder>
+  <Folder Name="/Build/">
+    <Project Path="build/GraphicsDemo.BuildFrontend/GraphicsDemo.BuildFrontend.csproj" />
+  </Folder>
+  <Project Path="backend/GraphicsDemo.Api/GraphicsDemo.Api.csproj" />
+  <Project Path="backend/GraphicsDemo.Assets/GraphicsDemo.Assets.csproj" />
+  <Folder Name="/Tests/">
+    <Project Path="tests/GraphicsDemo.Assets.Tests/GraphicsDemo.Assets.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,16 @@
+1
+00:00:00,400 --> 00:00:02,600
+Captions come from an <i>ordinary</i> SRT file,
+burned into every frame.
+
+2
+00:00:02,900 --> 00:00:05,000
+Long cues wrap to the safe area and sit on its bottom edge, so a platform's buttons never cover them.
+
+3
+00:00:04,300 --> 00:00:06,200
+Overlapping cues stack &amp; the earlier one stays on top.
+
+4
+00:00:06,500 --> 00:00:07,900
+Same text, same frames, either package.

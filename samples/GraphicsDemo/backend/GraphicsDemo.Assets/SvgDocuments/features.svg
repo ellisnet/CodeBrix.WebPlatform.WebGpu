@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="540" viewBox="0 0 1200 540">
+  <!-- Written for the GraphicsDemo sample: the SVG features the animation crate draws, one per cell. -->
+  <defs>
+    <linearGradient id="sunset" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f0a848"/><stop offset="1" stop-color="#e0506e"/></linearGradient>
+    <linearGradient id="stripes" x1="0" x2="0.25" spreadMethod="reflect"><stop offset="0" stop-color="#78b4ff"/><stop offset="1" stop-color="#1b1f30"/></linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5" fx="0.3" fy="0.3"><stop offset="0" stop-color="#ffffff"/><stop offset="0.6" stop-color="#78b4ff"/><stop offset="1" stop-color="#1b1f30"/></radialGradient>
+    <clipPath id="two-holes"><circle cx="90" cy="110" r="55"/><circle cx="170" cy="110" r="55"/></clipPath>
+    <linearGradient id="fade" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity="1"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <mask id="alpha-fade" mask-type="alpha" maskContentUnits="userSpaceOnUse"><rect x="330" y="40" width="220" height="140" fill="url(#fade)"/></mask>
+    <mask id="lum-fade" maskContentUnits="userSpaceOnUse"><rect x="330" y="200" width="220" height="60" fill="url(#fade)"/></mask>
+    <filter id="soft"><feGaussianBlur stdDeviation="6"/></filter>
+    <marker id="tip" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#8ce6a0"/></marker>
+    <path id="star" d="M 0 -22 L 6 -7 L 22 -7 L 9 3 L 14 19 L 0 9 L -14 19 L -9 3 L -22 -7 L -6 -7 Z"/>
+  </defs>
+  <rect width="1200" height="540" rx="18" fill="#1b1f30"/>
+  <!-- 1: a clip of TWO circles: their union shows the gradient. -->
+  <rect x="20" y="40" width="240" height="140" fill="url(#sunset)" clip-path="url(#two-holes)"/>
+  <!-- 2: an alpha mask with a gradient (left opaque, right gone), and a luminance mask (applied by alpha). -->
+  <rect x="330" y="40" width="220" height="140" fill="url(#stripes)" mask="url(#alpha-fade)"/>
+  <rect x="330" y="200" width="220" height="60" fill="#8ce6a0" mask="url(#lum-fade)"/>
+  <!-- 3: blend modes: multiply and screen over the same stripes. -->
+  <g transform="translate(620 40)">
+    <rect width="240" height="140" fill="url(#stripes)"/>
+    <circle cx="70" cy="70" r="50" fill="#f0a848" style="mix-blend-mode:multiply"/>
+    <circle cx="170" cy="70" r="50" fill="#f0a848" style="mix-blend-mode:screen"/>
+  </g>
+  <!-- 4: a focal radial gradient. -->
+  <circle cx="1020" cy="110" r="70" fill="url(#glow)"/>
+  <!-- 5: a blur (one plain feGaussianBlur). -->
+  <circle cx="90" cy="340" r="45" fill="#e0506e" filter="url(#soft)"/>
+  <circle cx="190" cy="340" r="45" fill="#e0506e"/>
+  <!-- 6: strokes: dashes, joins and caps; markers on a polyline. -->
+  <polyline points="600,300 650,250 700,320 750,250 800,300" fill="none" stroke="#ecedf4" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="24 12"/>
+  <polyline points="600,360 650,330 700,380 750,330 800,360" fill="none" stroke="#8ce6a0" stroke-width="3" marker-mid="url(#tip)" marker-end="url(#tip)"/>
+  <!-- 7: <use> instances of one star, each with its own colour and transform. -->
+  <use xlink:href="#star" x="900" y="300" fill="#f0a848"/>
+  <use xlink:href="#star" x="960" y="300" fill="#78b4ff" transform="rotate(20 960 300)"/>
+  <use xlink:href="#star" x="1020" y="300" fill="#8ce6a0" transform="scale(1.2) translate(-170 -50)"/>
+  <!-- 8: SVG text in the supplied font: anchors, a tspan with its own fill, a bold run drawn in the regular font. -->
+  <text x="300" y="460" font-family="Roboto" font-size="34" fill="#ecedf4" text-anchor="middle">SVG text <tspan fill="#f0a848">in Roboto</tspan></text>
+  <text x="900" y="460" font-family="Open Sans" font-size="26" fill="#78b4ff" text-anchor="middle">and in Open Sans</text>
+  <text x="900" y="500" font-family="Garamond" font-size="16" fill="#848aa4" text-anchor="middle">a family not supplied falls back to the application's font</text>
+  <!-- Not drawn, and reported: a pattern paint and a drop-shadow filter. -->
+  <defs><pattern id="dots" width="10" height="10" patternUnits="userSpaceOnUse"><circle cx="5" cy="5" r="2" fill="#fff"/></pattern><filter id="shadow"><feDropShadow dx="4" dy="4" stdDeviation="2"/></filter></defs>
+  <rect x="1150" y="500" width="20" height="20" fill="url(#dots)"/>
+  <rect x="1120" y="500" width="20" height="20" fill="#848aa4" filter="url(#shadow)"/>
+</svg>

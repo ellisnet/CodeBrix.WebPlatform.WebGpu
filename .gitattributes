@@ -1,0 +1,40 @@
+# Line endings: LF, everywhere, on every platform.
+#
+# The committed files are already LF. These rules only stop a checkout from
+# changing them (core.autocrlf=true on Windows would expand LF to CRLF). The
+# vendored crate folders record a checksum for every file, and cargo refuses to
+# build from a crate whose files no longer match, so a checkout that rewrote
+# line endings would break every vendored build.
+* text=auto eol=lf
+
+# Never touched. A binary file with newline translation applied to it is
+# silently corrupt, so these are declared rather than left to git's heuristic.
+*.png    binary
+*.nupkg  binary
+*.dylib  binary
+*.so     binary
+*.dll    binary
+*.pdb    binary
+*.xz     binary
+*.gz     binary
+*.zip    binary
+*.glb    binary
+*.cbmd   binary
+*.hdr    binary
+*.crate  binary
+*.wasm   binary
+*.a      binary
+*.lib    binary
+*.o      binary
+*.ico    binary
+*.jpg    binary
+*.gif    binary
+*.ttf    binary
+*.woff   binary
+*.woff2  binary
+
+# The vendored crate folders are byte-for-byte copies of what crates.io published; every vendored
+# file has a recorded checksum. Git must not normalise their line endings (some upstream files are
+# CRLF) or cargo will refuse to build from them.
+src/CodeBrix.WebPlatform.WebGpu/Rust/vendor/**   -text
+src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendor/**   -text

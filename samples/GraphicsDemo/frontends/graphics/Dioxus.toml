@@ -1,0 +1,8 @@
+# Settings for `dx` (the Dioxus build tool). Only the page title is set here (it fills
+# `{app_title}` in index.html). The application's base path is NOT set here: the build program
+# gives dx the application's name, so the name is written in one place only.
+[application]
+name = "graphicsdemo-graphics"
+
+[web.app]
+title = "Graphics"
