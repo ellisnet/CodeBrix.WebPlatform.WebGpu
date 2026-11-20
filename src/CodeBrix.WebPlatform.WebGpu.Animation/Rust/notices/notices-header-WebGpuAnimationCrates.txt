@@ -1,0 +1,421 @@
+================================================================================
+THIRD-PARTY NOTICES: the crates that the CodeBrix.WebPlatform.WebGpu.Animation
+package brings to an application's WebAssembly file
+================================================================================
+
+This file travels with the CodeBrix.WebPlatform.WebGpu.Animation.ApacheLicenseForever
+package (tools/webgpu-animation-crates/THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt;
+a build program finds it beside itself as
+webgpu-animation-crates/THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt and reads
+it with AnimationCrates.ReadNotices). It covers the package's crate bundle: the
+archive webgpu-animation-crates.zip, which the platform's frontend build writes
+into the application's frontend beside the platform's own crates and the WebGpu
+package's.
+
+The archive holds codebrix-webgpu-animation, the first-party crate of the
+CodeBrix.WebPlatform.WebGpu repository (real-time 2D animation and its
+renderer, and its text), and the third-party crates that ONLY that crate
+needs: `kurbo` (curves, flattening and strokes), `peniko` (brushes, gradients,
+images and blend modes), `harfrust` (text shaping and glyph outlines, with
+`read-fonts` and `font-types`), `i_overlay` (path combining, with `i_float`,
+`i_shape`, `i_tree` and `i_key_sort`), `png` (reading PNG files, with
+`fdeflate`, `flate2`, `miniz_oxide`, `crc32fast`, `adler2` and `simd-adler32`),
+`usvg` (SVG documents, with its `text` feature: `fontdb`, `skrifa` and the
+crates part G names), `velato` (Lottie documents, with `serde_repr`) and the
+crates their resolution adds
+beyond those the platform and the WebGpu package already carry. The crates it builds on (wgpu, glam,
+codebrix-webgpu) and the crates it shares with them (arrayvec, smallvec, ...)
+are carried by the CodeBrix.WebPlatform.WebGpu package and the platform, and
+their notices come with those (WebGpuCrates.ReadNotices,
+PlatformCrates.ReadNotices). Part 1 below lists the third-party crates of this
+archive that are compiled into an application's WebAssembly file when its
+frontend uses codebrix-webgpu-animation; Part 2 those that are carried but not
+compiled in.
+
+Each third-party component stays under its own license; none is relicensed.
+Where a crate offers a choice of licenses ("Apache-2.0 OR MIT"), the entry
+says which one is used.
+
+codebrix-webgpu-animation is covered by the repository's own LICENSE
+(Apache-2.0) and is not third-party, so it is not listed in the parts below.
+Its renderer, however, contains code taken from the vello project, and inside
+that code a few lines that vello marks as coming from Skia. They are compiled
+into the application's WebAssembly file (the shaders as text, the rest as
+code), stay under their own licenses, and are listed here.
+
+
+--------------------------------------------------------------------------------
+A. Code taken from vello (the Linebender project) into codebrix-webgpu-animation
+--------------------------------------------------------------------------------
+
+Source:  the crates vello_shaders 0.12.0 and vello_encoding 0.12.0 as crates.io
+         published them (https://crates.io/crates/vello_shaders,
+         https://crates.io/crates/vello_encoding; project
+         https://github.com/linebender/vello). Neither crate, nor vello itself,
+         is a dependency of codebrix-webgpu-animation or carried by this
+         package: the code below was taken into the crate's own files.
+License: the crates declare "Apache-2.0 OR MIT"; the shader files carry the
+         header "SPDX-License-Identifier: Apache-2.0 OR MIT OR Unlicense" and
+         ramp_cache.rs "SPDX-License-Identifier: Apache-2.0 OR MIT".
+         USED UNDER Apache-2.0. The Apache License 2.0 text is the LICENSE file
+         of the CodeBrix.WebPlatform.WebGpu repository, and it is also among
+         the licence texts at the end of this file (the LICENSE-APACHE of the
+         crates below that are used under Apache-2.0).
+Copyright 2022 the Vello Authors (the files' headers; the crates' LICENSE-MIT
+says "Copyright 2020 the Vello Authors").
+
+Taken, and where:
+  - src/rendering/core/composite.wgsl: COPIED VERBATIM - everything from
+    "// Color mixing modes" to the end of vello_shaders-0.12.0/shader/shared/
+    blend.wgsl (the mix and compose mode constants and functions, screen,
+    color_dodge, color_burn, hard_light, soft_light, the saturation and
+    luminosity helpers, blend_mix, blend_compose, unpremultiply,
+    blend_mix_compose). The file keeps vello's copyright and SPDX lines above
+    the copied block.
+  - src/rendering/core/paint.wgsl: TRANSLATED AND ADAPTED from
+    vello_shaders-0.12.0/shader/fine.wgsl - extend_mode_normalized and the
+    extend constants (copied), the radial-gradient parameter (the strip,
+    focal-on-circle, cone and circular kinds) and the sweep-gradient angle,
+    rewritten as functions of one pixel.
+  - src/rendering/core/paint.rs: TRANSLATED TO RUST from
+    vello_shaders-0.12.0/shader/draw_leaf.wgsl (the two-point conical
+    gradient set-up, two_point_to_unit_line, from_poly2, the sweep set-up, the
+    radial kind constants of shader/shared/config.wgsl), and ADAPTED from
+    vello_encoding-0.12.0/src/ramp_cache.rs (make_ramp, the gradient ramp of
+    512 samples, and the idea of a ramp cache whose slots are reused least
+    recently used first).
+  - src/rendering/core/common.wgsl is the crate's own; its header names the
+    vello material of the two shader files above.
+
+Credits that vello itself gives inside that material (no code of theirs beyond
+what is listed in B):
+  - The two-point conical gradient set-up is "based on the algorithm at
+    https://skia.org/docs/dev/design/conical/" - an algorithm described in a
+    design document of the Skia project.
+  - The blend and compose formulas are those of the W3C specification
+    "Compositing and Blending Level 1".
+
+
+--------------------------------------------------------------------------------
+B. Skia (Google) - the sweep-gradient angle, inside the vello material
+--------------------------------------------------------------------------------
+
+Source:  vello's fine.wgsl marks its sweep-gradient angle function as
+         "xy_to_unit_angle from Skia" (google/skia,
+         src/opts/SkRasterPipeline_opts.h), with polynomial constants
+         "generated using sollya": about ten lines (a seventh-degree polynomial
+         for the angle and the selects around it), in
+         src/rendering/core/paint.wgsl of codebrix-webgpu-animation.
+License: BSD-3-Clause, the Skia project's LICENSE
+         (https://github.com/google/skia/blob/main/LICENSE), reproduced here:
+
+Copyright (c) 2011 Google Inc. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in
+    the documentation and/or other materials provided with the
+    distribution.
+
+  * Neither the name of the copyright holder nor the names of its
+    contributors may be used to endorse or promote products derived
+    from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+--------------------------------------------------------------------------------
+C. Inside the vendored crates
+--------------------------------------------------------------------------------
+
+kurbo's src/cubicbez.rs describes three of its functions as a "Rust port of
+cu2qu" from the fontTools project (https://github.com/fonttools/fonttools,
+Lib/fontTools/cu2qu/cu2qu.py); kurbo carries no separate notice for it and is
+published under "Apache-2.0 OR MIT" by its authors. Listed as a credit.
+
+harfrust 0.15.0 (MIT; its LICENSE, in Part 1 below, carries both copyright
+lines, "Copyright (c) HarfBuzz developers" and "Copyright (c) 2020 Yevhenii
+Reizner") describes itself as a Rust port of HarfBuzz, which its README says
+"is licensed under the Old MIT" license (HarfBuzz's own COPYING file is not in
+the crate). Listed as a credit.
+
+read-fonts 0.46.0 carries the Adobe Glyph List (data/glyphlist.txt and
+data/zapfdingbats.txt, "Copyright 2002-2019 Adobe", BSD-3-Clause) and a table
+generated from it; they are compiled only with read-fonts' `agl` feature,
+which this crate set keeps OFF, so the list is carried in the archive but
+never compiled into an application.
+
+
+--------------------------------------------------------------------------------
+D. Unicode data in harfrust's tables
+--------------------------------------------------------------------------------
+
+harfrust's compiled tables (src/unicode/ucd_table.rs, src/unicode/
+emoji_table.rs, and the shaper tables src/ot/shaper/use_table.rs,
+arabic_table.rs, indic_table.rs, arabic_pua.rs) are generated from data files
+of the Unicode Character Database (Unicode 17.0 and 18.0: UnicodeData,
+Scripts, Blocks, ArabicShaping, IndicSyllabicCategory,
+IndicPositionalCategory, DerivedCoreProperties, emoji-data and others). The
+tables quote the data files' own headers ("(c) 2026 Unicode(R), Inc. ... For
+terms of use and license, see https://www.unicode.org/terms_of_use.html").
+They are compiled into an application's WebAssembly file when it uses this
+crate's text. The Unicode data files are licensed under the Unicode License,
+reproduced here as the text the platform's unicode-ident crate carries
+(LICENSE-UNICODE):
+
+UNICODE LICENSE V3
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright © 1991-2023 Unicode, Inc.
+
+NOTICE TO USER: Carefully read the following legal agreement. BY
+DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR
+SOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT
+DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of data files and any associated documentation (the "Data Files") or
+software and any associated documentation (the "Software") to deal in the
+Data Files or Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, and/or sell
+copies of the Data Files or Software, and to permit persons to whom the
+Data Files or Software are furnished to do so, provided that either (a)
+this copyright and permission notice appear with all copies of the Data
+Files or Software, or (b) this copyright and permission notice appear in
+associated Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+THIRD PARTY RIGHTS.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE
+BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES,
+OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA
+FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall
+not be used in advertising or otherwise to promote the sale, use or other
+dealings in these Data Files or Software without prior written
+authorization of the copyright holder.
+
+--------------------------------------------------------------------------------
+E. Path combining: i_overlay and the crates it brings; libm
+--------------------------------------------------------------------------------
+
+i_overlay 9.2.0, i_float 5.0.0, i_shape 5.0.0, i_tree 0.20.0 and i_key_sort
+0.12.0 (the iShape-Rust project) are compiled into an application's
+WebAssembly file when it uses this crate (its path combining). Their entries
+are in Part 1 below. Two of them publish NO license file; their declared
+license (the crate's own Cargo.toml) is the evidence, and this notice supplies
+the text:
+
+  i_overlay 9.2.0 declares "MIT OR Apache-2.0" and its README states "Licensed
+  under either of: MIT license, Apache License, Version 2.0" (the files it
+  names are not in the published crate). USED UNDER Apache-2.0: the Apache
+  License 2.0 text is the one reproduced in Part 1 (License texts) for the
+  crates used under it.
+
+  i_key_sort 0.12.0 declares "MIT" (its Cargo.toml names its author, Nail
+  Sharipov; the crate states no copyright line of its own). The MIT license
+  text, as the project's other crates carry it:
+
+    MIT License
+
+    Copyright (c) Nail Sharipov (iShape-Rust)
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to permit
+    persons to whom the Software is furnished to do so, subject to the
+    following conditions:
+
+    The above copyright notice and this permission notice shall be included
+    in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+    NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+    DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+    OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+    USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+i_float brings libm 0.2.16 (MIT; derived from musl libc, whose math code is
+in turn from FreeBSD's msun and Sun's fdlibm). libm is carried by the
+CodeBrix.WebPlatform.WebGpu package, so its entry and its LICENSE.txt are in
+that package's notices (THIRD-PARTY-NOTICES-WebGpuCrates.txt). With this crate
+it is COMPILED into the application, so the notices its source files carry are
+reproduced here. Most of its src/math files carry the fdlibm notice:
+
+    Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+
+    Developed at SunPro, a Sun Microsystems, Inc. business.
+    Permission to use, copy, modify, and distribute this
+    software is freely granted, provided that this notice
+    is preserved.
+
+and src/math/exp2.rs and src/math/exp2f.rs carry this one:
+
+    Copyright (c) 2005 David Schultz <das@FreeBSD.ORG>
+    All rights reserved.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions
+    are met:
+    1. Redistributions of source code must retain the above copyright
+       notice, this list of conditions and the following disclaimer.
+    2. Redistributions in binary form must reproduce the above copyright
+       notice, this list of conditions and the following disclaimer in the
+       documentation and/or other materials provided with the distribution.
+
+    THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+    ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+    FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+    DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+    OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+    LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+    OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+    SUCH DAMAGE.
+
+i_overlay carries JSON test fixtures and SVG diagrams, i_float CSV benchmark
+results and a GitHub workflow file (.github/workflows/ci.yml) of its own
+project; they are part of the crates as published, never compiled and never
+run.
+
+
+--------------------------------------------------------------------------------
+F. PNG files: png and the crates it brings
+--------------------------------------------------------------------------------
+
+png 0.18.1 (the image-rs project), fdeflate 0.3.7, flate2 1.1.11, miniz_oxide
+0.8.9 and 0.9.1, crc32fast 1.5.5, adler2 2.0.1 and simd-adler32 0.3.10 are
+compiled into an application's WebAssembly file when it uses this crate (the
+crate reads PNG files: ImageSource::from_png). Their entries and licence files
+are in Part 1 below. png, fdeflate, flate2 and crc32fast are "MIT OR
+Apache-2.0" (Apache-2.0 is used); miniz_oxide is "MIT OR Zlib OR Apache-2.0"
+(Apache-2.0 is used; its LICENSE-MIT.md also names the authors of the C miniz
+it was ported from - RAD Game Tools and Valve Software, Rich Geldreich and
+Tenacious Software LLC); adler2 is "0BSD OR MIT OR Apache-2.0" (Apache-2.0 is
+used); simd-adler32 is "MIT". png's src/filter/paeth.rs says its Paeth predictor is
+"Adapted from public domain PNG implementation"; listed as a credit.
+
+zlib-rs 0.6.8 (Zlib) is named by the crate set's lock as an optional
+dependency of flate2 and is carried in the archive so that an offline build
+resolves, but nothing compiles it (flate2 is built with its default
+rust_backend, miniz_oxide). It carries src/deflate/test-data/paper-100k.pdf, a
+100 KB PDF document with no terms of its own, used only by zlib-rs's tests:
+carried, never compiled, covered by the crate's declared licence.
+
+crc32fast and simd-adler32 carry GitHub workflow files (.github/workflows) of
+their own projects; they are part of the crates as published, never compiled
+and never run.
+
+
+--------------------------------------------------------------------------------
+G. SVG documents: usvg and the crates it brings (its `text` feature on)
+--------------------------------------------------------------------------------
+
+usvg 0.50.0 (the resvg project of Linebender, "Apache-2.0 OR MIT") is used
+with its default features OFF and its `text` feature ON (no system fonts, no
+memory-mapped fonts, no svgz, no writer). With what it brings that the
+platform and the WebGpu package do not carry - roxmltree, simplecss, svgtypes,
+tiny-skia-path, siphasher, data-url, imagesize, pico-args, float-cmp,
+strict-num, arrayref, and for text fontdb, skrifa, unicode-bidi,
+unicode-script, unicode-vo and xmlwriter - it is compiled into an
+application's WebAssembly file when it uses this crate's SVG documents. Their
+entries and license texts are in Part 1 below. Where a crate offers a choice,
+Apache-2.0 is used; arrayref (BSD-2-Clause, "Copyright (c) 2015 David Roundy")
+and tiny-skia-path (BSD-3-Clause, "Copyright (c) 2011 Google Inc." and
+"Copyright (c) 2020 Yevhenii Reizner") are used under their own licenses, whose
+texts - their binary-distribution conditions included - are reproduced in
+Part 1; float-cmp, imagesize, pico-args, strict-num, fontdb and xmlwriter are
+MIT, their texts with their copyright lines in Part 1.
+
+tiny-skia-path's source files say they are a port of Skia ("Copyright 2006 The
+Android Open Source Project", "Use of this source code is governed by a
+BSD-style license that can be found in the LICENSE file"): that LICENSE file is
+the crate's BSD-3-Clause text above. Listed as a credit.
+
+data-url's src/mime.rs holds a table "Copied from
+https://github.com/hyperium/mime/blob/v0.3.5/src/parse.rs"; that project's
+crate `mime` is "MIT OR Apache-2.0" (its LICENSE-MIT: "Copyright (c) 2014 Sean
+McArthur"). Listed as a credit. data-url also carries test data named after
+the web-platform-tests suite (tests/*.json), never compiled.
+
+skrifa 0.49.0 ("MIT OR Apache-2.0", the Fontations developers) describes parts
+of its hinting code as following FreeType; it states no other terms, and its
+published declaration is relied on. Its hinting is not used by this crate
+(usvg draws unhinted outlines).
+
+unicode-bidi 0.3.18, unicode-script 0.5.9 and unicode-vo 0.1.0 carry tables
+generated from the Unicode Character Database (the generator scripts,
+scripts/unicode.py and gen-unicode-vo.py, are carried and never run); the
+Unicode data license is the one reproduced in part D.
+
+fontdb 0.24.0 carries tests/fonts/Tuffy.ttf, a test font of its own tests,
+with tests/fonts/LICENSE.txt: its authors (Thatcher Ulrich, Karoly Barta,
+Michael Evans) release it into the PUBLIC DOMAIN ("In case this is not legally
+possible, We grant any entity the right to use this work for any purpose,
+without any conditions"). It is carried in the archive and NEVER compiled into
+an application or used by this crate (fonts are the application's bytes). The
+repository owner approved carrying it.
+
+roxmltree carries XML/YAML parser test cases and Python testing tools, and
+arrayref, fontdb, imagesize, pico-args, roxmltree, siphasher, strict-num,
+unicode-bidi and unicode-script carry GitHub workflow or dependabot files of
+their own projects; they are part of the crates as published, never compiled
+and never run.
+
+
+--------------------------------------------------------------------------------
+H. Lottie documents: velato and serde_repr
+--------------------------------------------------------------------------------
+
+velato 0.12.0 (the Linebender project; "Apache-2.0 OR MIT", USED UNDER
+Apache-2.0) is compiled into an application's WebAssembly file when it uses
+this crate's Lottie module: it reads a Lottie document's JSON into its
+composition and evaluates it for a frame. It is used WITH ITS DEFAULT FEATURES
+OFF, so vello and its crates are not in the bundle. Its AUTHORS file lists its
+significant contributors: Google LLC, Chad Brokaw, Daniel McNab, Spencer C.
+Imbleau, Bruce Mitchener, Sebastian Hamel and Kaur Kuut. Its LICENSE-MIT holds
+the MIT text without a copyright line; its LICENSE-APACHE is the Apache License
+2.0 reproduced in Part 1. velato is used exactly as published: the crate's own
+pass over the JSON runs before velato reads a document (see the Lottie section
+of the repository's AGENT-README.txt), and nothing of velato is changed.
+
+serde_repr 0.1.21 ("MIT OR Apache-2.0", USED UNDER Apache-2.0) is a procedural
+macro that velato's reader uses: it runs while the application is BUILT and
+generates code for velato's number-valued enumerations. It carries a GitHub
+workflow file and a funding file of its own project (.github/workflows/ci.yml,
+.github/FUNDING.yml) and compile-failure test expectations (tests/ui); they are
+part of the crate as published, never compiled and never run.
+
+velato also uses serde, serde_json and the crates they bring; those are the
+platform's (and serde's derive the WebGpu package's), at the same versions, and
+their notices come with them.

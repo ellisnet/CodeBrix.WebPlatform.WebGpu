@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
+<!-- The clock of the C# library's svg-parts demo scene, generated the same way, for the crate's tests. -->
+<circle id="face" cx="150" cy="150" r="140" fill="#ecedf4" stroke="#f0a848" stroke-width="8"/>
+<g id="ticks" stroke="#1b1f30" stroke-linecap="round">
+<line x1="150" y1="50" x2="150" y2="26" stroke-width="7"/>
+<line x1="206" y1="53.005" x2="212" y2="42.613" stroke-width="4"/>
+<line x1="246.995" y1="94" x2="257.387" y2="88" stroke-width="4"/>
+<line x1="250" y1="150" x2="274" y2="150" stroke-width="7"/>
+<line x1="246.995" y1="206" x2="257.387" y2="212" stroke-width="4"/>
+<line x1="206" y1="246.995" x2="212" y2="257.387" stroke-width="4"/>
+<line x1="150" y1="250" x2="150" y2="274" stroke-width="7"/>
+<line x1="94" y1="246.995" x2="88" y2="257.387" stroke-width="4"/>
+<line x1="53.005" y1="206" x2="42.613" y2="212" stroke-width="4"/>
+<line x1="50" y1="150" x2="26" y2="150" stroke-width="7"/>
+<line x1="53.005" y1="94" x2="42.613" y2="88" stroke-width="4"/>
+<line x1="94" y1="53.005" x2="88" y2="42.613" stroke-width="4"/>
+</g>
+<text x="150" y="205" font-family="Roboto" font-size="18" text-anchor="middle" fill="#848aa4">PER-PART</text>
+<line id="hour" x1="150" y1="150" x2="150" y2="88" stroke="#1b1f30" stroke-width="10" stroke-linecap="round"/>
+<line id="minute" x1="150" y1="150" x2="150" y2="50" stroke="#1b1f30" stroke-width="6" stroke-linecap="round"/>
+<line id="second" x1="150" y1="170" x2="150" y2="40" stroke="#e0506e" stroke-width="3" stroke-linecap="round"/>
+<circle cx="150" cy="150" r="8" fill="#e0506e"/>
+</svg>

@@ -1,0 +1,60 @@
+# codebrix-webgpu-animation: the first-party crate of the CodeBrix.WebPlatform.WebGpu.Animation
+# package. It is NOT published on crates.io: the package carries it in its crate archive in
+# vendored form, and the platform's frontend build writes it into the application's vendor
+# folder. A frontend names it like any crate:
+#     codebrix-webgpu-animation = "1.0"
+#
+# EVERY DEPENDENCY IS AN EXACT VERSION that the platform's crates, the WebGpu package's crates or
+# this package's own vendored crates carry: codebrix-webgpu (and through it wgpu, glam, dioxus,
+# web-sys) is the WebGpu package's; kurbo, peniko, harfrust, i_overlay, png, usvg, svgtypes and
+# velato are this package's (kurbo 0.13.1 and peniko 0.6.1 are the versions velato 0.12.0 brings;
+# harfrust 0.15.0, i_overlay 9.2.0, png 0.18.1, usvg 0.50.0 and velato 0.12.0 are the approved
+# ones; svgtypes 0.16.2 is the version usvg brings); serde_json is the platform's.
+#
+# Change `version` whenever the crate's content changes in a release of the package: cargo treats
+# a name and version from a vendor folder as unchanging.
+[package]
+name = "codebrix-webgpu-animation"
+version = "1.6.1"
+edition = "2021"
+publish = false
+description = "Real-time 2D animation for CodeBrix.WebPlatform frontends: the drawing session, shapes, text, gradient fills, fades, keyframe tracks bound to elements, layers and a camera, transforms, groups, layout, path draw-on, motion along paths, morphs, pictures and sprites from decoded pixels, the picture-pixels form and PNG files, masks, blur, glow and drop-shadow effects, text blocks with reveals, staggers, captions from SRT and WebVTT and text along paths, path combining and path queries, combined bindings, rolling and trains along paths, formations, safe areas, SVG documents with per-part animation and their own SMIL and CSS animations, pixel planes with filters, transitions, noise, particles and motion blur (CPU), noise drawn on the GPU, particles drawn instanced, GPU frame operations and layer transitions, animated brush strokes, ownership maps, keyframe players and hard-edged masks (CPU), easing, colour ramps and timelines of CodeBrix.Imaging.Drawing.NoSkia, and Lottie animations, drawn on the GPU by a stencil-then-cover renderer as a layer of the codebrix-webgpu canvas host."
+license = "Apache-2.0"
+repository = "https://github.com/ellisnet/CodeBrix.WebPlatform.WebGpu"
+
+[dependencies]
+# The canvas host this crate's renderer is a LAYER of (the frame, its clock time, the target's
+# format and blending convention), the GPU context, and wgpu itself (re-exported by it).
+codebrix-webgpu = "=1.1.1"
+# Curves: flattening, stroke expansion with joins, caps, miter limit and dashes.
+kurbo = "=0.13.1"
+# The brush, gradient, image, blend and fill-rule vocabulary the renderer speaks (velato speaks
+# it too). Re-exports kurbo and the `color` crate.
+peniko = "=0.6.1"
+# Text: shaping (kerning, ligatures, contextual forms) and the glyph outlines, through its own
+# font reader (read-fonts' model). The crate takes font BYTES only and never looks for a system
+# font.
+harfrust = "=0.15.0"
+# Path combining (union, intersection, difference, exclusive-or, simplify; outlines of strokes
+# and offsets) on its integer overlay, with our own grid of 1/1024 unit as NoSkia's.
+i_overlay = "=9.2.0"
+# PNG files: the one file format the crate reads (ImageSource::from_png). Approved by the owner
+# by name at 0.18.1, its default features (none). It brings fdeflate, flate2 (its default
+# rust_backend: miniz_oxide), crc32fast, adler2 and simd-adler32.
+png = "=0.18.1"
+# SVG documents (steps 13 and 14): parsing, static CSS, use/defs and paint servers resolved into a
+# tree, and SVG text laid out into paths. Default features OFF, the `text` feature ON: no system
+# fonts, no memory-mapped fonts, no svgz, no writer; fonts are loaded into its font database from
+# the bytes the application registers. The crate passes its own image href resolver, so usvg's
+# default resolver (which reads files) is never called. svgtypes is the value parser usvg itself
+# brings, at the same version: the animation reader uses it for colours, transforms and the
+# viewBox. roxmltree is used through usvg's re-export (usvg::roxmltree).
+usvg = { version = "=0.50.0", default-features = false, features = ["text"] }
+svgtypes = "=0.16.2"
+# Lottie documents (step 15): the Lottie JSON read into velato's composition and evaluated for a
+# frame through its RenderSink trait. Default features OFF: velato's default `vello` feature
+# would pull vello 0.10 and its tree - never turn it on. serde_json is the JSON reader velato
+# itself brings, at the same version: the crate checks and adjusts the document as JSON before
+# velato reads it.
+velato = { version = "=0.12.0", default-features = false }
+serde_json = "=1.0.154"

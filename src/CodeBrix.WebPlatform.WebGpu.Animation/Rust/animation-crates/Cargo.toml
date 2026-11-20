@@ -1,0 +1,70 @@
+# THE ANIMATION CRATE SET. This manifest is never built into anything: it names the third-party
+# crates that the first-party crate codebrix-webgpu-animation needs and that neither the platform
+# nor the WebGpu package carries, so that cargo resolves and locks them. Its Cargo.lock beside it
+# fixes every version. The lock is resolved against the CodeBrix.WebPlatform platform's own
+# Cargo.lock AND the WebGpu package's crate set's Cargo.lock, so that every crate either of them
+# also carries is at its exact version (the platform's strict rule for crate bundles);
+# ../vendoring/kurbo-peniko/UPGRADE-README.txt says how.
+#
+# THE VENDORED SET of this package (../vendor) is the lock's crates MINUS those the platform or the
+# WebGpu package already carries: the Animation package's bundle holds only what it adds (the
+# owner's rule for the Graphics and Animation packages). So this folder resolves offline only
+# against a merged source (this package's vendor folder, the WebGpu package's and the platform's
+# crates), which is what an application's vendor folder is and what the licence gate builds.
+#
+# Repository-only (not in the package). The target is wasm32-unknown-unknown: a browser build.
+[package]
+name = "codebrix-webplatform-webgpu-animation-crates"
+version = "1.0.0"
+edition = "2021"
+publish = false
+description = "The crate set of the CodeBrix.WebPlatform.WebGpu.Animation package: the third-party crates its Animation crate needs beyond the platform's and the WebGpu package's."
+license = "Apache-2.0"
+
+[dependencies]
+# Curves and shapes: flattening, stroke expansion with joins, caps, miter limit and dashes, arc
+# length, affine transforms. Approved by the owner by name. Its default features (std): kurbo
+# needs std or libm, and a browser frontend has std. Its optional dependencies (euclid's
+# conversions, mint, schemars, serde, libm) stay off; euclid is named in the lock through a weak
+# feature and is the platform's.
+kurbo = "=0.13.1"
+# The brush, gradient, image, blend-mode and fill-rule vocabulary of the Animation crate's
+# renderer (the version velato 0.12.0 brings; inside velato's approved tree, told to the owner).
+# Its default features (std). It brings color and linebender_resource_handle.
+peniko = "=0.6.1"
+# Text: shaping (kerning, ligatures, contextual forms; a Rust port of HarfBuzz) and unhinted
+# glyph outlines through its own font reader. Approved by the owner by name, at 0.15.0 (not a
+# later version: 0.15.0 shares read-fonts 0.46 with the crates the later SVG and Lottie steps
+# bring). Its default features (std): no `icu` (it carries its own Unicode tables), no `libm`,
+# no `tracing`. It brings read-fonts (with read-fonts' `agl` feature OFF, so the Adobe Glyph List
+# data that crate carries is never compiled) and font-types.
+harfrust = "=0.15.0"
+# Path combining: union, intersection, difference, exclusive-or, simplify, stroke and offset
+# outlines on an integer grid. Approved by the owner by name, at 9.2.0. Its default features
+# (none): `allow_multithreading` (rayon), `serde` and `glam` stay off and are not vendored. It
+# brings i_float, i_shape, i_tree and i_key_sort (all from the same project), and libm through
+# i_float (libm is the WebGpu package's).
+i_overlay = "=9.2.0"
+# PNG files: the one file format the Animation crate reads. Approved by the owner by name, at
+# 0.18.1, with its tree. Its default features (none): `benchmarks`, `unstable` and `zlib-rs` stay
+# off. It brings fdeflate, flate2 (with flate2's default `rust_backend`: miniz_oxide 0.9.1),
+# miniz_oxide 0.8.9 (png's own), crc32fast, adler2 and simd-adler32; bitflags and cfg-if are the
+# WebGpu package's. zlib-rs is named by the lock (an optional dependency of flate2) and must be
+# in the vendor folder for an offline resolve, but nothing compiles it.
+png = "=0.18.1"
+# SVG documents: parsing, static CSS, use/defs and paint servers resolved into a tree, and SVG
+# text laid out and turned into paths. Approved by the owner by name at 0.50.0, default features
+# OFF; its `text` feature on (approved in advance; the demo's SVGs contain text): no system
+# fonts, no memory-mapped fonts, no svgz, no writer. The `text` feature brings fontdb (fonts are
+# loaded from bytes the application supplies), harfrust 0.15.0 (the same version as above),
+# skrifa, unicode-bidi, unicode-script, unicode-vo and xmlwriter.
+usvg = { version = "=0.50.0", default-features = false, features = ["text"] }
+# The SVG value parser usvg itself brings, at the same version: the Animation crate's SMIL and
+# CSS animation reader uses it for colours, transforms and the viewBox.
+svgtypes = "=0.16.2"
+# Lottie documents: the Lottie JSON read into a composition and evaluated for a frame through its
+# RenderSink trait. Approved by the owner by name, at 0.12.0, WITH DEFAULT FEATURES OFF: its
+# default `vello` feature would bring vello 0.10 and its tree - never turn it on. It brings
+# serde_repr (a proc-macro, build time only) and uses kurbo, peniko, serde and serde_json at the
+# versions this set and the platform already carry.
+velato = { version = "=0.12.0", default-features = false }

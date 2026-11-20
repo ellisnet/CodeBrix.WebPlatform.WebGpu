@@ -1,0 +1,20 @@
+<Project>
+
+  <!--
+    Copies the crates that ship in this package (tools/webgpu-animation-crates/: the archive
+    webgpu-animation-crates.zip - the first-party crate codebrix-webgpu-animation in vendored form
+    and the third-party crates only it needs - and THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt,
+    their notices) into the output folder of the project that references it - directly or
+    through another package - as webgpu-animation-crates/. AnimationCrates.Register() registers the WebGpu
+    package's crates first and then hands the archive there to the platform's frontend build,
+    which writes the crates into the application's frontend when it is materialized. The WebGpu
+    package's own buildTransitive targets copy its webgpu-crates/ folder the same way.
+  -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\tools\webgpu-animation-crates\**\*"
+          Link="webgpu-animation-crates\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
+  </ItemGroup>
+
+</Project>

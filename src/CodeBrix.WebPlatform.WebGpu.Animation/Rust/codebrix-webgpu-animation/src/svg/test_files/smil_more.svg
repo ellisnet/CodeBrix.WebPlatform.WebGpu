@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+  <!-- Written for the crate's tests: restart, min, end syncbase, keyPoints, auto-reverse, display, mixed begins. -->
+  <path id="lane" d="M 0 0 L 100 0" fill="none" stroke="#999"/>
+  <rect id="once" x="0" y="0" width="5" height="5">
+    <animate id="first" attributeName="opacity" from="0" to="1" dur="1s" begin="0s;2s" restart="never"/>
+  </rect>
+  <rect id="atleast" x="10" y="0" width="5" height="5">
+    <animate attributeName="opacity" from="0" to="1" dur="4s" end="1s" min="2s" fill="freeze"/>
+  </rect>
+  <rect id="stopper" x="20" y="0" width="5" height="5">
+    <animate attributeName="opacity" from="0" to="1" dur="10s" end="first.end+0.5s" fill="freeze"/>
+  </rect>
+  <rect id="keyed" x="-2" y="-2" width="4" height="4">
+    <animateMotion dur="2s" keyPoints="0;1;0.5" keyTimes="0;0.5;1" calcMode="linear" rotate="auto-reverse" path="M 0 0 L 100 0" fill="freeze"/>
+  </rect>
+  <rect id="flicker" x="30" y="0" width="5" height="5">
+    <set attributeName="display" to="none" begin="1s" dur="1s"/>
+  </rect>
+  <rect id="mixed" x="40" y="0" width="5" height="5">
+    <animate attributeName="opacity" from="0" to="1" dur="1s" begin="mixed.click;3s"/>
+  </rect>
+  <rect id="discrete" x="50" y="0" width="5" height="5">
+    <animate attributeName="stroke-dasharray" values="1 1;2 2;4 4" keyTimes="0;0.8;0.9" calcMode="discrete" dur="10s"/>
+  </rect>
+</svg>

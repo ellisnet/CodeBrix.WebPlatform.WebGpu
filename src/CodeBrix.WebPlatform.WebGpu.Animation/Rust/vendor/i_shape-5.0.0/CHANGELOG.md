@@ -1,0 +1,41 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+## [4.0.0] - Unreleased
+
+### Changed
+
+- Updated `i_float` to 4.0 and migrated integer widening calls to `IntNumber::to_wide`.
+- Declared Rust 1.85 as the minimum supported Rust version.
+- Reworked collection macros to allocate their output directly from iterators.
+- Renamed `ContourExtension::contains` to `contains_point` to avoid a collision with the slice method of the same name.
+- Removed the `util::reserve::Reserve` extension trait in favor of `Vec::clear` and `Vec::reserve`.
+- Added `PartialEq` and `Eq` implementations for flat buffer types.
+- Preserved empty contours when iterating a floating-point flat buffer as a `ShapeResource`.
+
+### Removed
+
+- Removed the unused `float::count`, `float::init`, `float::int_area`,
+  `float::reverse`, `int::dedup`, and `int::reverse` modules.
+- Removed `int::count::BiggestShapePoints` and `ContourExtension::to_reversed`.
+  Use `to_vec()` followed by `reverse()` to create a reversed contour copy.
+- Removed `set_with_resource_and_adapter` from both integer flat-buffer types.
+
+### Fixed
+
+- Fixed spike detection and removal when consecutive duplicate vertices hide an
+  edge reversal, including duplicates created during spike removal.
+- Made `is_convex` ignore consecutive duplicate vertices, including repeated
+  closing vertices, so they cannot hide concave turns or edge reversals.
+- Clarified simplification documentation: the helpers remove collinear and duplicate
+  vertices, but do not check or resolve self-intersections.
+- Prevented `FloatFlatContoursBuffer::simplify_contour` from quantizing an unchanged buffer.
+- Fixed `ShapeResource` iterator counts after partial consumption.
+- Made integer containment handle empty contours without panicking.
+- Removed integer-division rounding from point-in-contour tests by comparing
+  edge topology with a wide cross product.
+- Removed unnecessary unchecked indexing from shape resource iterators.
+- Corrected floating-point flat-buffer capacity allocation.
+
+[4.0.0]: https://github.com/iShape-Rust/i_shape/compare/3.0.0...HEAD

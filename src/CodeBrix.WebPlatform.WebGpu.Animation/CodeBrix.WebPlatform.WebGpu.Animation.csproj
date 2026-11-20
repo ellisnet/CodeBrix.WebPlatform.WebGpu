@@ -1,0 +1,172 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>CodeBrix.WebPlatform.WebGpu.Animation</AssemblyName>
+    <RootNamespace>CodeBrix.WebPlatform.WebGpu.Animation</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!--
+    Package / assembly version: date-stamped and auto-incrementing.
+
+    Format:  1.<x>.<y>.<z>   (every field is derived from UTC "now")
+
+      1  (major)     Always 1 for this library.
+      x  (minor)     Whole years since $(_VersionBaseYear).
+                     With base 2026: 2026=0, 2027=1, 2028=2, ...
+      y  (build)     Day of year, 1-based inclusive, UTC.
+                     Jan 1 = 1, Feb 1 = 32, Dec 31 = 365 (366 in a leap year).
+      z  (revision)  Minute of day, UTC, range 0 to 1439.
+                     00:00 = 0, 23:59 = 1439.
+
+    The version is always strictly increasing over time:
+      * within a day, z grows;
+      * at a day boundary, y increments and outranks z resetting to 0;
+      * at a (UTC) year boundary, x increments and outranks y and z resetting.
+
+    Notes / caveats:
+      * All fields read from System.DateTime.UtcNow, so a local dev build and a
+        UTC CI build agree on the value. Math.Floor on the minutes keeps z in
+        0..1439 (plain rounding could land on 1440 late in the day).
+      * Because the value depends on the clock, every build produces a NEW
+        version. With GeneratePackageOnBuild=true that means a fresh .nupkg on
+        each build, and two builds in the SAME UTC minute produce the SAME
+        version (so do not publish two packages from within one minute).
+      * This is date-stamp versioning, not SemVer: minor encodes the year and
+        major is pinned to 1, so major/minor do not signal API compatibility.
+      * To re-baseline the minor number, change _VersionBaseYear below.
+  -->
+  <PropertyGroup>
+    <_VersionBaseYear>2026</_VersionBaseYear>
+    <_VersionYears>$([MSBuild]::Subtract($([System.DateTime]::UtcNow.Year), $(_VersionBaseYear)))</_VersionYears>
+    <_VersionDayOfYear>$([System.DateTime]::UtcNow.DayOfYear)</_VersionDayOfYear>
+    <_VersionMinuteOfDay>$([System.Convert]::ToInt32($([System.Math]::Floor($([System.DateTime]::UtcNow.TimeOfDay.TotalMinutes)))))</_VersionMinuteOfDay>
+    <BuildVersion>1.$(_VersionYears).$(_VersionDayOfYear).$(_VersionMinuteOfDay)</BuildVersion>
+    <Version>$(BuildVersion)</Version>
+    <AssemblyVersion>$(BuildVersion)</AssemblyVersion>
+    <FileVersion>$(BuildVersion)</FileVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>CodeBrix.WebPlatform.WebGpu.Animation.ApacheLicenseForever</PackageId>
+    <Product>CodeBrix.WebPlatform.WebGpu.Animation</Product>
+    <Title>CodeBrix.WebPlatform.WebGpu.Animation</Title>
+    <Authors>Jeremy Ellis</Authors>
+    <Description>Real-time 2D animation through WebGPU for the browser frontend of a CodeBrix.WebPlatform application, written in Rust as the crate codebrix-webgpu-animation with the names and concepts of CodeBrix.Imaging.Drawing.NoSkia: the crate and the third-party crates only it needs in one archive with their notices, and the one call the build program makes to register them (after the WebGpu package's crates, which it builds on) as a crate bundle, so that the frontend builds offline.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/ellisnet/CodeBrix.WebPlatform.WebGpu</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/ellisnet/CodeBrix.WebPlatform.WebGpu</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageIcon>icon-codebrix-128.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Copyright>Copyright (c) 2026 Jeremy Ellis and contributors</Copyright>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <IsPackable>true</IsPackable>
+    <PackageTags>web;rust;webassembly;wasm;webgpu;animation;CodeBrix</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\icon-codebrix-128.png" Pack="true" PackagePath="" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="" />
+    <None Include="..\..\AGENT-README.txt" Pack="true" PackagePath="" />
+    <None Include="..\..\THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+  <!--
+    THE DEPENDENCIES (the owner's rule): Core with an EXACT pin, as every package that brings
+    crates to a platform frontend (it chooses them against one platform release; every republish
+    of Core means a rebuild and republish of this package against that Core), and the WebGpu
+    package of this repository, whose crate bundle carries the wgpu crates and the first-party
+    crate codebrix-webgpu that this package's crate builds on. The project reference packs as an
+    EXACT dependency on the WebGpu package of the same build's version ([x], made so by
+    ../CodeBrix.WebPlatform.WebGpu/ExactProjectReferencePins.targets, imported below), so the
+    three packages ship from one build and each pins the others exactly. Never a reference to the Graphics package: the two never depend on each
+    other.
+  -->
+  <ItemGroup>
+    <PackageReference Include="CodeBrix.WebPlatform.Core.ApacheLicenseForever" Version="[1.0.324.293]" />
+    <ProjectReference Include="..\CodeBrix.WebPlatform.WebGpu\CodeBrix.WebPlatform.WebGpu.csproj" />
+  </ItemGroup>
+
+  <Import Project="..\CodeBrix.WebPlatform.WebGpu\ExactProjectReferencePins.targets" />
+
+  <!--
+    The Rust material (Rust/): the first-party crate codebrix-webgpu-animation
+    (Rust/codebrix-webgpu-animation), the crate set of the third-party crates only this package
+    needs (Rust/animation-crates: Cargo.toml and Cargo.lock), those crates (Rust/vendor), the
+    upgrade notes (Rust/vendoring) and the notices (Rust/notices). None of it is compiled or packed
+    as it is; the crates are data for the archive below, never project items.
+  -->
+  <PropertyGroup>
+    <DefaultItemExcludes>$(DefaultItemExcludes);Rust\vendor\**;Rust\animation-crates\target\**;Rust\codebrix-webgpu-animation\target\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="Rust\**" />
+  </ItemGroup>
+
+  <!--
+    THE ANIMATION CRATES. Rust/vendor holds the third-party crates that ONLY this package needs
+    (kurbo, peniko, harfrust, i_overlay, png, usvg, velato and what they bring beyond the platform's and the WebGpu package's crates),
+    exactly as crates.io published them; Rust/codebrix-webgpu-animation is the FIRST-PARTY crate of
+    this package. They travel as ONE archive, not inside the assembly and not as loose files,
+    written by the SAME task as the WebGpu package's archive
+    (../CodeBrix.WebPlatform.WebGpu/WebGpuCratesArchive.targets, the one place that task lives):
+      * _CreateAnimationCratesArchive writes obj/webgpu-animation-crates/webgpu-animation-crates.zip:
+        every vendored crate byte for byte, and the first-party crate in vendored form (folder
+        <name>-<version>, its files, a GENERATED .cargo-checksum.json; never its target/ or
+        Cargo.lock), deterministically. wgpu, glam, codebrix-webgpu and the crates shared with the
+        platform come from the WebGpu package's bundle and the platform, never from this archive;
+        AnimationCrates.Register() registers the WebGpu bundle first. It runs only when one of those
+        files, the crate set's lock file, this project file or the task's file is newer than the
+        archive;
+      * the archive and the generated notices for the third-party crates and the hand-written ones
+        for the crate (Rust/notices/THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt, taken only when
+        it exists: the licence gate writes it) are packed under tools/webgpu-animation-crates/, and
+        buildTransitive/CodeBrix.WebPlatform.WebGpu.Animation.ApacheLicenseForever.targets copies
+        them into the consuming project's output folder as webgpu-animation-crates/;
+      * for a project reference (the tests), the None items below do the same copy directly.
+    THE FOLDER NAME webgpu-animation-crates/ IS A CONTRACT: AnimationCrates (AnimationCrates.cs)
+    looks for <application base folder>/webgpu-animation-crates/webgpu-animation-crates.zip.
+  -->
+  <Import Project="..\CodeBrix.WebPlatform.WebGpu\WebGpuCratesArchive.targets" />
+
+  <PropertyGroup>
+    <!-- Path.Combine, so that an absolute intermediate folder (dotnet build with an artifacts path) is used as it is. -->
+    <_AnimationCratesArchive>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(BaseIntermediateOutputPath)', 'webgpu-animation-crates', 'webgpu-animation-crates.zip'))</_AnimationCratesArchive>
+    <_AnimationCratesVendorFolder>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', 'Rust', 'vendor'))</_AnimationCratesVendorFolder>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The first-party crates the archive carries in vendored form. -->
+    <_AnimationFirstPartyCrate Include="Rust\codebrix-webgpu-animation" />
+    <_AnimationCrateFile Include="Rust\vendor\**\*" />
+    <_AnimationCrateFile Include="Rust\codebrix-webgpu-animation\**\*" Exclude="Rust\codebrix-webgpu-animation\target\**;Rust\codebrix-webgpu-animation\Cargo.lock" />
+    <_AnimationCrateFile Include="Rust\animation-crates\Cargo.lock" Condition="Exists('Rust\animation-crates\Cargo.lock')" />
+    <_AnimationCrateFile Include="$(MSBuildProjectFullPath)" />
+    <_AnimationCrateFile Include="$(MSBuildProjectDirectory)\..\CodeBrix.WebPlatform.WebGpu\WebGpuCratesArchive.targets" />
+    <None Include="$(_AnimationCratesArchive)"
+          Pack="true" PackagePath="tools\webgpu-animation-crates"
+          Link="webgpu-animation-crates\webgpu-animation-crates.zip"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="Rust\notices\THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt"
+          Condition="Exists('Rust\notices\THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt')"
+          Pack="true" PackagePath="tools\webgpu-animation-crates"
+          Link="webgpu-animation-crates\THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="buildTransitive\CodeBrix.WebPlatform.WebGpu.Animation.ApacheLicenseForever.targets"
+          Pack="true" PackagePath="buildTransitive" />
+  </ItemGroup>
+
+  <Target Name="_CreateAnimationCratesArchive"
+          BeforeTargets="AssignTargetPaths;BeforeBuild"
+          Inputs="@(_AnimationCrateFile)"
+          Outputs="$(_AnimationCratesArchive)">
+    <WriteWebGpuCratesArchive VendorFolder="$(_AnimationCratesVendorFolder)"
+                              FirstPartyCrateFolders="@(_AnimationFirstPartyCrate)"
+                              DestinationFile="$(_AnimationCratesArchive)" />
+  </Target>
+
+</Project>
