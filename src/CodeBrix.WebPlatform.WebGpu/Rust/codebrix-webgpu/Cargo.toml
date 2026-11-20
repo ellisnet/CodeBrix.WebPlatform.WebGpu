@@ -1,0 +1,38 @@
+# codebrix-webgpu: the first-party crate of the CodeBrix.WebPlatform.WebGpu package. It is NOT
+# published on crates.io: the package carries it in its crate archive (webgpu-crates.zip) in
+# vendored form, beside the vendored wgpu crates, and the platform's frontend build writes it into
+# the application's vendor folder. A frontend names it like any crate:
+#     codebrix-webgpu = "1.0"
+#
+# EVERY DEPENDENCY IS AN EXACT VERSION that the platform's crates or this package's vendored crates
+# carry (the maintainer tool checks it): dioxus, web-sys and wasm-bindgen are the platform's; wgpu
+# and glam are this package's crate set's. This ties the crate to one platform release (see
+# MAINTAINER-README.txt, THE FIRST-PARTY CRATE).
+#
+# Change `version` whenever the crate's content changes in a release of the package: cargo treats
+# a name and version from a vendor folder as unchanging.
+[package]
+name = "codebrix-webgpu"
+version = "1.1.1"
+edition = "2021"
+publish = false
+description = "The WebGPU context, canvas host, frame loop and maths of CodeBrix.WebPlatform frontends: wgpu and glam for a Dioxus page in the browser, without JavaScript."
+license = "Apache-2.0"
+repository = "https://github.com/ellisnet/CodeBrix.WebPlatform.WebGpu"
+
+[dependencies]
+# The component model and the events the canvas host passes on (pointer, wheel, keys, mounted).
+# No renderer feature: the application's own dioxus dependency chooses `web`.
+dioxus = { version = "=0.7.10", default-features = false, features = ["macro", "html", "signals", "hooks", "mounted"] }
+# WebGPU in the browser only: the crate set's features, no WebGL, no native backend.
+wgpu = { version = "=30.0.2", default-features = false, features = ["std", "webgpu", "wgsl"] }
+# The maths, re-exported under glam's own names; `bytemuck` so that its types upload as bytes.
+glam = { version = "=0.34.3", features = ["bytemuck"] }
+# The browser bindings: the canvas element, its style (touch-action), the window's animation
+# frames and device pixel ratio, pointer capture, focus, and the console for surface errors.
+web-sys = { version = "=0.3.107", features = ["console", "CssStyleDeclaration", "Document", "Element", "HtmlCanvasElement", "HtmlElement", "Window"] }
+wasm-bindgen = "=0.2.130"
+
+[dev-dependencies]
+# Only for the crate's own unit tests (the maths types as bytes); a frontend never resolves it.
+bytemuck = "=1.25.2"

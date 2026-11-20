@@ -1,0 +1,30 @@
+<Project>
+
+  <!--
+    THE FAMILY RULE (imported by CodeBrix.WebPlatform.WebGpu.Graphics.csproj and
+    CodeBrix.WebPlatform.WebGpu.Animation.csproj; never packed): the packages of this repository
+    are built and published together from ONE build, and each pins the packages it depends on
+    EXACTLY. A ProjectReference packs as a MINIMUM dependency (version="x", meaning >= x); this
+    target makes it exact (version="[x]", x = the version of the referenced project in this build),
+    as the Core reference is pinned with Version="[...]".
+
+    How: NuGet's pack targets (NuGet.Build.Tasks.Pack.targets of the SDK) collect the referenced
+    projects' versions in _GetProjectReferenceVersions, as the item _ProjectReferencesWithVersions
+    with the metadata ProjectVersion, and GenerateNuspec (which depends on that target) hands the
+    item to the pack task. This target runs right after _GetProjectReferenceVersions and writes
+    each ProjectVersion as the exact range [ProjectVersion]. It runs once per pack, after the one
+    run of _GetProjectReferenceVersions. The ProjectReference itself is unchanged; no package
+    reference is added. LibraryChecker's platform group checks the result in the project
+    files; the Release .nupkg nuspecs show it.
+  -->
+  <Target Name="_PinProjectReferenceVersionsExactly"
+          AfterTargets="_GetProjectReferenceVersions"
+          Condition="'$(NuspecFile)' == ''">
+    <ItemGroup>
+      <_ProjectReferencesWithVersions Condition="'%(_ProjectReferencesWithVersions.ProjectVersion)' != ''">
+        <ProjectVersion>[%(_ProjectReferencesWithVersions.ProjectVersion)]</ProjectVersion>
+      </_ProjectReferencesWithVersions>
+    </ItemGroup>
+  </Target>
+
+</Project>

@@ -1,0 +1,124 @@
+================================================================================
+THIRD-PARTY NOTICES: the wgpu crates that the CodeBrix.WebPlatform.WebGpu
+package brings to an application's WebAssembly file
+================================================================================
+
+This file travels with the CodeBrix.WebPlatform.WebGpu.ApacheLicenseForever
+package (tools/webgpu-crates/THIRD-PARTY-NOTICES-WebGpuCrates.txt; a build
+program finds it beside itself as webgpu-crates/THIRD-PARTY-NOTICES-WebGpuCrates
+.txt and reads it with WebGpuCrates.ReadNotices). It covers the package's crate
+bundle: the Rust crates the package carries (as webgpu-crates.zip) and that the
+platform's frontend build writes into the application's frontend beside the
+platform's own crates. They are the `wgpu` crate, for WebGPU in the browser,
+the `glam` crate, for vector and matrix maths, and every crate their
+resolution names. Part 1 lists those compiled into an
+application's WebAssembly file when its frontend uses `wgpu` with the features
+this package's crate set names; Part 2 those that are carried but not compiled
+in (they are needed so that cargo can resolve the frontend offline).
+
+Many of these crates are also among the CodeBrix.WebPlatform platform's own
+crates, at the same version and with the same content (the platform writes one
+copy of each). They are listed here too, so that this file is complete for
+what the package carries; the platform's notices
+(PlatformCrates.ReadNotices) cover the platform's crates and not this package's.
+
+Each third-party component stays under its own license; none is relicensed.
+Where a crate offers a choice of licenses ("MIT OR Apache-2.0"), the entry
+says which one is used.
+
+The crate archive also holds codebrix-webgpu, the first-party crate of the
+CodeBrix.WebPlatform.WebGpu repository (the WebGPU context, the canvas host
+and the maths it re-exports from glam). It is covered by that repository's
+own LICENSE (Apache-2.0) and is not third-party, so it is not listed below.
+
+CODE PORTED INTO glam. The glam crate (listed below, with its own licence
+files) states in its ATTRIBUTION.md that it contains code ported from the
+following C++ libraries, each under the MIT License. Their notices, as glam
+carries them:
+
+DirectXMath
+-----------
+
+Project: https://docs.microsoft.com/en-us/windows/win32/dxmath/directxmath-portal
+
+The MIT License (MIT) (https://github.com/microsoft/DirectXMath/blob/master/LICENSE)
+
+Copyright (c) 2011-2020 Microsoft Corp
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this
+software and associated documentation files (the "Software"), to deal in the Software
+without restriction, including without limitation the rights to use, copy, modify,
+merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice shall be included in all copies
+or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
+OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Realtime Math
+-------------
+
+Project: https://github.com/nfrechette/rtm
+
+MIT License (https://github.com/nfrechette/rtm/blob/develop/LICENSE)
+
+Copyright (c) 2018 Nicholas Frechette
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+GLM
+---
+
+Project: https://glm.g-truc.net
+
+The MIT License (https://github.com/g-truc/glm/blob/master/copying.txt)
+
+Copyright (c) 2005 - G-Truc Creation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+An application that serves its site should serve this text with it, beside
+the platform's notices and its own. Parts 1 and 2 are generated from the
+crates in the CodeBrix.WebPlatform.WebGpu repository
+(src/CodeBrix.WebPlatform.WebGpu/Rust/vendor) by its maintainer tool; never
+edit them by hand.
+

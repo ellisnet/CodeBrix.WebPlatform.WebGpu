@@ -1,0 +1,192 @@
+<Project>
+
+  <!--
+    THE CRATE ARCHIVE WRITER, in ONE place for the packages of this repository: imported by
+    CodeBrix.WebPlatform.WebGpu.csproj (webgpu-crates.zip), by
+    ../CodeBrix.WebPlatform.WebGpu.Graphics/CodeBrix.WebPlatform.WebGpu.Graphics.csproj
+    (webgpu-graphics-crates.zip) and by
+    ../CodeBrix.WebPlatform.WebGpu.Animation/CodeBrix.WebPlatform.WebGpu.Animation.csproj
+    (webgpu-animation-crates.zip). Never packed. A project that imports it names this file among
+    the inputs of its archive target, so that a change here rewrites every archive.
+
+    WriteWebGpuCratesArchive writes a crates archive from
+      * every crate folder of VendorFolder, byte for byte (each already has the
+        .cargo-checksum.json cargo vendor wrote); VendorFolder is optional - a package without
+        vendored crates of its own (Graphics) leaves it out, and its archive holds only its
+        first-party crates; the Animation package names its own vendor folder, which holds only
+        the third-party crates it adds - and
+      * each FIRST-PARTY crate of this repository named in FirstPartyCrateFolders
+        (Rust/codebrix-webgpu, Rust/codebrix-webgpu-graphics, Rust/codebrix-webgpu-animation), in
+        VENDORED FORM: a
+        folder <name>-<version>/ (from the [package] table of its Cargo.toml) with its files and a
+        GENERATED .cargo-checksum.json, {"files":{"<relative path>":"<sha256>",...},"package":null},
+        which is what cargo's directory sources need. The crate's target/ folder, its Cargo.lock,
+        any .cargo/ folder and any .cargo-checksum.json of its own never enter the archive.
+    DETERMINISTIC: the same files give the same archive, byte for byte. Entries are written in
+    ordinal order of their paths, with one fixed time stamp and no file permissions, so neither the
+    file system's order nor the times of a checkout change the bytes (the platform's frontend
+    build compares the archive's hash to decide whether to rewrite an application's vendor
+    folder).
+    An inline task (MSBuild's RoslynCodeTaskFactory, part of MSBuild) rather than ZipDirectory:
+    ZipDirectory records each file's time stamp and the file system's order, and cannot add a
+    generated file to an archive of another folder. No package, no script.
+  -->
+  <UsingTask TaskName="WriteWebGpuCratesArchive"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <VendorFolder ParameterType="System.String" Required="false" />
+      <FirstPartyCrateFolders ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+      <DestinationFile ParameterType="System.String" Required="true" />
+      <FirstPartyCrates ParameterType="System.String[]" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.Collections.Generic" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.IO.Compression" />
+      <Using Namespace="System.Linq" />
+      <Using Namespace="System.Security.Cryptography" />
+      <Using Namespace="System.Text" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        // The task is compiled against .NET Standard 2.0 (RoslynCodeTaskFactory), so it uses only
+        // what that offers.
+        var stamp = new DateTimeOffset(1980, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        Func<string, string, string> relativeTo = (folder, path) => path.Substring(folder.TrimEnd(Path.DirectorySeparatorChar).Length + 1).Replace('\\', '/');
+        // archive path -> (bytes on disk, or null) / (generated text, or null)
+        var entries = new SortedDictionary<string, Tuple<string, byte[]>>(StringComparer.Ordinal);
+        var vendorRoot = string.IsNullOrEmpty(VendorFolder) ? null : Path.GetFullPath(VendorFolder);
+        var vendorNames = new HashSet<string>(StringComparer.Ordinal);
+        if (vendorRoot != null && Directory.Exists(vendorRoot))
+        {
+            foreach (var crate in Directory.GetDirectories(vendorRoot))
+            {
+                vendorNames.Add(Path.GetFileName(crate));
+                foreach (var file in Directory.GetFiles(crate, "*", SearchOption.AllDirectories))
+                {
+                    entries[relativeTo(vendorRoot, file)] = Tuple.Create(file, (byte[])null);
+                }
+            }
+        }
+
+        var written = new List<string>();
+        foreach (var item in FirstPartyCrateFolders)
+        {
+            var root = Path.GetFullPath(item.ItemSpec);
+            var manifest = Path.Combine(root, "Cargo.toml");
+            if (!File.Exists(manifest))
+            {
+                Log.LogError("The first-party crate folder '" + root + "' has no Cargo.toml. Each folder the project names as a first-party crate (FirstPartyCrateFolders) must be a crate's folder (the one with its Cargo.toml).");
+                return false;
+            }
+
+            string name = null;
+            string version = null;
+            var inPackage = false;
+            foreach (var raw in File.ReadAllLines(manifest))
+            {
+                var line = raw.Trim();
+                if (line.StartsWith("["))
+                {
+                    if (inPackage) { break; }
+                    inPackage = line == "[package]";
+                    continue;
+                }
+                if (!inPackage) { continue; }
+                foreach (var key in new[] { "name", "version" })
+                {
+                    if (!line.StartsWith(key)) { continue; }
+                    var rest = line.Substring(key.Length).TrimStart();
+                    if (!rest.StartsWith("=")) { continue; }
+                    rest = rest.Substring(1).Trim();
+                    var end = rest.Length > 1 && rest[0] == '"' ? rest.IndexOf('"', 1) : -1;
+                    if (end < 0) { continue; }
+                    var value = rest.Substring(1, end - 1);
+                    if (key == "name" && name == null) { name = value; }
+                    if (key == "version" && version == null) { version = value; }
+                }
+            }
+
+            if (name == null || version == null)
+            {
+                Log.LogError("The Cargo.toml of the first-party crate '" + root + "' names no [package] name and version on lines of their own (name = \"...\", version = \"...\"). Write them so; the archive folder is named <name>-<version>.");
+                return false;
+            }
+
+            var folder = name + "-" + version;
+            if (vendorNames.Contains(folder))
+            {
+                Log.LogError("The first-party crate " + folder + " has the name and version of a vendored crate in '" + vendorRoot + "'. Give the first-party crate a name no third-party crate uses.");
+                return false;
+            }
+
+            var checksums = new SortedDictionary<string, string>(StringComparer.Ordinal);
+            foreach (var file in Directory.GetFiles(root, "*", SearchOption.AllDirectories))
+            {
+                var relative = relativeTo(root, file);
+                var top = relative.Split('/')[0];
+                if (top == "target" || top == ".cargo" || relative == "Cargo.lock" || relative == ".cargo-checksum.json")
+                {
+                    continue;
+                }
+
+                using (var stream = File.OpenRead(file))
+                using (var sha256 = SHA256.Create())
+                {
+                    checksums[relative] = BitConverter.ToString(sha256.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                }
+                entries[folder + "/" + relative] = Tuple.Create(file, (byte[])null);
+            }
+
+            var json = new StringBuilder("{\"files\":{");
+            var firstFile = true;
+            foreach (var pair in checksums)
+            {
+                if (!firstFile) { json.Append(','); }
+                firstFile = false;
+                json.Append('"').Append(pair.Key.Replace("\\", "\\\\").Replace("\"", "\\\"")).Append("\":\"").Append(pair.Value).Append('"');
+            }
+            json.Append("},\"package\":null}");
+            entries[folder + "/.cargo-checksum.json"] = Tuple.Create((string)null, Encoding.UTF8.GetBytes(json.ToString()));
+            written.Add(folder);
+        }
+
+        var destination = Path.GetFullPath(DestinationFile);
+        Directory.CreateDirectory(Path.GetDirectoryName(destination));
+        var temporary = destination + ".tmp";
+        using (var output = new FileStream(temporary, FileMode.Create, FileAccess.Write))
+        using (var archive = new ZipArchive(output, ZipArchiveMode.Create))
+        {
+            foreach (var pair in entries)
+            {
+                var entry = archive.CreateEntry(pair.Key, CompressionLevel.Optimal);
+                entry.LastWriteTime = stamp;
+                using (var target = entry.Open())
+                {
+                    if (pair.Value.Item1 != null)
+                    {
+                        using (var source = File.OpenRead(pair.Value.Item1))
+                        {
+                            source.CopyTo(target);
+                        }
+                    }
+                    else
+                    {
+                        target.Write(pair.Value.Item2, 0, pair.Value.Item2.Length);
+                    }
+                }
+            }
+        }
+
+        if (File.Exists(destination))
+        {
+            File.Delete(destination);
+        }
+        File.Move(temporary, destination);
+        FirstPartyCrates = written.ToArray();
+        Log.LogMessage(MessageImportance.Normal, Path.GetFileName(destination) + ": " + entries.Count + " files; first-party crates: " + string.Join(", ", written));
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+</Project>

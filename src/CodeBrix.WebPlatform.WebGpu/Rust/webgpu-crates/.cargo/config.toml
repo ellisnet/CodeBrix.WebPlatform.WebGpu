@@ -1,0 +1,9 @@
+# Only for resolving and auditing the WebGpu crate set inside the CodeBrix.WebPlatform.WebGpu
+# repository: the crates come from the vendored folder beside this one, never from the network.
+# Re-vendoring (vendoring/wgpu/UPGRADE-README.txt) re-takes that folder from crates.io without
+# this file.
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "../vendor"

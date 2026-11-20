@@ -1,0 +1,53 @@
+# THE WebGpu CRATE SET. This manifest is never built into anything: it names the `wgpu` crate and
+# the features a platform frontend may use in a WebGPU-capable browser, so that `cargo vendor`
+# takes exactly the crates that resolution needs into ../vendor, which the
+# CodeBrix.WebPlatform.WebGpu package carries as its crate bundle and the platform's frontend
+# build writes into each application's frontend. Its Cargo.lock beside it fixes their versions.
+# The lock is resolved against the CodeBrix.WebPlatform platform's own Cargo.lock, so that every
+# crate the platform also carries is at the platform's exact version (the platform's strict rule
+# for crate bundles); vendoring/wgpu/UPGRADE-README.txt says how.
+#
+# Repository-only (not in the package). The target is wasm32-unknown-unknown: a browser build.
+[package]
+name = "codebrix-webplatform-webgpu-crates"
+version = "1.0.0"
+edition = "2021"
+publish = false
+description = "The crate set of the CodeBrix.WebPlatform.WebGpu package: the wgpu crates a platform frontend may use offline."
+license = "Apache-2.0"
+
+[dependencies]
+# WebGPU only: no WebGL, no native backend. With the default features off, wgpu brings no native
+# graphics API crates into the lock at all. The features switched on, and why:
+#   std     the standard library inside wgpu and its dependencies (better error reporting; a
+#           browser frontend always has std).
+#   webgpu  the browser's WebGPU backend; it turns on `web` (wasm-bindgen, js-sys, web-sys) and
+#           wasm-bindgen-futures for the asynchronous calls (requesting an adapter and a device,
+#           mapping buffers).
+#   wgsl    accepting WGSL shader source (`ShaderSource::Wgsl`, `include_wgsl!`); the browser
+#           compiles WGSL itself, so this brings in no shader compiler.
+# Left off on purpose:
+#   webgl                         the WebGL fallback (WebGPU only, by the owner's decision).
+#   dx12, metal, vulkan, gles, angle, vulkan-portability, drm, static-dxc
+#                                 native backends; they do nothing in a browser build.
+#   noop                          a testing backend that performs no computation.
+#   spirv, glsl, naga-ir          accepting SPIR-V, GLSL or naga IR: these compile the naga shader
+#                                 translator into the browser build to turn them into WGSL. naga
+#                                 stays out of the browser; spirv and glsl would also need crates
+#                                 that are not vendored.
+#   serde, trace                  serialization of wgpu types and trace capture files; they need a
+#                                 crate that is not vendored and add no GPU capability.
+#   parking_lot                   a lock implementation for multithreaded native programs; a browser
+#                                 frontend is single-threaded and std's locks serve.
+#   exhaust                       a helper for listing texture formats; it needs a crate that is not
+#                                 vendored.
+# Features that need no crate beyond the vendored ones (an application may switch them on in its
+# own manifest; they change nothing here): fragile-send-sync-non-atomic-wasm, counters,
+# strict_asserts, custom, parking_lot, naga-ir and noop.
+wgpu = { version = "=30.0.2", default-features = false, features = ["std", "webgpu", "wgsl"] }
+# The maths types of the first-party crate codebrix-webgpu (vectors, matrices, quaternions),
+# which it re-exports under glam's own names. Approved by the owner by name. Its default
+# features (std) plus `bytemuck`, so that its types can be handed to the GPU as plain bytes
+# (bytemuck is already in the set for wgpu). glam's other optional dependencies (approx, mint,
+# rand, serde, libm, ...) stay off and are not vendored.
+glam = { version = "=0.34.3", features = ["bytemuck"] }
