@@ -13,7 +13,7 @@
 # a name and version from a vendor folder as unchanging.
 [package]
 name = "codebrix-webgpu"
-version = "1.1.1"
+version = "1.2.0"
 edition = "2021"
 publish = false
 description = "The WebGPU context, canvas host, frame loop and maths of CodeBrix.WebPlatform frontends: wgpu and glam for a Dioxus page in the browser, without JavaScript."

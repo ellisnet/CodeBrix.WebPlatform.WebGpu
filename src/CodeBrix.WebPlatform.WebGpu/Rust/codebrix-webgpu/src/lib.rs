@@ -2,11 +2,17 @@
 //!
 //! What every CodeBrix.WebPlatform frontend that draws with WebGPU needs, and nothing particular
 //! to one application: the WebGPU context, ONE canvas host component with its frame loop and
-//! input, the "WebGPU is not available" result and message, and the maths types.
+//! input, the "WebGPU is not available" result and message, the boundary that leaves a part of the
+//! page out (or shows a fallback) where WebGPU is not available, and the maths types.
 //!
 //! - [`GpuContext`] owns (or shares) the `wgpu` instance, adapter, device and queue.
 //!   [`GpuContext::request`] asks the browser for them once; its error, [`GpuUnavailable`], is
 //!   the "WebGPU is not available in this browser" result, which [`WebGpuUnavailable`] shows.
+//! - [`WebGpuBoundary`] is the switch between "WebGPU works" and "it does not": its children are
+//!   made only where WebGPU works (they read the context with [`use_gpu`]); elsewhere it shows its
+//!   `fallback` (given the reason), or nothing when it has none. Every boundary of a page shares
+//!   one request to the browser and one device; [`set_page_gpu_options`] ([`PageGpuOptions`])
+//!   says how that request asks (a power preference, features, limits), once per page.
 //!   It installs the device's ONE uncaptured-error handler (once per device, however many
 //!   contexts wrap it) and hands the errors to any number of readers
 //!   ([`GpuContext::subscribe_errors`], [`GpuErrorSubscription`]: every reader sees every error).
@@ -66,6 +72,7 @@
 //! }
 //! ```
 
+mod boundary;
 mod canvas;
 mod clock;
 mod context;
@@ -81,6 +88,7 @@ mod sizing;
 mod time_points;
 mod unavailable;
 
+pub use boundary::{set_page_gpu_options, use_gpu, PageGpuOptions, WebGpuBoundary};
 pub use canvas::WebGpuCanvas;
 pub use clock::CanvasClock;
 pub use context::{GpuContext, GpuUnavailable};

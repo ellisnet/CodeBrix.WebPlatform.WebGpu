@@ -20,7 +20,7 @@
       any application does.
     -->
     <WebPlatformPackageVersion>1.0.324.293</WebPlatformPackageVersion>
-    <WebGpuPackageVersion>1.0.324.716</WebGpuPackageVersion>
+    <WebGpuPackageVersion>1.0.326.1085</WebGpuPackageVersion>
   </PropertyGroup>
 
   <ItemGroup>

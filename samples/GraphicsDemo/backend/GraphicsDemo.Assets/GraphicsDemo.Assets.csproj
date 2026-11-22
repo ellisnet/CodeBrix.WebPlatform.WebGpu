@@ -17,7 +17,7 @@
       the nuget.config at the repository root). The sample takes this repository's packages as
       PACKAGES, never as project references into src/.
     -->
-    <WebGpuPackageVersion>1.0.324.716</WebGpuPackageVersion>
+    <WebGpuPackageVersion>1.0.326.1085</WebGpuPackageVersion>
   </PropertyGroup>
 
   <ItemGroup>

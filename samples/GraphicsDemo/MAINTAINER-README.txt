@@ -622,8 +622,18 @@ applications (there is no default one), under frontends/:
                missing-characters, the SVG scenes (svg-parts first) and the
                Lottie scenes at the end (demo/mod.rs, REGISTRATIONS).
 
-Both show "WebGPU is not available in this browser", with one sentence of
-what to do, when the browser gives no adapter.
+WHEN THE BROWSER HAS NO WEBGPU the sample shows the three ways a page can
+behave (codebrix-webgpu's WebGpuBoundary and its message component):
+  - /graphics: its OWN fallback panel (id graphics-fallback: what the ten
+    scenes would show, and the way back to "/"). The scenes are inside a
+    WebGpuBoundary with a fallback; the page's one request adds the optional
+    feature timestamp-query through set_page_gpu_options (main.rs, App).
+  - /animation: the crate's standard message, "WebGPU is not available in
+    this browser" with one sentence of what to do (WebGpuUnavailable).
+  - /animation/?scene=on-the-page: NOTHING but the page itself - its
+    gradient, checker pattern and text; the canvas and its controls are in
+    two WebGpuBoundarys without a fallback (they share one request), and the
+    fonts are never fetched.
 
 At the site root, "/" is the developer's OWN page,
 backend/GraphicsDemo.Api/wwwroot/index.html (plain HTML with site.css beside
@@ -974,7 +984,8 @@ times in "shapes" at pixel ratio 2 sees the catalogue move on to the next
 scene meanwhile: check that scene's motion and seek in a run of its own.
 
 What to check (each page's elements carry ids for this: page-title,
-adapter-name, frame-count, webgpu-canvas, webgpu-unavailable; on graphics
+adapter-name, frame-count, webgpu-canvas, webgpu-unavailable,
+graphics-fallback; on graphics
 also clock-time, clock-state, clock-toggle, overlay-toggle,
 triangle-point-frame, overlay-point-frame):
   - "/" serves the page with links to /graphics and /animation and to the
@@ -1161,9 +1172,13 @@ triangle-point-frame, overlay-point-frame):
     platform's client fetches with the browser's HTTP cache off (cache:
     "no-store"), so it never sends the ETag back, although the backend
     answers a request that does (If-None-Match) with 304;
-  - WITHOUT an adapter (Chrome without the switch): both applications show
-    "WebGPU is not available in this browser" and the console has no
-    uncaught error (Chrome itself warns "No available adapters.");
+  - WITHOUT an adapter (Chrome without the switch, or Firefox without
+    dom.webgpu.enabled): /graphics shows its own panel (graphics-fallback)
+    and no "not available" message; /animation shows "WebGPU is not
+    available in this browser"; /animation/?scene=on-the-page shows the page
+    alone (page-surface, no page-canvas, no page-clock-toggle, no message);
+    the console has no uncaught error (Chrome itself warns "No available
+    adapters.");
   - the console shows no errors and no Content-Security-Policy violations,
     and no request fails (the one expected console entry is Chrome's
     warning for the Sprites scene's deliberate error, once its check button

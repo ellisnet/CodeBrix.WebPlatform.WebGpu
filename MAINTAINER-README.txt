@@ -1478,7 +1478,7 @@ PIXEL PLANES, THE GPU HALVES AND THE PAINTERLY PLAYBACK
   THE REPORTS: an unknown matte layer name goes into the session's report list once
   (DrawingSession::take_reports). The device's shared WebGPU error queue cannot take it: its
   publish is crate-internal to codebrix-webgpu, and a new public method there would mean a new
-  codebrix-webgpu version, which the Graphics crate's exact pin of 1.1.1 would then conflict
+  codebrix-webgpu version, which the Graphics crate's exact pin would then conflict
   with. An application shows or logs the reports beside the device's errors.
   WHAT THE TESTS COVER: rendering/core/tests_gpu_half.rs (noise paint, the particles operation,
   frame parameters, transitions' recorded items, brushstrokes painting on, the ownership

@@ -15,7 +15,7 @@
 # a name and version from a vendor folder as unchanging.
 [package]
 name = "codebrix-webgpu-animation"
-version = "1.6.1"
+version = "1.6.2"
 edition = "2021"
 publish = false
 description = "Real-time 2D animation for CodeBrix.WebPlatform frontends: the drawing session, shapes, text, gradient fills, fades, keyframe tracks bound to elements, layers and a camera, transforms, groups, layout, path draw-on, motion along paths, morphs, pictures and sprites from decoded pixels, the picture-pixels form and PNG files, masks, blur, glow and drop-shadow effects, text blocks with reveals, staggers, captions from SRT and WebVTT and text along paths, path combining and path queries, combined bindings, rolling and trains along paths, formations, safe areas, SVG documents with per-part animation and their own SMIL and CSS animations, pixel planes with filters, transitions, noise, particles and motion blur (CPU), noise drawn on the GPU, particles drawn instanced, GPU frame operations and layer transitions, animated brush strokes, ownership maps, keyframe players and hard-edged masks (CPU), easing, colour ramps and timelines of CodeBrix.Imaging.Drawing.NoSkia, and Lottie animations, drawn on the GPU by a stencil-then-cover renderer as a layer of the codebrix-webgpu canvas host."
@@ -25,7 +25,7 @@ repository = "https://github.com/ellisnet/CodeBrix.WebPlatform.WebGpu"
 [dependencies]
 # The canvas host this crate's renderer is a LAYER of (the frame, its clock time, the target's
 # format and blending convention), the GPU context, and wgpu itself (re-exported by it).
-codebrix-webgpu = "=1.1.1"
+codebrix-webgpu = "=1.2.0"
 # Curves: flattening, stroke expansion with joins, caps, miter limit and dashes.
 kurbo = "=0.13.1"
 # The brush, gradient, image, blend and fill-rule vocabulary the renderer speaks (velato speaks

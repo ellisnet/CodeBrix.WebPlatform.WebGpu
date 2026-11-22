@@ -5,12 +5,14 @@
 //! so its shapes and text float on the page: discs and a card move over it, translucent parts
 //! blend with it, and a half-transparent square and an opaque grey disc stay still (fixed places
 //! for a test tool to read). "Hide the canvas" makes the canvas invisible (a class, no inline style), so
-//! the page can be seen - or read back - without it, at the same place.
+//! the page can be seen - or read back - without it, at the same place. The animation is OPTIONAL
+//! (`WebGpuBoundary` without a fallback): where WebGPU is not available the page shows its own
+//! background and text alone, with no message.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use codebrix_webgpu::{CanvasClock, CanvasFrame, CanvasLayers, CanvasRenderer, CanvasTarget, GpuContext, GpuErrorSubscription, RendererHandle, WebGpuCanvas};
+use codebrix_webgpu::{use_gpu, CanvasClock, CanvasFrame, CanvasLayers, CanvasRenderer, CanvasTarget, GpuContext, GpuErrorSubscription, RendererHandle, WebGpuBoundary, WebGpuCanvas};
 use codebrix_webgpu_animation::rendering::AnimationLayer;
 use codebrix_webgpu_animation::shapes::{CircleShape, RectangleShape, RectangleShapeOptions, ShapeOptions, TextShape, TextShapeOptions};
 use codebrix_webgpu_animation::text::{FontRegistry, TextAlign};
@@ -88,13 +90,72 @@ fn build(session: &mut DrawingSession, seconds: f64) {
 
 /// The page: its own background and text, the frameless transparent canvas over them, and a
 /// button that hides the canvas.
+///
+/// THE ANIMATION IS OPTIONAL: the canvas, and the controls and counters that belong to it, are in
+/// two `WebGpuBoundary`s without a fallback. Where WebGPU is not available the page is its own
+/// background and text alone - no animation, no controls, no message - and the fonts are never
+/// fetched. The two boundaries share the page's one request to the browser.
 #[component]
-pub fn OnThePage(context: GpuContext, fonts: FontRegistry) -> Element {
+pub fn OnThePage() -> Element {
     let clock = use_hook(CanvasClock::new);
     let error_count = use_signal(|| 0usize);
     let frames = use_signal(|| 0u64);
     let mut hidden = use_signal(|| false);
     let mut paused = use_signal(|| false);
+    let toggle_clock = {
+        let clock = clock.clone();
+        move |_| paused.set(clock.toggle())
+    };
+    let button = "rounded-md bg-slate-800 px-3 py-1.5 text-sm text-slate-100 ring-1 ring-white/10 hover:bg-slate-700";
+    rsx! {
+        div { id: "page-surface", class: "relative h-[720px] w-[1280px] overflow-hidden bg-linear-to-br from-emerald-200 via-sky-200 to-violet-300",
+            div { class: "absolute inset-0 grid grid-cols-8 grid-rows-4",
+                for i in 0..32 {
+                    div { key: "{i}", class: if (i / 8 + i) % 2 == 0 { "bg-white/30" } else { "" } }
+                }
+            }
+            div { class: "absolute inset-x-12 top-10 text-slate-800",
+                h2 { class: "text-4xl font-bold", "An animation on the page" }
+                p { class: "mt-3 max-w-2xl text-lg", "This gradient, the checker pattern and this text belong to the page (HTML and CSS). The canvas over them has no frame and a transparent background; the drawing session leaves its background out, so only its shapes and text appear. The animation is optional: a browser without WebGPU leaves it out and shows this page alone, with no message." }
+            }
+            p { class: "absolute bottom-6 left-12 text-base text-slate-700", "Ordinary page text, under the canvas." }
+            // The animation: only where WebGPU works. Elsewhere the page is simply the page.
+            WebGpuBoundary {
+                PageAnimation { clock: clock.clone(), hidden, error_count, frames }
+            }
+        }
+        // The animation's controls and counters: a second boundary, sharing the first one's request.
+        WebGpuBoundary {
+            div { class: "flex flex-wrap items-center gap-3",
+                button { id: "page-clock-toggle", class: "{button}", onclick: toggle_clock, if paused() { "Resume the clock" } else { "Pause the clock" } }
+                button { id: "page-canvas-toggle", class: "{button}", onclick: move |_| hidden.set(!hidden()), if hidden() { "Show the canvas" } else { "Hide the canvas" } }
+            }
+            div { class: "rounded-lg bg-slate-900 p-4 text-sm ring-1 ring-white/10",
+                p { class: "text-slate-300", "Frame " span { id: "page-frame", class: "font-mono text-white", "{frames}" } }
+                p { class: "text-slate-300", "Errors while drawing: " span { id: "page-error-count", class: "font-mono text-white", "{error_count}" } }
+                p { class: "mt-2 text-slate-400", "DRAWING ON THE PAGE: WebGpuCanvas with transparent: true and no frame in the page's styling; the session drawn as a layer without its background (the default). The canvas and these controls are in WebGpuBoundary: without WebGPU the page shows neither." }
+            }
+        }
+    }
+}
+
+/// Inside the boundary: fetches the fonts from the backend (only where WebGPU works), then shows
+/// the canvas. Nothing shows while they load.
+#[component]
+fn PageAnimation(clock: CanvasClock, hidden: Signal<bool>, error_count: Signal<usize>, frames: Signal<u64>) -> Element {
+    let loaded = use_resource(crate::load_fonts);
+    let state = loaded.read();
+    match &*state {
+        None => rsx! {},
+        Some(Err(reason)) => rsx! { p { id: "fonts-failed", class: "absolute bottom-16 left-12 rounded-lg border border-red-400/40 bg-red-400/10 p-5 text-red-900", "{reason}" } },
+        Some(Ok(fonts)) => rsx! { PageCanvas { clock: clock.clone(), hidden, error_count, frames, fonts: fonts.clone() } },
+    }
+}
+
+/// The frameless transparent canvas, on the boundary's context (`use_gpu`).
+#[component]
+fn PageCanvas(clock: CanvasClock, hidden: Signal<bool>, error_count: Signal<usize>, frames: Signal<u64>, fonts: FontRegistry) -> Element {
+    let context = use_gpu();
     let layers = use_hook(|| {
         let session = Rc::new(RefCell::new(DrawingSession::new(DrawingSessionOptions { calibration_size: (WIDTH as u32, HEIGHT as u32), layer_opacity: 255, background_fill_color: Color::from_rgb(18, 20, 30), fonts: Some(fonts.clone()), ..DrawingSessionOptions::default() })));
         // The session HAS a background colour - and, drawn as a layer, leaves it out by default.
@@ -105,42 +166,16 @@ pub fn OnThePage(context: GpuContext, fonts: FontRegistry) -> Element {
         });
         CanvasLayers::single(RendererHandle::new(PageLayer { inner, errors: None, error_count, frames }))
     });
-    let toggle_clock = {
-        let clock = clock.clone();
-        move |_| paused.set(clock.toggle())
-    };
-    let button = "rounded-md bg-slate-800 px-3 py-1.5 text-sm text-slate-100 ring-1 ring-white/10 hover:bg-slate-700";
     let canvas_class = if hidden() { "invisible absolute inset-0 block h-[720px] w-[1280px] touch-none select-none" } else { "absolute inset-0 block h-[720px] w-[1280px] touch-none select-none" };
     rsx! {
-        div { id: "page-surface", class: "relative h-[720px] w-[1280px] overflow-hidden bg-linear-to-br from-emerald-200 via-sky-200 to-violet-300",
-            div { class: "absolute inset-0 grid grid-cols-8 grid-rows-4",
-                for i in 0..32 {
-                    div { key: "{i}", class: if (i / 8 + i) % 2 == 0 { "bg-white/30" } else { "" } }
-                }
-            }
-            div { class: "absolute inset-x-12 top-10 text-slate-800",
-                h2 { class: "text-4xl font-bold", "An animation on the page" }
-                p { class: "mt-3 max-w-2xl text-lg", "This gradient, the checker pattern and this text belong to the page (HTML and CSS). The canvas over them has no frame and a transparent background; the drawing session leaves its background out, so only its shapes and text appear." }
-            }
-            p { class: "absolute bottom-6 left-12 text-base text-slate-700", "Ordinary page text, under the canvas." }
-            WebGpuCanvas {
-                context: context.clone(),
-                layers,
-                clock: clock.clone(),
-                transparent: true,
-                id: "page-canvas",
-                label: "Shapes and text drawn by the animation crate, floating over the page.",
-                class: canvas_class,
-            }
-        }
-        div { class: "flex flex-wrap items-center gap-3",
-            button { id: "page-clock-toggle", class: "{button}", onclick: toggle_clock, if paused() { "Resume the clock" } else { "Pause the clock" } }
-            button { id: "page-canvas-toggle", class: "{button}", onclick: move |_| hidden.set(!hidden()), if hidden() { "Show the canvas" } else { "Hide the canvas" } }
-        }
-        div { class: "rounded-lg bg-slate-900 p-4 text-sm ring-1 ring-white/10",
-            p { class: "text-slate-300", "Frame " span { id: "page-frame", class: "font-mono text-white", "{frames}" } }
-            p { class: "text-slate-300", "Errors while drawing: " span { id: "page-error-count", class: "font-mono text-white", "{error_count}" } }
-            p { class: "mt-2 text-slate-400", "DRAWING ON THE PAGE: WebGpuCanvas with transparent: true and no frame in the page's styling; the session drawn as a layer without its background (the default)." }
+        WebGpuCanvas {
+            context,
+            layers,
+            clock,
+            transparent: true,
+            id: "page-canvas",
+            label: "Shapes and text drawn by the animation crate, floating over the page.",
+            class: canvas_class,
         }
     }
 }

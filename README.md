@@ -86,6 +86,37 @@ fn Page() -> Element {
 
 (`Scene` and `Titles` are the application's renderers: each implements `CanvasRenderer` and draws with the `wgpu` device directly.)
 
+### Leave WebGPU content out where the browser has no WebGPU
+
+`WebGpuBoundary` makes its children only where WebGPU works. Elsewhere it shows its `fallback`, or nothing at all when it has none, so the visitor never sees a "not available" message. The children read the context with `use_gpu()`, and every boundary of a page shares one request to the browser. A page that needs more of the device (a power preference, features, limits) says so once with `set_page_gpu_options`:
+
+```rust
+use codebrix_webgpu::{use_gpu, CanvasClock, CanvasLayers, RendererHandle, WebGpuBoundary, WebGpuCanvas};
+use dioxus::prelude::*;
+
+#[component]
+fn Page() -> Element {
+    rsx! {
+        h1 { "Welcome" }
+        // An optional animation: where WebGPU is not available, it is simply not there.
+        WebGpuBoundary { HeroAnimation {} }
+        // A picture in its place instead.
+        WebGpuBoundary {
+            fallback: |_| rsx! { img { src: "/hero-still.webp" } },
+            HeroAnimation {}
+        }
+    }
+}
+
+#[component]
+fn HeroAnimation() -> Element {
+    let gpu = use_gpu();
+    let clock = use_hook(CanvasClock::new);
+    let layers = use_hook(|| CanvasLayers::single(RendererHandle::new(Scene::new())));
+    rsx! { WebGpuCanvas { context: gpu, layers, clock, class: "w-full aspect-video" } }
+}
+```
+
 ### Animate 2D shapes on the canvas
 
 The build program registers the Animation package (`AnimationCrates.Register();`, which registers the WebGpu package's crates first), and the frontend names `codebrix-webgpu-animation` in its `Cargo.toml`:

@@ -177,8 +177,10 @@ In the build program, beside them:
 
 In the frontend's Rust:
 
-    use codebrix_webgpu::{CanvasClock, CanvasFrame, CanvasLayers, CanvasRenderer,
-                          CanvasTarget, GpuContext, RendererHandle, WebGpuCanvas,
+    use codebrix_webgpu::{set_page_gpu_options, use_gpu, CanvasClock,
+                          CanvasFrame, CanvasLayers, CanvasRenderer,
+                          CanvasTarget, GpuContext, PageGpuOptions,
+                          RendererHandle, WebGpuBoundary, WebGpuCanvas,
                           WebGpuUnavailable};
     use codebrix_webgpu::wgpu;                    // the whole wgpu API
     use codebrix_webgpu::math::{Mat4, Quat, Vec3};// glam's types
@@ -495,6 +497,37 @@ GETTING A DEVICE, AND THE "NOT AVAILABLE" MESSAGE.
     reason.advice()        one sentence of what the visitor can do
     WebGpuUnavailable { reason, class, heading_class, text_class }
         The message as a component (id `webgpu-unavailable`, role alert).
+
+A PART OF THE PAGE ONLY WHERE WEBGPU WORKS: WebGpuBoundary.
+    WebGpuBoundary { HeroAnimation {} }
+        Its children are made ONLY where WebGPU works. Elsewhere it shows
+        nothing: the children never run, so they load nothing and show no
+        message (an optional animation simply is not there).
+    WebGpuBoundary { fallback: |_| rsx! { img { src: "/still.webp" } }, HeroAnimation {} }
+        The same, with something in its place where WebGPU is not
+        available. The closure is given the reason (GpuUnavailable), the
+        same shape as Dioxus's own SuspenseBoundary { fallback: |_| ... }.
+    let gpu = use_gpu();
+        In a component inside a boundary: the page's GpuContext (clone it
+        freely). It panics outside a boundary.
+    While the browser is still answering (usually a few milliseconds) the
+    boundary shows nothing, never the fallback first; give the space around
+    it a fixed size if the page must not move. EVERY BOUNDARY OF THE PAGE
+    SHARES ONE REQUEST and one device: the first asks, the others wait for
+    the same answer or take it at once.
+    set_page_gpu_options(PageGpuOptions { .. })
+        How that one request asks; by default exactly as GpuContext::request
+        does. Fields: power_preference; required_features (missing on the
+        adapter -> NoDevice, so the fallbacks show); optional_features
+        (asked for ONLY where the adapter has them - read
+        use_gpu().device().features() to see which the device got);
+        required_limits (None = WebGPU's defaults). Call it ONCE, before the
+        page's first boundary appears - at the top of the root component:
+            use_hook(|| set_page_gpu_options(PageGpuOptions {
+                optional_features: wgpu::Features::TIMESTAMP_QUERY,
+                ..PageGpuOptions::default() }));
+        Options set after the page has asked are used only if it has to ask
+        again (after a lost device).
 
 WebGPU'S ERRORS: ONE HANDLER PER DEVICE, ANY NUMBER OF READERS.
     WebGPU allows ONE uncaptured-error handler and ONE device-lost callback
@@ -3196,6 +3229,14 @@ COMMON PITFALLS TO AVOID
     * Leaving out default-features = false on a `wgpu` line of the
       frontend's own. The default features need native-backend crates the
       bundle does not carry.
+    * Calling use_gpu() in a component that is not inside a WebGpuBoundary.
+      It panics: put the component inside the boundary (the boundary's own
+      component cannot read it, only its children can).
+    * Putting the content that needs WebGPU beside a WebGpuBoundary instead
+      of inside it. Only the children are left out where WebGPU is missing.
+    * Calling set_page_gpu_options() inside a component below the first
+      WebGpuBoundary, or after it has appeared. The page has asked by then;
+      call it at the top of the root component (use_hook).
     * Probing with wgpu::util::is_browser_webgpu_supported() before
       GpuContext::request(). The probe requests an adapter itself; the
       browser then asks twice. The one request's error is the answer.
@@ -3385,6 +3426,10 @@ QUICK REFERENCE CARD
 
   FRONTEND Rust (codebrix_webgpu)
     GpuContext::request().await               // Err: WebGpuUnavailable
+    WebGpuBoundary { Content {} }             // Content only where WebGPU works
+    WebGpuBoundary { fallback: |_| rsx!{..}, Content {} }  // else the fallback
+    use_gpu()                                 // inside it: the GpuContext
+    set_page_gpu_options(PageGpuOptions{..})  // once, in the root component
     CanvasLayers::new(vec![bottom, top])      // push/insert/remove live
     CanvasClock::new()                        // pause/resume/set_speed/seek
     clock.define_point("name", seconds)       // named points in time

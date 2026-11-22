@@ -3,7 +3,8 @@
 //! lists them), all drawn - text included - through codebrix-webgpu-animation as a layer of the
 //! codebrix-webgpu canvas host on its clock; and, at ?scene=on-the-page, DRAWING ON THE PAGE (a
 //! frameless, transparent canvas over the page's own background). WebGPU only: without it, the
-//! crate's "WebGPU is not available" message. EVERY RESOURCE COMES FROM THE BACKEND (this
+//! demo shows the crate's "WebGPU is not available" message, and the page "on the page" shows its
+//! own content without the animation (its WebGpuBoundary). EVERY RESOURCE COMES FROM THE BACKEND (this
 //! sample's rule; the crate takes bytes from anywhere), fetched once with the generated `_bytes`
 //! calls before the catalogue is made: the fonts (`roboto_regular_bytes`,
 //! `open_sans_regular_bytes`), registered with the crate's FontRegistry; the pictures - the Cube
@@ -56,7 +57,11 @@ fn App() -> Element {
                     a { href: "/", class: "text-sky-300 hover:text-sky-200", "All applications" }
                 }
             }
-            GpuPage {}
+            if on_the_page() {
+                OnThePage {}
+            } else {
+                GpuPage {}
+            }
         }
     }
 }
@@ -122,7 +127,6 @@ fn FontsPage(context: GpuContext) -> Element {
     match &*state {
         None => rsx! { p { id: "fonts-pending", class: "text-sm text-slate-400", "Fetching the fonts from the backend..." } },
         Some(Err(reason)) => rsx! { p { id: "fonts-failed", class: "rounded-lg border border-red-400/40 bg-red-400/10 p-5 text-red-100", "{reason}" } },
-        Some(Ok(registry)) if on_the_page() => rsx! { OnThePage { context: context.clone(), fonts: registry.clone() } },
         Some(Ok(registry)) => rsx! { DemoPage { context: context.clone(), fonts: registry.clone() } },
     }
 }

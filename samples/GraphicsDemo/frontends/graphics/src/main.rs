@@ -44,7 +44,8 @@
 //! What a scene fetched from the backend is kept for the life of the page (page_cache.rs):
 //! returning to a scene asks the backend for nothing.
 //!
-//! Without WebGPU it shows the crate's "WebGPU is not available" message instead.
+//! The scenes are inside a WebGpuBoundary: without WebGPU the page shows its OWN fallback panel
+//! instead (what the scenes would show), not the crate's "WebGPU is not available" message.
 
 mod generated;
 mod lit_scene;
@@ -66,8 +67,7 @@ mod viewer;
 mod viewer_actors;
 mod viewer_scene;
 
-use codebrix_webgpu::{wgpu, CanvasClock, CanvasLayers, GpuContext, GpuUnavailable, RendererHandle, WebGpuCanvas, WebGpuUnavailable};
-use codebrix_webgpu_graphics::{GraphicsContext, GraphicsContextOptions};
+use codebrix_webgpu::{set_page_gpu_options, use_gpu, wgpu, CanvasClock, CanvasLayers, GpuContext, PageGpuOptions, RendererHandle, WebGpuBoundary, WebGpuCanvas};
 use dioxus::prelude::*;
 
 use crate::lit_scene::LitScene;
@@ -125,6 +125,10 @@ fn main() {
 fn App() -> Element {
     // The platform's REST and SignalR clients, set up for this backend, on the first render.
     use_hook(generated::configure_platform);
+    // How the page's one WebGPU request asks: as the default does, plus the optional feature
+    // `timestamp-query` WHERE THE ADAPTER HAS IT - the GPU timer of the "More" scene measures with
+    // it, and goes without where it is missing. Set before the boundary below first asks.
+    use_hook(|| set_page_gpu_options(PageGpuOptions { optional_features: wgpu::Features::TIMESTAMP_QUERY, ..PageGpuOptions::default() }));
     rsx! {
         document::Stylesheet { href: TAILWIND_CSS }
         document::Link { rel: "icon", r#type: "image/x-icon", href: FAVICON }
@@ -133,48 +137,60 @@ fn App() -> Element {
                 h1 { id: "page-title", class: "text-2xl font-semibold text-white", "Graphics" }
                 a { href: "/", class: "text-sm text-sky-300 hover:text-sky-200", "All applications" }
             }
-            GpuPage {}
+            // The scenes where WebGPU works; this page's own panel where it does not.
+            WebGpuBoundary {
+                fallback: |_| rsx! { NoWebGpu {} },
+                Scenes {}
+            }
         }
     }
 }
 
-/// Asks the browser for an adapter and a device as `GpuContext::request` does (the browser's
-/// default adapter, WebGPU's default limits), adding the optional feature `timestamp-query`
-/// WHERE THE ADAPTER HAS IT - the GPU timer of the "More" scene measures with it, and goes without
-/// where it is missing.
-async fn request_gpu() -> Result<GpuContext, GpuUnavailable> {
-    let options = GraphicsContextOptions {
-        power_preference: wgpu::PowerPreference::None,
-        label: Some("codebrix-webgpu device".to_string()),
-        optional_features: wgpu::Features::TIMESTAMP_QUERY,
-        ..GraphicsContextOptions::default()
-    };
-    GraphicsContext::create(options).await.map(|graphics| graphics.gpu_context().clone())
-}
-
-/// Asks for the GPU once, then shows the scene or the "not available" message.
+/// What the page shows where the browser has no WebGPU: its OWN panel (the boundary's fallback),
+/// not the crate's "WebGPU is not available" message - what the scenes would show, and the way
+/// back. (The animation application shows the crate's message instead, and its "on the page" page
+/// shows nothing: the sample has all three.)
 #[component]
-fn GpuPage() -> Element {
-    let gpu = use_resource(request_gpu);
-    let state = gpu.read();
-    match &*state {
-        None => rsx! { p { id: "webgpu-pending", class: "text-sm text-slate-400", "Asking the browser for a WebGPU adapter..." } },
-        Some(Err(reason)) => rsx! {
-            WebGpuUnavailable {
-                reason: reason.clone(),
-                class: "rounded-lg border border-amber-400/40 bg-amber-400/10 p-5 text-amber-100",
-                heading_class: "text-lg font-semibold text-amber-200",
-                text_class: "mt-2 text-sm",
+fn NoWebGpu() -> Element {
+    rsx! {
+        section { id: "graphics-fallback", class: "rounded-lg bg-slate-900 p-6 ring-1 ring-white/10",
+            h2 { class: "text-lg font-semibold text-white", "These 3D scenes are drawn with WebGPU" }
+            p { class: "mt-2 text-sm text-slate-300", "This browser does not offer WebGPU, so the scenes are not shown here. In a browser that does, this page shows:" }
+            ul { class: "mt-4 grid gap-x-6 gap-y-2 text-sm text-slate-300 sm:grid-cols-2",
+                for (name, what) in SCENE_SUMMARIES {
+                    li { key: "{name}",
+                        span { class: "font-medium text-sky-200", "{name}" }
+                        " - {what}"
+                    }
+                }
             }
-        },
-        Some(Ok(context)) => rsx! { Scenes { context: context.clone() } },
+            p { class: "mt-5 text-sm",
+                a { href: "/", class: "text-sky-300 hover:text-sky-200", "Back to all applications" }
+            }
+        }
     }
 }
+
+/// The scenes, in a sentence each, for the page without WebGPU.
+const SCENE_SUMMARIES: [(&str, &str); 10] = [
+    ("Viewer", "the model viewer: models with physically based shading, image-based light, a skybox, HDR and tone mapping"),
+    ("Layers", "two layers on one clock: a triangle, and a translucent square over it"),
+    ("Shaders", "every built-in shader of the graphics crate, compiled by the browser"),
+    ("Textured quad", "a textured, rotating quad"),
+    ("Sprites", "a sprite batch: tinted, rotated, scaled and ordered sprites"),
+    ("Lit shapes", "lit shapes on a ground plane, under a camera you can drag around"),
+    ("Skinned model", "an archer playing its animation clips"),
+    ("Morph targets", "a shape blending between three morph targets"),
+    ("More", "a panorama, a render bundle, particles moved by compute, animated textures and a GPU timer"),
+    ("On the page", "models turning on a transparent canvas over the page's own background"),
+];
 
 /// The scene switch and the scene it shows. Each scene owns its canvas and clock; a scene that is
 /// switched away from stops drawing.
 #[component]
-fn Scenes(context: GpuContext) -> Element {
+fn Scenes() -> Element {
+    // The boundary's context: the page's one device.
+    let context = use_gpu();
     // `?scene=on-the-page` opens the page scene directly.
     let mut scene = use_signal(|| {
         let search = web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default();
