@@ -137,6 +137,10 @@ fn plane_arithmetic_is_noskias_bit_for_bit() {
     h.plane(p.clone().clamp(0.0, 1.0).unwrap());
     check("minmax", &h, 0xD3B287DF536BA73A);
 
+    // KNOWN FAILURE (2026-11-22): this case currently fails on macOS Golden Gate 27.2.1 (Apple
+    // Silicon). The failure has not been deeply investigated; it is believed to be a difference
+    // between the maths library on the macOS platform and on the Linux platform (gamma's powf),
+    // or it could be an ARM64 vs. Intel 64 difference.
     let mut h = Fnv::new();
     h.plane(p.clone().apply_tone_curve(0.15, 1.08));
     h.plane(p.clone().apply_gamma(1.0 / 2.2).unwrap());
@@ -197,6 +201,10 @@ fn plane_images_are_noskias_bit_for_bit() {
     h.image(&c);
     check("img_arith", &h, 0xBFC47E97E588518E);
 
+    // KNOWN FAILURE (2026-11-22): this case currently fails on macOS Golden Gate 27.2.1 (Apple
+    // Silicon). The failure has not been deeply investigated; it is believed to be a difference
+    // between the maths library on the macOS platform and on the Linux platform (gamma's powf),
+    // or it could be an ARM64 vs. Intel 64 difference.
     let mut h = Fnv::new();
     h.image(a.clone().min(0.9).max(0.05));
     h.image(a.clone().clamp(0.1, 0.7).unwrap());
