@@ -142,9 +142,6 @@ public sealed class RepositoryLayout
     /// <summary>The sample applications, which this tool does not check.</summary>
     public string Samples => Combine("samples");
 
-    /// <summary>The local package feed (git-ignored).</summary>
-    public string TempPackages => Combine("temp-packages");
-
     /// <summary>
     /// True when a folder is the repository root.
     /// </summary>

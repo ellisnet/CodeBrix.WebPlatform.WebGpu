@@ -426,12 +426,6 @@ FodyWeavers.xsd
 #*.lscache
 
 # ---------------------------------------------------------------------------
-# Temporary local NuGet packages (see nuget.config beside this file): builds of CodeBrix
-# packages that are not on nuget.org yet.
-# ---------------------------------------------------------------------------
-/temp-packages/
-
-# ---------------------------------------------------------------------------
 # The WebGpu library's Rust material
 # ---------------------------------------------------------------------------
 # cargo's build output from cargo commands on the crate set.

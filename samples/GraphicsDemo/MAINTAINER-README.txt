@@ -741,8 +741,8 @@ Node.js, no JavaScript of ours, no shell scripts, stable releases only, 0
 warnings). For this sample:
 
   - PACKAGES ONLY. The build program takes the WebGpu, Graphics and
-    Animation packages from the temporary feed (see TEMPORARY PACKAGES),
-    never a project reference into src/: the sample uses them exactly as any
+    Animation packages from nuget.org (see THE PACKAGES), never a project
+    reference into src/: the sample uses them exactly as any
     application does. It calls GraphicsCrates.Register() and
     AnimationCrates.Register(), each of which registers the WebGpu bundle
     first (once).
@@ -1292,29 +1292,26 @@ glTF or decodes images.
     weights clip, and that it is written the same way every time).
 
 
-TEMPORARY PACKAGES
-==================
-The CodeBrix.WebPlatform packages are published and come from nuget.org:
-the Backend package (backend/GraphicsDemo.Api), and FrontendBuilder with the
-host-tools package of the machine (build/GraphicsDemo.BuildFrontend). Their
-version is set in WebPlatformPackageVersion in both project files (THE
-PLATFORM'S PACKAGES in the root MAINTAINER-README.txt).
+THE PACKAGES
+============
+Every package the sample takes is published and comes from nuget.org. There
+is no local package feed: no nuget.config, here or at the repository root.
 
-This repository's own WebGpu, Graphics and Animation packages
-(build/GraphicsDemo.BuildFrontend; the Graphics and Animation packages also
-in backend/GraphicsDemo.Assets) are not on nuget.org yet. They come from the
-ONE temporary feed at the repository root - nuget.config and temp-packages/.
-There is no nuget.config in samples/GraphicsDemo.
+  - The CodeBrix.WebPlatform packages: the Backend package
+    (backend/GraphicsDemo.Api), and FrontendBuilder with the host-tools
+    package of the machine (build/GraphicsDemo.BuildFrontend). Their ONE
+    version is set in WebPlatformPackageVersion in both project files (THE
+    PLATFORM'S PACKAGES in the root MAINTAINER-README.txt).
+  - This repository's own WebGpu, Graphics and Animation packages
+    (build/GraphicsDemo.BuildFrontend; the Graphics and Animation packages
+    also in backend/GraphicsDemo.Assets). Their ONE version is set in
+    WebGpuPackageVersion in the build program's project file and in
+    backend/GraphicsDemo.Assets/GraphicsDemo.Assets.csproj (the two must
+    name the same version).
 
-  - Their ONE version is set in WebGpuPackageVersion in the build program's
-    project file and in backend/GraphicsDemo.Assets/GraphicsDemo.Assets.csproj
-    (the two must name the same version).
-  - The sample does not see a change to a library of this repository until
-    the feed is refreshed: TEMPORARY PACKAGES in the root
-    MAINTAINER-README.txt says how.
-
-When the three packages are on nuget.org the feed is deleted, and this
-section with it (the CodeBrix.WebPlatform paragraph above stays).
+The sample does not see a change to a library of this repository until the
+three packages are published again and their new version is set here (THE
+SAMPLE'S PACKAGES in the root MAINTAINER-README.txt).
 
 
 GIT

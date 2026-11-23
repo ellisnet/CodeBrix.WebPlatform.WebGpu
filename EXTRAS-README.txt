@@ -84,7 +84,10 @@ A plain page of the developer's own at the site root links to both and to
 the site's two notices files. Without WebGPU each application shows "WebGPU
 is not available in this browser". The sample has its own solution
 (GraphicsDemo.slnx, not in the root solution) and its own
-MAINTAINER-README.txt, which lists every scene.
+MAINTAINER-README.txt, which lists every scene. It consumes this
+repository's packages and the platform's as published NuGet packages, from
+nuget.org, like any other application (THE SAMPLE'S PACKAGES in
+MAINTAINER-README.txt).
 
 
 THE RUST MATERIAL OF THE WebGpu LIBRARY

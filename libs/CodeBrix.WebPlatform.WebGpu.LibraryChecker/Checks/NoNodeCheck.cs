@@ -10,7 +10,7 @@ namespace CodeBrix.WebPlatform.WebGpu.LibraryChecker.Checks;
 /// package manifests, no node_modules, no lock files of a Node package manager, and no JavaScript
 /// or TypeScript source of ours. The vendored crate folders are upstream snapshots and are not
 /// scanned (a crate may carry a stray package.json that nothing reads); nor are the samples
-/// (applications' own business), the local package feed and build output.
+/// (applications' own business) and build output.
 /// </summary>
 public static class NoNodeCheck
 {
@@ -35,7 +35,7 @@ public static class NoNodeCheck
     public static CheckResult Run(RepositoryLayout layout)
     {
         ArgumentNullException.ThrowIfNull(layout);
-        var skipped = new[] { layout.Samples, layout.Vendor, layout.AnimationVendor, layout.TempPackages };
+        var skipped = new[] { layout.Samples, layout.Vendor, layout.AnimationVendor };
         return Scan(layout.Root, skipped);
     }
 

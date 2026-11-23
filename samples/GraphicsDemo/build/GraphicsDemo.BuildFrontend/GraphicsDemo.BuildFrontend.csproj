@@ -12,15 +12,14 @@
 
   <PropertyGroup>
     <!--
-      ONE version for every CodeBrix.WebPlatform package (published together; they come from
-      nuget.org), and the ONE version of this repository's own packages (WebGpu, Graphics and
-      Animation are built and published together and pin each other exactly; local builds until
-      they are published - see the nuget.config at the repository root). The sample takes this
-      repository's packages as PACKAGES, never as project references into src/: it consumes them
-      exactly as any application does.
+      ONE version for every CodeBrix.WebPlatform package, and the ONE version of this
+      repository's own packages (WebGpu, Graphics and Animation are built and published together
+      and pin each other exactly); all of them are published and come from nuget.org. The sample
+      takes this repository's packages as PACKAGES, never as project references into src/: it
+      consumes them exactly as any application does.
     -->
     <WebPlatformPackageVersion>1.0.327.240</WebPlatformPackageVersion>
-    <WebGpuPackageVersion>1.0.327.325</WebGpuPackageVersion>
+    <WebGpuPackageVersion>1.0.327.498</WebGpuPackageVersion>
   </PropertyGroup>
 
   <ItemGroup>

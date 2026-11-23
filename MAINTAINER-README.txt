@@ -105,8 +105,8 @@ THE RULES OF THE PACKAGES
     ISC; Zlib is approved for this repository by the owner). The allowlist
     in tools/licensing/license-allowlist.json is the owner's file: only he
     edits it.
-  - NOTHING IS DOWNLOADED at build or test time (nuget.org restore and the
-    temporary feed excepted). No Node.js, no JavaScript of ours, no shell
+  - NOTHING IS DOWNLOADED at build or test time (nuget.org restore
+    excepted). No Node.js, no JavaScript of ours, no shell
     scripts, no GitHub workflow files - in vendored trees either (report one
     found in a crate; never delete a file from a vendored crate).
 
@@ -118,14 +118,12 @@ REPOSITORY LAYOUT
         Tests folder, the four test projects. Its "Solution Items" are the
         canonical files: .gitignore, AGENT-README.txt, EXTRAS-README.txt,
         global.json, icon-codebrix-128.png, LICENSE, MAINTAINER-README.txt,
-        nuget.config, README-INDEX.txt, README.md, THIRD-PARTY-NOTICES.txt.
+        README-INDEX.txt, README.md, THIRD-PARTY-NOTICES.txt.
     global.json
         Pins the SDK (the family's current standard, with latestFeature
         roll-forward and no prerelease SDKs) and selects the
         Microsoft.Testing.Platform test runner. Copied from
         CodeBrix.WebPlatform; keep the two the same.
-    nuget.config, temp-packages/
-        TEMPORARY (see TEMPORARY PACKAGES).
     .gitattributes, .gitignore
         See GIT AND THE VENDORED FOLDER.
     icon-codebrix-128.png
@@ -237,7 +235,7 @@ REPOSITORY LAYOUT
         A CodeBrix.WebPlatform application with two named frontend
         applications ("graphics" at /graphics, "animation" at /animation)
         and the developer's own page at "/". It consumes this repository's
-        three packages as PACKAGES from the temporary feed, never as
+        three packages as PACKAGES from nuget.org, never as
         projects, and its build program registers the Graphics and the
         Animation bundles (and through them the WebGpu one, once); both
         applications draw with codebrix-webgpu; animation shows the desktop
@@ -1614,7 +1612,7 @@ both:
 
 Never commit: any `target` folder (the two crate sets', codebrix-webgpu's,
 codebrix-webgpu-graphics' and codebrix-webgpu-animation's), the three
-first-party crates' Cargo.lock, temp-packages/, bin/ and obj/, and what
+first-party crates' Cargo.lock, bin/ and obj/, and what
 the GraphicsDemo sample's builds write (its own MAINTAINER-README.txt lists
 it). The .gitignore at the repository root covers them.
 
@@ -1634,55 +1632,39 @@ All of them name the ONE version the platform's packages were published at.
 
 WHEN THE PLATFORM IS REPUBLISHED: set the new version in all of those,
 re-resolve the crate set against the new platform lock, run the gate, and
-rebuild; then refresh the sample's WebGpu packages (below), since the ones
-in the feed pin the older Core.
+rebuild; then publish this repository's three packages again (their Core
+pin is exact) and set their new version in the sample (THE SAMPLE'S
+PACKAGES, below).
 
 
-TEMPORARY PACKAGES
-==================
-This repository's own packages are not on nuget.org yet. Until they are,
-nuget.config at the repository root adds the folder temp-packages/ beside it
-(git ignores it) as a package source for EXACTLY these package ids, for
-samples/GraphicsDemo only; everything else - the CodeBrix.WebPlatform
-packages included - comes from nuget.org:
-
-    CodeBrix.WebPlatform.WebGpu.ApacheLicenseForever, and the
-      .Graphics and .Animation packages (same suffix)
-
-The three .nupkg files are built here. A fresh clone cannot restore the
-sample until the packages are published or the same .nupkg files are put in
-temp-packages/; the libraries, the tests and the maintainer tool restore
-from nuget.org alone.
+THE SAMPLE'S PACKAGES
+=====================
+samples/GraphicsDemo takes this repository's three packages, like the
+platform's, as PUBLISHED packages from nuget.org. There is no local package
+feed: no nuget.config and no temp-packages/, here or in the sample. Their
+ONE version is set in WebGpuPackageVersion in
+samples/GraphicsDemo/build/GraphicsDemo.BuildFrontend/GraphicsDemo
+.BuildFrontend.csproj and in
+samples/GraphicsDemo/backend/GraphicsDemo.Assets/GraphicsDemo.Assets.csproj
+(the two must name the same version).
 
 WHEN A LIBRARY OF THIS REPOSITORY CHANGES, the sample does not see it until
-its package in the feed is refreshed: build the root solution in Release
-EARLY IN A UTC MINUTE (every build of the three libraries stamps a new
-version from the clock; two builds in one minute give the same one), check
-that the three new .nupkg files carry ONE version and that the Graphics and
-Animation nuspecs pin exactly that WebGpu version, copy them into
-temp-packages/ (removing the older WebGpu ones), and set that version in
-WebGpuPackageVersion in
-samples/GraphicsDemo/build/GraphicsDemo.BuildFrontend/GraphicsDemo
-.BuildFrontend.csproj (and in GraphicsDemo.Assets.csproj). If a crate's
-version changed, the sample's next build brings its two marked Cargo.lock
-files in step by itself and says so (THE FIRST-PARTY CRATE, ITS VERSION);
-check that line in the build's output.
-A crate packed AGAIN under the SAME version (its content changed between two
-refreshes of this feed while its version stayed - normal inside one round of
-work, before a release) is not rebuilt by cargo: it treats a vendored name
-and version as unchanging and keeps the earlier build in the frontend's
-target folder, so the sample's build then fails on what the new code added
-(or, worse, runs the old code). Delete that crate's build output - for the
-Animation crate samples/GraphicsDemo/frontends/animation/target/
+the three packages are published again: publish them from ONE build
+(PACKAGING AND PUBLISHING), wait until nuget.org serves all three, then set
+the new version in both of the sample's project files, and build and test
+the sample. If a crate's version changed, the sample's next build brings
+its two marked Cargo.lock files in step by itself and says so (THE
+FIRST-PARTY CRATE, ITS VERSION); check that line in the build's output.
+A crate published AGAIN under the SAME crate version (its content changed
+between two releases of the packages while its version stayed) is not
+rebuilt by cargo: it treats a vendored name and version as unchanging and
+keeps the earlier build in the frontend's target folder, so the sample's
+build then fails on what the new code added (or, worse, runs the old code).
+Bump the crate's version when its compiled content changes; otherwise
+delete that crate's build output - for the Animation crate
+samples/GraphicsDemo/frontends/animation/target/
 wasm32-unknown-unknown/wasm-release/build/codebrix-webgpu-animation (git
-ignores target/) - and build again; or bump the crate's version.
-
-THE GOAL IS TO DELETE THE FEED. When the three packages are on nuget.org:
-delete nuget.config and temp-packages/, set the published version in the
-sample's project files, and remove this section, the temp-packages lines of
-.gitignore, the "Local builds" comments in the sample's project files, and
-the temporary feed in the maintainer tool (RepositoryLayout.TempPackages and
-its use in NoNodeCheck).
+ignores target/) - and build again.
 
 
 PROVENANCE AND VENDORED SOURCES
@@ -1744,8 +1726,6 @@ NOTES
 =====
   - The family's document collector reads README-INDEX.txt; keep every path
     it lists real.
-  - When this repository is first published, add it to the family's list of
-    repositories and to the document collector's list.
 
 ================================================================================
 END OF MAINTAINER-README

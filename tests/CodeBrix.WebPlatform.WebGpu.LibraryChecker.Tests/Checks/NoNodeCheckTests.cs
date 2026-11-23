@@ -83,7 +83,7 @@ public class NoNodeCheckTests
     }
 
     [Fact]
-    public void Run_checks_the_repository_but_not_the_samples_the_vendored_crates_or_the_feed()
+    public void Run_checks_the_repository_but_not_the_samples_or_the_vendored_crates()
     {
         //Arrange
         using var folder = new TempFolder();
@@ -91,7 +91,6 @@ public class NoNodeCheckTests
         folder.Write("samples/GraphicsDemo/frontend/package.json", "{}");
         folder.Write("src/CodeBrix.WebPlatform.WebGpu/Rust/vendor/a-crate-1.0.0/package.json", "{}");
         folder.Write("src/CodeBrix.WebPlatform.WebGpu/Rust/vendor/web-sys-0.3.0/src/snippet.js", "x");
-        folder.Write("temp-packages/some/thing.js", "x");
         folder.Write("src/CodeBrix.WebPlatform.WebGpu.Graphics/helper.js", "x");
 
         //Act

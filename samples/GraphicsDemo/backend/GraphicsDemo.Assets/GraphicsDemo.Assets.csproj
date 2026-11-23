@@ -13,11 +13,10 @@
   <PropertyGroup>
     <!--
       The ONE version of this repository's own packages, the same value as in the build program's
-      project file (build/GraphicsDemo.BuildFrontend): a local build from the temporary feed (see
-      the nuget.config at the repository root). The sample takes this repository's packages as
-      PACKAGES, never as project references into src/.
+      project file (build/GraphicsDemo.BuildFrontend): published, from nuget.org. The sample takes
+      this repository's packages as PACKAGES, never as project references into src/.
     -->
-    <WebGpuPackageVersion>1.0.327.325</WebGpuPackageVersion>
+    <WebGpuPackageVersion>1.0.327.498</WebGpuPackageVersion>
   </PropertyGroup>
 
   <ItemGroup>
