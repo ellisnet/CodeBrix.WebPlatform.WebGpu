@@ -2,8 +2,10 @@
 //! against CodeBrix.Imaging.Drawing.NoSkia (the package's own DLLs; numbers only, no images) and
 //! asserts the FNV-1a 64 hash of the bits of every value NoSkia produced. A hash that differs
 //! means at least one value differs in at least one bit. The math-library cases (blur kernels'
-//! exp, gamma's powf, particles' cos / sin / sqrt) hold on the host; a browser's math library may
-//! differ in the last bit.
+//! exp, gamma's powf, particles' cos / sin / sqrt) hold on the host NoSkia's run was made on
+//! (Linux); another host's or a browser's math library may differ in the last bit (the gamma
+//! cases - "tone_gamma" and "img_colour" - are therefore checked to within one unit in the last
+//! place on every host and bit for bit on Linux only).
 
 use crate::planes::{
     DrawingFrameAccumulator, DrawingMotionBlur, DrawingNoise, DrawingNoiseFillOptions, DrawingNoiseFractalOptions, DrawingNoiseKind, DrawingParticleEmitter, DrawingParticleSystem, DrawingPlane, DrawingPlaneBloomOptions, DrawingPlaneImage,
@@ -51,6 +53,22 @@ impl Fnv {
 
 fn check(name: &str, h: &Fnv, expected: u64) {
     assert_eq!(h.0, expected, "{name}: 0x{:016X} instead of NoSkia's 0x{expected:016X}", h.0);
+}
+
+/// Checks a gamma of `input` against the correctly rounded power (computed in f64 and rounded once
+/// to f32): a value at or below 0 is kept bit for bit; a power may be one unit in the last place
+/// away from it, as a host's maths library (powf) may be.
+fn check_gamma(name: &str, input: &DrawingPlane, output: &DrawingPlane, exponent: f32) {
+    assert_eq!((output.width(), output.height()), (input.width(), input.height()), "{name}: size");
+    for (i, (v, g)) in input.data().iter().zip(output.data()).enumerate() {
+        if *v > 0.0 {
+            let rounded = ((*v as f64).powf(exponent as f64)) as f32;
+            let ulps = (g.to_bits() as i64 - rounded.to_bits() as i64).abs();
+            assert!(ulps <= 1, "{name}: value {i}: {v} to the power {exponent} is {g}, {ulps} units in the last place from the correctly rounded {rounded}");
+        } else {
+            assert_eq!(g.to_bits(), v.to_bits(), "{name}: value {i}: {v} is at or below 0 and must be kept");
+        }
+    }
 }
 
 const W: u32 = 37;
@@ -137,15 +155,34 @@ fn plane_arithmetic_is_noskias_bit_for_bit() {
     h.plane(p.clone().clamp(0.0, 1.0).unwrap());
     check("minmax", &h, 0xD3B287DF536BA73A);
 
-    // KNOWN FAILURE (2026-11-22): this case currently fails on macOS Golden Gate 27.2.1 (Apple
-    // Silicon). The failure has not been deeply investigated; it is believed to be a difference
-    // between the maths library on the macOS platform and on the Linux platform (gamma's powf),
-    // or it could be an ARM64 vs. Intel 64 difference.
+    // TONE CURVE, GAMMA AND A FUNCTION. The tone curve and the function are plain float arithmetic:
+    // the same bits on every host, so they are checked bit for bit everywhere (their hashes were
+    // taken from this crate on Windows, 2026-11-22; on Linux the same planes pass NoSkia's
+    // combined hash below). The gamma calls the host's maths library (powf), which is not the same
+    // on every host: NoSkia's combined hash was made on Linux, whose powf (glibc) is within one
+    // unit in the last place but not always correctly rounded, while Windows' powf gave the
+    // correctly rounded power for all 638 positive values here (2026-11-22), so the combined hash
+    // differed on Windows; it also differs on macOS (Apple Silicon). So the gamma is checked
+    // against the correctly rounded power to within one unit in the last place on every host, and
+    // bit for bit with NoSkia (the combined hash) on Linux only.
     let mut h = Fnv::new();
     h.plane(p.clone().apply_tone_curve(0.15, 1.08));
-    h.plane(p.clone().apply_gamma(1.0 / 2.2).unwrap());
+    check("tone", &h, 0x9F9FFEE2DA9FCB05);
+    let mut h = Fnv::new();
     h.plane(p.clone().apply(|v| (v * v) - 0.5));
-    check("tone_gamma", &h, 0xE65E18AAF88478FB);
+    check("function", &h, 0x0E245ACC63192DDA);
+    let gamma = 1.0 / 2.2;
+    let mut gamma_plane = p.clone();
+    gamma_plane.apply_gamma(gamma).unwrap();
+    check_gamma("gamma", &p, &gamma_plane, gamma);
+    #[cfg(target_os = "linux")]
+    {
+        let mut h = Fnv::new();
+        h.plane(p.clone().apply_tone_curve(0.15, 1.08));
+        h.plane(&gamma_plane);
+        h.plane(p.clone().apply(|v| (v * v) - 0.5));
+        check("tone_gamma", &h, 0xE65E18AAF88478FB);
+    }
 
     let mut h = Fnv::new();
     h.plane(p.clone().apply_vignette(18.5, 11.0, 20.0, 13.0, 0.5, Some(0.2)).unwrap());
@@ -201,16 +238,39 @@ fn plane_images_are_noskias_bit_for_bit() {
     h.image(&c);
     check("img_arith", &h, 0xBFC47E97E588518E);
 
-    // KNOWN FAILURE (2026-11-22): this case currently fails on macOS Golden Gate 27.2.1 (Apple
-    // Silicon). The failure has not been deeply investigated; it is believed to be a difference
-    // between the maths library on the macOS platform and on the Linux platform (gamma's powf),
-    // or it could be an ARM64 vs. Intel 64 difference.
+    // COLOUR: LIMITS, TONE CURVE, GAMMA AND VIGNETTE. As with the plane gamma above: everything
+    // but the gamma is plain arithmetic, checked bit for bit everywhere; the gamma calls the
+    // host's powf, so it is checked against the correctly rounded power to within one unit in the
+    // last place everywhere, and bit for bit with NoSkia (the combined hash) on Linux only. The
+    // combined hash failed on macOS (Apple Silicon). On Windows it passed (2026-11-22), so the
+    // part hashes, taken there that day, are NoSkia's values.
     let mut h = Fnv::new();
     h.image(a.clone().min(0.9).max(0.05));
     h.image(a.clone().clamp(0.1, 0.7).unwrap());
-    h.image(a.clone().apply_tone_curve(0.2, 1.1).apply_gamma(0.8).unwrap());
+    check("img_limits", &h, 0x4E51600228DB5925);
+    let mut toned = a.clone();
+    toned.apply_tone_curve(0.2, 1.1);
+    let mut h = Fnv::new();
+    h.image(&toned);
+    check("img_tone", &h, 0xE637A53BDE96BE31);
+    let mut gamma_image = toned.clone();
+    gamma_image.apply_gamma(0.8).unwrap();
+    check_gamma("img_gamma red", toned.r(), gamma_image.r(), 0.8);
+    check_gamma("img_gamma green", toned.g(), gamma_image.g(), 0.8);
+    check_gamma("img_gamma blue", toned.b(), gamma_image.b(), 0.8);
+    assert!(gamma_image.a().data().iter().zip(toned.a().data()).all(|(g, t)| g.to_bits() == t.to_bits()), "img_gamma: the alpha must be kept");
+    let mut h = Fnv::new();
     h.image(a.clone().apply_vignette(18.0, 11.0, 25.0, 15.0, 0.6, Some(0.1)).unwrap());
-    check("img_colour", &h, 0x0D663A54A3BD0F59);
+    check("img_vignette", &h, 0x77C36A32D549CCCB);
+    #[cfg(target_os = "linux")]
+    {
+        let mut h = Fnv::new();
+        h.image(a.clone().min(0.9).max(0.05));
+        h.image(a.clone().clamp(0.1, 0.7).unwrap());
+        h.image(&gamma_image);
+        h.image(a.clone().apply_vignette(18.0, 11.0, 25.0, 15.0, 0.6, Some(0.1)).unwrap());
+        check("img_colour", &h, 0x0D663A54A3BD0F59);
+    }
 
     let mut h = Fnv::new();
     h.image(a.clone().lerp(&b, 0.3).unwrap());
