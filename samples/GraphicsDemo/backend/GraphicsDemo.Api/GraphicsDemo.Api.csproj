@@ -18,10 +18,10 @@
 
   <PropertyGroup>
     <!--
-      Local builds until the packages are published; see the nuget.config at the repository root.
-      ONE version for every CodeBrix.WebPlatform package.
+      The published CodeBrix.WebPlatform packages, from nuget.org: ONE version for all of them,
+      the same as in the build program's project file (build/GraphicsDemo.BuildFrontend).
     -->
-    <WebPlatformPackageVersion>1.0.324.293</WebPlatformPackageVersion>
+    <WebPlatformPackageVersion>1.0.327.240</WebPlatformPackageVersion>
   </PropertyGroup>
 
   <ItemGroup>

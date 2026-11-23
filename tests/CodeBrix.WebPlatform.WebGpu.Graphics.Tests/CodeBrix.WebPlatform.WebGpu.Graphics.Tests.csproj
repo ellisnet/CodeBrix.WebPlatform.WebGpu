@@ -22,14 +22,14 @@
     THE REAL-MATERIALIZE TESTS (Materialize/): they run the platform's PlatformFrontend.MaterializeAsync
     on a small frontend with GraphicsCrates.Register() called (the WebGpu bundle, then this
     package's). FrontendBuilder is referenced at the exact version of the Core package that the
-    libraries pin (from the temporary feed until it is on nuget.org); its buildTransitive targets
+    libraries pin (published, from nuget.org); its buildTransitive targets
     copy the platform's crates archive beside the test assembly (frontend-crates/), as in a build
     program. The fixture backend of the WebGpu tests is built with this project and found beside
     it. Both archives come through the project reference, as in a build program through the
     packages.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.324.293" />
+    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.327.240" />
     <ProjectReference Include="..\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend.csproj" />
   </ItemGroup>
 

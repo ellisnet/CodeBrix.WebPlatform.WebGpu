@@ -52,7 +52,7 @@ public class PlatformCheckTests
         result.Passed.Should().BeFalse();
         result.Problems[0].Should().Be("bitflags: this repository vendors version 2.13.2, but the platform's crates carry version 2.9.0");
         result.Problems.Last().Should().Contain("Re-resolve the crate set (src/X/Rust/webgpu-crates) against the platform's Cargo.lock")
-            .And.Contain("Core pin").And.Contain("temporary feed").And.Contain(PlatformVersion);
+            .And.Contain("Core pin").And.Contain(PlatformVersion);
     }
 
     [Fact]
@@ -73,14 +73,12 @@ public class PlatformCheckTests
     }
 
     [Fact]
-    public void CorePin_passes_for_an_exact_pin_and_a_feed_that_holds_that_release()
+    public void CorePin_passes_for_an_exact_pin()
     {
         //Arrange
         using var folder = new TempFolder();
         folder.Write("src/CodeBrix.WebPlatform.WebGpu/CodeBrix.WebPlatform.WebGpu.csproj",
             $"<Project><ItemGroup><PackageReference Include=\"CodeBrix.WebPlatform.Core.ApacheLicenseForever\" Version=\"[{PlatformVersion}]\" /></ItemGroup></Project>");
-        folder.Write($"temp-packages/CodeBrix.WebPlatform.Core.ApacheLicenseForever.{PlatformVersion}.nupkg", "x");
-        folder.Write($"temp-packages/CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever.{PlatformVersion}.nupkg", "x");
 
         //Act
         var result = PlatformCheck.CorePin(new RepositoryLayout(folder.Path), PlatformVersion);
@@ -91,7 +89,7 @@ public class PlatformCheckTests
     }
 
     [Fact]
-    public void CorePin_fails_for_a_loose_or_different_pin_and_for_a_feed_without_the_release()
+    public void CorePin_fails_for_a_loose_or_different_pin()
     {
         //Arrange
         using var folder = new TempFolder();
@@ -99,17 +97,14 @@ public class PlatformCheckTests
             "<Project><ItemGroup><PackageReference Include=\"CodeBrix.WebPlatform.Core.ApacheLicenseForever\" Version=\"1.0.300.100\" /></ItemGroup></Project>");
         folder.Write("src/CodeBrix.WebPlatform.WebGpu.Graphics/CodeBrix.WebPlatform.WebGpu.Graphics.csproj",
             "<Project><ItemGroup><PackageReference Include=\"CodeBrix.WebPlatform.Core.ApacheLicenseForever\" Version=\"[1.0.299.1]\" /></ItemGroup></Project>");
-        folder.Write("temp-packages/CodeBrix.WebPlatform.Core.ApacheLicenseForever.1.0.299.1.nupkg", "x");
 
         //Act
         var result = PlatformCheck.CorePin(new RepositoryLayout(folder.Path), PlatformVersion);
 
         //Assert
-        result.Problems.Should().HaveCount(4);
+        result.Problems.Should().HaveCount(2);
         result.Problems[0].Should().StartWith("src/CodeBrix.WebPlatform.WebGpu/CodeBrix.WebPlatform.WebGpu.csproj references CodeBrix.WebPlatform.Core.ApacheLicenseForever as '1.0.300.100'");
         result.Problems[1].Should().Contain("'[1.0.299.1]'");
-        result.Problems[2].Should().Contain($"CodeBrix.WebPlatform.Core.ApacheLicenseForever.{PlatformVersion}.nupkg");
-        result.Problems[3].Should().Contain($"CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever.{PlatformVersion}.nupkg");
     }
 
     [Fact]
@@ -125,6 +120,6 @@ public class PlatformCheckTests
         //Assert
         result.Passed.Should().BeTrue();
         result.Notes[0].Should().StartWith("no package project references Core yet");
-        result.Notes.Should().Contain("no temporary feed: the platform's packages come from nuget.org");
+        result.Notes.Should().Contain("the platform's packages come from nuget.org");
     }
 }

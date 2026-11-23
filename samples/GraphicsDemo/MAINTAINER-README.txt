@@ -1294,25 +1294,27 @@ glTF or decodes images.
 
 TEMPORARY PACKAGES
 ==================
-The sample uses CodeBrix packages that are not on nuget.org yet: the
-Backend package (backend/GraphicsDemo.Api), FrontendBuilder with the
-host-tools package of the machine, and this repository's own WebGpu,
-Graphics and Animation packages (build/GraphicsDemo.BuildFrontend; the
-Graphics and Animation packages also in backend/GraphicsDemo.Assets). They come from the ONE temporary feed at
-the repository root - nuget.config and temp-packages/. There is no
-nuget.config in samples/GraphicsDemo.
+The CodeBrix.WebPlatform packages are published and come from nuget.org:
+the Backend package (backend/GraphicsDemo.Api), and FrontendBuilder with the
+host-tools package of the machine (build/GraphicsDemo.BuildFrontend). Their
+version is set in WebPlatformPackageVersion in both project files (THE
+PLATFORM'S PACKAGES in the root MAINTAINER-README.txt).
 
-  - The CodeBrix.WebPlatform version is set in WebPlatformPackageVersion in
-    both project files; the ONE version of this repository's packages
-    (WebGpu, Graphics and Animation) in WebGpuPackageVersion in the build program's
+This repository's own WebGpu, Graphics and Animation packages
+(build/GraphicsDemo.BuildFrontend; the Graphics and Animation packages also
+in backend/GraphicsDemo.Assets) are not on nuget.org yet. They come from the
+ONE temporary feed at the repository root - nuget.config and temp-packages/.
+There is no nuget.config in samples/GraphicsDemo.
+
+  - Their ONE version is set in WebGpuPackageVersion in the build program's
     project file and in backend/GraphicsDemo.Assets/GraphicsDemo.Assets.csproj
     (the two must name the same version).
   - The sample does not see a change to a library of this repository until
     the feed is refreshed: TEMPORARY PACKAGES in the root
     MAINTAINER-README.txt says how.
 
-When the packages are on nuget.org the feed is deleted, and this section
-with it.
+When the three packages are on nuget.org the feed is deleted, and this
+section with it (the CodeBrix.WebPlatform paragraph above stays).
 
 
 GIT

@@ -12,7 +12,7 @@ namespace CodeBrix.WebPlatform.WebGpu.LibraryChecker.Checks;
 /// every vendored crate whose name the platform's crates also hold must be there at the same
 /// version with the same <c>.cargo-checksum.json</c>, and none may be at a version the platform
 /// does not carry. Also confirms that the platform release the comparison uses is the one the
-/// packages of this repository pin Core to, and the one the temporary feed holds.
+/// packages of this repository pin Core to.
 /// </summary>
 public static class PlatformCheck
 {
@@ -73,7 +73,7 @@ public static class PlatformCheck
 
         if (problems.Count > 0)
         {
-            problems.Add($"A consumer's build would stop on these. Re-resolve the crate set ({crateSetShown}) against the platform's Cargo.lock (the one CodeBrix.WebPlatform {platformVersion} carries) and re-vendor (`LibraryChecker revendor`); the Core pin of the packages and the temporary feed must name that same platform version.");
+            problems.Add($"A consumer's build would stop on these. Re-resolve the crate set ({crateSetShown}) against the platform's Cargo.lock (the one CodeBrix.WebPlatform {platformVersion} carries) and re-vendor (`LibraryChecker revendor`); the Core pin of the packages must name that same platform version.");
         }
 
         return new CheckResult(name, problems, new[]
@@ -84,14 +84,14 @@ public static class PlatformCheck
 
     /// <summary>
     /// Confirms that every package of this repository that references the platform's Core pins it
-    /// to exactly the platform version this tool compares against, and that the temporary feed
-    /// (when there is one) holds that version of Core and of FrontendBuilder.
+    /// to exactly the platform version this tool compares against. The platform's packages are
+    /// published and come from nuget.org.
     /// </summary>
     /// <param name="layout">The repository's folders.</param>
     public static CheckResult CorePin(RepositoryLayout layout) => CorePin(layout, PlatformRelease.Version);
 
     /// <summary>
-    /// Confirms the Core pins and the temporary feed against a given platform version.
+    /// Confirms the Core pins against a given platform version.
     /// </summary>
     /// <param name="layout">The repository's folders.</param>
     /// <param name="platformVersion">The platform version the crates are compared against.</param>
@@ -143,25 +143,7 @@ public static class PlatformCheck
         notes.Insert(0, pinned == 0
             ? "no package project references Core yet (a crate-bearing package must pin it exactly once it registers its crates)"
             : $"{pinned} Core references in the package projects, each pinned to {expected}");
-        if (Directory.Exists(layout.TempPackages))
-        {
-            var files = Directory.EnumerateFiles(layout.TempPackages, "*.nupkg").Select(Path.GetFileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            foreach (var id in new[] { CorePackageId, FrontendBuilderPackageId })
-            {
-                var file = $"{id}.{platformVersion}.nupkg";
-                if (!files.Contains(file))
-                {
-                    problems.Add($"the temporary feed ({layout.Relative(layout.TempPackages)}) has no {file}; copy that platform release's packages into it, or move the pins to the version it holds");
-                }
-            }
-
-            notes.Add($"the temporary feed holds {files.Count} packages");
-        }
-        else
-        {
-            notes.Add("no temporary feed: the platform's packages come from nuget.org");
-        }
-
+        notes.Add("the platform's packages come from nuget.org");
         return new CheckResult(name, problems, notes);
     }
 }

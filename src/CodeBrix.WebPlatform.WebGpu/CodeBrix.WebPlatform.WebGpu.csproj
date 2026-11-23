@@ -80,7 +80,7 @@
     Every republish of Core means a rebuild and republish of this package against that Core.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.WebPlatform.Core.ApacheLicenseForever" Version="[1.0.324.293]" />
+    <PackageReference Include="CodeBrix.WebPlatform.Core.ApacheLicenseForever" Version="[1.0.327.240]" />
   </ItemGroup>
 
   <!--

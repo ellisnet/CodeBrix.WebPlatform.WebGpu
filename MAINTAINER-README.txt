@@ -1619,37 +1619,40 @@ the GraphicsDemo sample's builds write (its own MAINTAINER-README.txt lists
 it). The .gitignore at the repository root covers them.
 
 
+THE PLATFORM'S PACKAGES
+=======================
+The CodeBrix.WebPlatform packages are PUBLISHED and come from nuget.org, like
+every other package; this repository never builds against unpublished
+platform code. Their version is set in:
+  - the Core pin of the three library projects (exact: Version="[...]");
+  - every FrontendBuilder reference: the maintainer tool's project and the
+    test projects that reference it;
+  - WebPlatformPackageVersion in samples/GraphicsDemo/build/
+    GraphicsDemo.BuildFrontend/GraphicsDemo.BuildFrontend.csproj and
+    samples/GraphicsDemo/backend/GraphicsDemo.Api/GraphicsDemo.Api.csproj.
+All of them name the ONE version the platform's packages were published at.
+
+WHEN THE PLATFORM IS REPUBLISHED: set the new version in all of those,
+re-resolve the crate set against the new platform lock, run the gate, and
+rebuild; then refresh the sample's WebGpu packages (below), since the ones
+in the feed pin the older Core.
+
+
 TEMPORARY PACKAGES
 ==================
-CodeBrix.WebPlatform is not on nuget.org yet. Until it is, nuget.config at the
-repository root adds the folder temp-packages/ beside it (git ignores it) as a
-package source for EXACTLY these package ids; everything else comes from
-nuget.org:
+This repository's own packages are not on nuget.org yet. Until they are,
+nuget.config at the repository root adds the folder temp-packages/ beside it
+(git ignores it) as a package source for EXACTLY these package ids, for
+samples/GraphicsDemo only; everything else - the CodeBrix.WebPlatform
+packages included - comes from nuget.org:
 
-    CodeBrix.WebPlatform.Core.ApacheLicenseForever
-    CodeBrix.WebPlatform.Backend.ApacheLicenseForever
-    CodeBrix.WebPlatform.BackendMapper.ApacheLicenseForever
-    CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever
-    CodeBrix.WebPlatform.FrontendBuilder.LinuxX64.ApacheLicenseForever,
-      .LinuxArm64, .WindowsX64, .MacOSArm64, .MacOSX64 (same suffix)
     CodeBrix.WebPlatform.WebGpu.ApacheLicenseForever, and the
       .Graphics and .Animation packages (same suffix)
-                                             local builds of THIS
-                                             repository's packages, for
-                                             samples/GraphicsDemo only
 
-(CodeBrix.TomlParse, which the platform's Backend package depends on, is
-published and comes from nuget.org.) The CodeBrix.WebPlatform .nupkg files are copies of those in
-CodeBrix.WebPlatform's own temp-packages/ folder, at the version the
-libraries here pin Core to. The three WebGpu .nupkg files are built here. A
-fresh clone cannot restore until the packages are published or the same
-.nupkg files are put in temp-packages/.
-
-WHEN THE PLATFORM IS REBUILT: copy the new .nupkg files in (removing the
-old), set the new version in the Core pin of all three library projects and
-in every FrontendBuilder reference (the maintainer tool, and tests that
-reference it), re-resolve the crate set against the new platform lock, run
-the gate, and rebuild.
+The three .nupkg files are built here. A fresh clone cannot restore the
+sample until the packages are published or the same .nupkg files are put in
+temp-packages/; the libraries, the tests and the maintainer tool restore
+from nuget.org alone.
 
 WHEN A LIBRARY OF THIS REPOSITORY CHANGES, the sample does not see it until
 its package in the feed is refreshed: build the root solution in Release
@@ -1674,9 +1677,12 @@ Animation crate samples/GraphicsDemo/frontends/animation/target/
 wasm32-unknown-unknown/wasm-release/build/codebrix-webgpu-animation (git
 ignores target/) - and build again; or bump the crate's version.
 
-THE GOAL IS TO DELETE THE FEED. When the packages are on nuget.org: delete
-nuget.config and temp-packages/, set the published versions in the project
-files, and remove this section and the temp-packages lines of .gitignore.
+THE GOAL IS TO DELETE THE FEED. When the three packages are on nuget.org:
+delete nuget.config and temp-packages/, set the published version in the
+sample's project files, and remove this section, the temp-packages lines of
+.gitignore, the "Local builds" comments in the sample's project files, and
+the temporary feed in the maintainer tool (RepositoryLayout.TempPackages and
+its use in NoNodeCheck).
 
 
 PROVENANCE AND VENDORED SOURCES

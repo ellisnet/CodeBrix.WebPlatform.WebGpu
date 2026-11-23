@@ -21,15 +21,15 @@
   <!--
     THE REAL-MATERIALIZE TESTS (Materialize/): they run the platform's PlatformFrontend.MaterializeAsync
     on a small frontend with this package's bundle registered. FrontendBuilder is referenced at
-    the exact version of the Core package that src/CodeBrix.WebPlatform.WebGpu pins (from the
-    temporary feed until it is on nuget.org); its buildTransitive targets copy the platform's
+    the exact version of the Core package that src/CodeBrix.WebPlatform.WebGpu pins (published,
+    from nuget.org); its buildTransitive targets copy the platform's
     crates archive beside the test assembly (frontend-crates/), as in a build program. The
     fixture backend is built with this project and found beside it. The crate set's Cargo.toml
     is copied beside the test assembly so that the test frontend names wgpu exactly as the crate
     set does.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.324.293" />
+    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.327.240" />
     <ProjectReference Include="..\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend.csproj" />
   </ItemGroup>
 
