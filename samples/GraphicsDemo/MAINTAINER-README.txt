@@ -899,9 +899,10 @@ BUILDING AND RUNNING THE SAMPLE
 ===============================
 What must be installed (the build program checks and tells you; it installs
 nothing): the .NET 10 SDK; Rust at the platform's minimum version or later
-with the WebAssembly target (`rustup target add wasm32-unknown-unknown`); the
-standalone Tailwind program on PATH. dx and wasm-bindgen come prebuilt in the
-host-tools package.
+with the WebAssembly target (`rustup target add wasm32-unknown-unknown`). No
+C compiler: dx and wasm-bindgen come prebuilt in the host-tools package, and
+the standalone Tailwind program in its Styling package dependency (nothing to
+install for Tailwind; one on PATH is never used).
 
 From samples/GraphicsDemo:
 
