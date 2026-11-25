@@ -19,7 +19,7 @@
       consumes them exactly as any application does.
     -->
     <WebPlatformPackageVersion>1.0.329.452</WebPlatformPackageVersion>
-    <WebGpuPackageVersion>1.0.327.498</WebGpuPackageVersion>
+    <WebGpuPackageVersion>1.0.329.593</WebGpuPackageVersion>
   </PropertyGroup>
 
   <ItemGroup>

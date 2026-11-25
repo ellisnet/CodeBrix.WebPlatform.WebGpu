@@ -16,7 +16,7 @@
       project file (build/GraphicsDemo.BuildFrontend): published, from nuget.org. The sample takes
       this repository's packages as PACKAGES, never as project references into src/.
     -->
-    <WebGpuPackageVersion>1.0.327.498</WebGpuPackageVersion>
+    <WebGpuPackageVersion>1.0.329.593</WebGpuPackageVersion>
   </PropertyGroup>
 
   <ItemGroup>
