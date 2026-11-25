@@ -1,6 +1,7 @@
-// ---- noise.wgsl: the GPU noise shared by the paint module (NoiseShape's paint, paint.wgsl
-// noise_value) and the stroke module (a stroke set's flow and boil, strokes.wgsl). Appended after
-// common.wgsl, before the module's own part.
+// ---- noise.wgsl: the GPU noise shared by every module that needs it: the paint module
+// (NoiseShape's paint, paint.wgsl noise_value), the stroke module (a stroke set's flow and boil,
+// strokes.wgsl) and the composite module (the caustic light of a refraction, effects.wgsl).
+// Appended after common.wgsl, before the module's own part (gpu.rs puts them together).
 //
 // The planes' value and gradient noise (lattice corners hashed with the seed, quintic fade, fractal octaves with the seed advanced per octave, the sum divided by
 // the amplitudes and clamped to -1..1) - the same parameters and character as the CPU's
