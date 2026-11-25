@@ -16,6 +16,7 @@ use crate::shapes::animated_shape::AnimatedShape;
 use crate::shapes::arrow_shape::ArrowShape;
 use crate::shapes::basic_shapes::{CircleShape, EllipseShape, LineShape, PolylineShape, RectangleShape};
 use crate::shapes::brush_stroke_shape::BrushStrokeShape;
+use crate::shapes::brush_strokes_shape::BrushStrokesShape;
 use crate::shapes::noise_shape::NoiseShape;
 use crate::shapes::ownership_shape::OwnershipShape;
 use crate::shapes::particles_shape::ParticlesShape;
@@ -58,6 +59,8 @@ pub enum ShapeKind {
     TextBlock(TextBlockShape),
     /// A painterly brushstroke.
     BrushStroke(BrushStrokeShape),
+    /// A set of brushstrokes drawn as one instanced GPU draw (no C# equivalent).
+    BrushStrokes(BrushStrokesShape),
     /// A rectangle of noise drawn on the GPU.
     Noise(NoiseShape),
     /// The particles of a particle system at one time.
@@ -78,6 +81,11 @@ pub(crate) struct EncodeContext<'a> {
     pub(crate) area: Rect,
     pub(crate) scene_rotation: f64,
     pub(crate) layers: &'a [DrawingLayer],
+    /// The transform from the drawing's own (calibrated) units to canvas pixels as this layer
+    /// sees them - the calibration and the camera, without the layer's or any element's
+    /// transform: the space a FIXED-width stroke ([`StrokeWidthMode::Fixed`](crate::paths::StrokeWidthMode))
+    /// is expanded in.
+    pub(crate) drawing: Affine,
     /// Where problems found while drawing are reported (once each).
     pub(crate) reports: &'a std::cell::RefCell<crate::drawing_session::SessionReports>,
 }
@@ -204,6 +212,7 @@ from_kind!(ImageShape, Image);
 from_kind!(SpriteShape, Sprite);
 from_kind!(TextBlockShape, TextBlock);
 from_kind!(BrushStrokeShape, BrushStroke);
+from_kind!(BrushStrokesShape, BrushStrokes);
 from_kind!(NoiseShape, Noise);
 from_kind!(ParticlesShape, Particles);
 from_kind!(OwnershipShape, Ownership);
@@ -456,6 +465,7 @@ impl DrawingShape {
             ShapeKind::Sprite(s) => s.get_bounds(),
             ShapeKind::TextBlock(t) => t.get_bounds(),
             ShapeKind::BrushStroke(b) => b.get_bounds(),
+            ShapeKind::BrushStrokes(b) => b.get_bounds(),
             ShapeKind::Noise(n) => n.get_bounds(),
             ShapeKind::Particles(p) => p.get_bounds(),
             ShapeKind::Ownership(m) => m.get_bounds(),
@@ -605,12 +615,23 @@ impl DrawingShape {
                     scene.stroke(&outline(p.stroke_thickness), transform, &solid(p.color), None, &path);
                 }
             }
-            ShapeKind::Path(p) => p.encode(scene, transform, inherited, o),
+            ShapeKind::Path(p) => p.encode(scene, transform, ctx.drawing, inherited, o),
             ShapeKind::BrushStroke(b) => {
                 // C# draws a brushstroke as an anti-aliased filled polygon in its colour or fill;
                 // below a progress of 1 only the painted part.
                 let brush = b.fill.as_ref().map_or_else(|| solid(b.color), |f| f.to_brush(o));
                 scene.fill(Fill::NonZero, transform, &brush, None, &b.drawn_path());
+            }
+            ShapeKind::BrushStrokes(b) => {
+                // Strokes overlap: below full opacity the set is drawn whole into a layer that is
+                // then faded (as a group), not each stroke faded.
+                if o < 1.0 {
+                    scene.push_layer(BlendMode::default(), o, Affine::IDENTITY, area);
+                    b.encode(scene, transform, 1.0, ctx);
+                    scene.pop_layer();
+                } else {
+                    b.encode(scene, transform, 1.0, ctx);
+                }
             }
             ShapeKind::Noise(n) => {
                 let a = n.area;
@@ -621,7 +642,7 @@ impl DrawingShape {
                 let d = m.destination;
                 let (w, h) = m.map_size;
                 let place = Affine::translate((d.x as f64, d.y as f64)) * Affine::scale_non_uniform(d.width as f64 / w as f64, d.height as f64 / h as f64);
-                scene.fill_owners(transform, m.picture.image_data(), place, &Rect::new(d.x as f64, d.y as f64, (d.x + d.width) as f64, (d.y + d.height) as f64), m.gpu_params(), o);
+                scene.fill_owners(transform, m.picture.image_data(), m.palette.as_ref().map(|p| p.image_data()), place, &Rect::new(d.x as f64, d.y as f64, (d.x + d.width) as f64, (d.y + d.height) as f64), m.gpu_params(), o, m.representative);
             }
             ShapeKind::Image(i) => i.encode(scene, transform, o),
             ShapeKind::Sprite(sp) => sp.encode(scene, transform, time, o),

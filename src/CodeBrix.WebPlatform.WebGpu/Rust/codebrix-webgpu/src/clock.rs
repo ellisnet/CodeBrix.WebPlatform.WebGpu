@@ -297,6 +297,36 @@ mod tests {
     }
 
     #[test]
+    fn a_seek_before_the_first_frame_is_the_first_frames_time_while_running() {
+        //Arrange: a page that seeks its running clock (a `?t=12` address) before the canvas draws
+        let clock = CanvasClock::new();
+        clock.seek(12.0);
+        //Act
+        let first = clock.tick(5000.0);
+        let second = clock.tick(5016.0);
+        let third = clock.tick(5516.0);
+        //Assert: the first frame shows 12 s with delta 0, and the clock runs on from there
+        assert_eq!(first, Tick { number: 1, time: 12.0, delta: 0.0, previous: None });
+        assert!(close(second.time, 12.016) && close(second.delta, 0.016), "{second:?}");
+        assert_eq!(second.previous, Some(12.0));
+        assert!(close(third.time, 12.516), "{third:?}");
+        assert!(!clock.is_paused());
+    }
+
+    #[test]
+    fn a_seek_before_the_first_frame_of_a_paused_clock_holds_that_time() {
+        //Arrange
+        let clock = CanvasClock::new();
+        clock.seek(12.0);
+        clock.pause();
+        //Act
+        let first = clock.tick(5000.0);
+        let later = clock.tick(6000.0);
+        //Assert
+        assert_eq!((first.time, later.time, later.delta), (12.0, 12.0, 0.0));
+    }
+
+    #[test]
     fn each_tick_knows_the_previous_frames_time() {
         let mut clock = ClockState::default();
         clock.tick(0.0);

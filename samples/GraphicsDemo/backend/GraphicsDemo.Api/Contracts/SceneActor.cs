@@ -4,7 +4,7 @@ using CodeBrix.WebPlatform.Core.Mapping;
 namespace GraphicsDemo.Api.Contracts;
 
 /// <summary>
-/// One animated actor of the scene: a model of the scene's blob, the clip it loops (or the routine of clips it
+/// One animated actor of the scene: a model of the scene, the clip it loops (or the routine of clips it
 /// cross-fades through) and how it moves - exactly the desktop model viewer's placement functions of the scene time t:
 /// "fixed": scale, then the rotation about Y, then the translation; "walk": angle = baseAngle + t x angularSpeed, scale,
 /// then a rotation about Y by angle + PI / 2, then (sin(angle), 0, cos(angle)) x radius; "fly": angle = t x
@@ -17,7 +17,7 @@ public sealed class SceneActor
     /// <summary>The model's name.</summary>
     public string Model { get; set; }
 
-    /// <summary>The model's index in the scene's model data blob.</summary>
+    /// <summary>The model's index in the scene's list of models (<see cref="ViewerScene.Models" />).</summary>
     public int ModelIndex { get; set; }
 
     /// <summary>How it moves: "fixed", "walk" or "fly".</summary>

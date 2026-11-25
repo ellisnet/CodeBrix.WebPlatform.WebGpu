@@ -1,6 +1,6 @@
 //! The painterly members of `DrawingSession` (C# `DrawBrushStroke`, `ExportOwnershipMap` and the
 //! hard-edged `ExportMask`): brushstrokes, ownership maps and hard-edged masks, computed on the
-//! CPU from geometry at the session's time.
+//! CPU from geometry at the session's time; and stroke sets drawn on the GPU (Not in C#).
 
 use crate::drawing_session::DrawingSession;
 use crate::mask_meaning::MaskMeaning;
@@ -9,7 +9,7 @@ use crate::painting::DrawingOwnershipMap;
 use crate::planes::DrawingPlane;
 use crate::rendering::coverage_collector::{self, Area};
 use crate::rendering::hard_edge_rasterizer::HardEdgeMatrix;
-use crate::shapes::{BrushStrokeShape, BrushStrokeShapeOptions};
+use crate::shapes::{BrushStrokeShape, BrushStrokeShapeOptions, BrushStrokesShape};
 
 fn check_size(output_size: (u32, u32)) -> Result<(), String> {
     if output_size.0 < 1 || output_size.1 < 1 {
@@ -34,6 +34,14 @@ impl DrawingSession {
     pub fn draw_brush_stroke(&mut self, center_x: f32, center_y: f32, length: f32, width: f32, angle: f32, options: BrushStrokeShapeOptions) -> Result<ElementId, String> {
         let stroke = BrushStrokeShape::new(center_x, center_y, length, width, angle, options)?;
         Ok(self.draw_shape(stroke))
+    }
+
+    /// Adds a stroke set drawn on the GPU in ONE instanced draw at the session's time (see
+    /// [`BrushStrokesShape`]) to the active layer and returns its id (no C# equivalent: draw
+    /// thousands of strokes this way; [`draw_brush_stroke`](DrawingSession::draw_brush_stroke)
+    /// draws one).
+    pub fn draw_brush_strokes(&mut self, shape: BrushStrokesShape) -> ElementId {
+        self.draw_shape(shape)
     }
 
     fn layers_named(&self, layer: Option<&str>) -> Result<Vec<&DrawingLayer>, String> {

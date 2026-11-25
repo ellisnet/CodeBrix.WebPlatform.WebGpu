@@ -7,6 +7,7 @@ use crate::bundles::GpuRenderBundle;
 use crate::common::Color4;
 use crate::context::GraphicsException;
 use crate::frames::indirect_args::check_indirect;
+use crate::frames::pass_attachments::pipeline_mismatch;
 use crate::frames::{DrawIndexedIndirectArgs, DrawIndirectArgs};
 use crate::pipelines::GpuRenderPipeline;
 use crate::presentation::RenderTargetView;
@@ -103,9 +104,35 @@ impl<'a> RenderPass<'a> {
         &mut self.pass
     }
 
-    /// Sets the pipeline (C#: `SetPipeline`).
+    /// Sets the pipeline (C#: `SetPipeline`). The pipeline must agree with the pass's target
+    /// ([`RenderTargetView::formats`]: colour format, depth format and sample count - what WebGPU
+    /// requires): a pipeline that does not PANICS here with a message saying what differs and how
+    /// to make the right one, instead of the pass failing WebGPU's validation later with the whole
+    /// frame lost. The library's renderers key their pipelines by the target, so they never hit
+    /// it; a pipeline of the application's own on a target whose sample count can change (a
+    /// [`crate::CanvasFrameTarget`]) needs one per count. [`RenderPass::try_set_pipeline`]
+    /// returns the message instead.
     pub fn set_pipeline(&mut self, pipeline: &GpuRenderPipeline) {
+        if let Err(error) = self.try_set_pipeline(pipeline) {
+            panic!("{error}");
+        }
+    }
+
+    /// Sets the pipeline if it agrees with the pass's target (Not in C#; see
+    /// [`RenderPass::set_pipeline`]); Err with what differs, and nothing set, if it does not.
+    pub fn try_set_pipeline(&mut self, pipeline: &GpuRenderPipeline) -> Result<(), GraphicsException> {
+        self.check_pipeline(pipeline)?;
         self.pass.set_pipeline(pipeline.handle());
+        Ok(())
+    }
+
+    /// Ok when `pipeline` agrees with the pass's target - colour format, depth format and sample
+    /// count (Not in C#); Err saying what differs.
+    pub fn check_pipeline(&self, pipeline: &GpuRenderPipeline) -> Result<(), GraphicsException> {
+        match pipeline_mismatch(pipeline.color_formats(), pipeline.depth_format(), pipeline.sample_count(), pipeline.label(), self.target.formats(), &self.target.to_string()) {
+            Some(message) => Err(GraphicsException::new(message)),
+            None => Ok(()),
+        }
     }
 
     /// Sets bind group `index` (C#: `SetBindGroup(index, group)`).
@@ -186,14 +213,31 @@ impl<'a> RenderPass<'a> {
     }
 
     /// Replays a recorded render bundle (C#: `ExecuteBundle`); its formats must be the pass
-    /// target's. The pass's pipeline, bind groups and buffers are unset afterwards.
+    /// target's. The pass's pipeline, bind groups and buffers are unset afterwards. A bundle
+    /// recorded for another colour format, depth format or SAMPLE COUNT panics here with a message
+    /// saying what differs (as [`RenderPass::set_pipeline`]); a wrapped bundle (formats unknown)
+    /// is not checked.
     pub fn execute_bundle(&mut self, bundle: &GpuRenderBundle) {
+        self.check_bundle(bundle);
         self.pass.execute_bundles(std::iter::once(bundle.handle()));
     }
 
-    /// Replays render bundles in order (C#: `ExecuteBundles`).
+    /// Replays render bundles in order (C#: `ExecuteBundles`); each is checked as in
+    /// [`RenderPass::execute_bundle`].
     pub fn execute_bundles(&mut self, bundles: &[&GpuRenderBundle]) {
+        for bundle in bundles {
+            self.check_bundle(bundle);
+        }
         self.pass.execute_bundles(bundles.iter().map(|bundle| bundle.handle()));
+    }
+
+    fn check_bundle(&self, bundle: &GpuRenderBundle) {
+        if bundle.sample_count() == 0 {
+            return;
+        }
+        if let Some(message) = pipeline_mismatch(bundle.color_formats(), bundle.depth_format(), bundle.sample_count(), bundle.label(), self.target.formats(), &self.target.to_string()) {
+            panic!("{}", message.replacen("The render pipeline", "The render bundle", 1).replace("Make the pipeline with .with_sample_count(pass.target().sample_count())", "Record the bundle with the pass target's sample count (create_render_bundle(target, target.sample_count(), ..))"));
+        }
     }
 
     /// Sets the constant colour of the `Constant` blend factors (C#: `SetBlendConstant`).

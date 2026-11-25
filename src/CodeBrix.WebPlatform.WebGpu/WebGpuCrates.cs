@@ -7,10 +7,11 @@ using CodeBrix.WebPlatform.Core.Crates;
 namespace CodeBrix.WebPlatform.WebGpu;
 
 /// <summary>
-/// The Rust <c>wgpu</c> crates for WebGPU in the browser and the <c>glam</c> maths crate, and
-/// every crate they need, exactly as crates.io published them, with the third-party notices for
-/// them; and this repository's own crate <c>codebrix-webgpu</c> (the WebGPU context, the canvas
-/// host with its layers and clock, the maths), in vendored form. The package carries them as
+/// The Rust <c>wgpu</c> crates for WebGPU in the browser, the <c>glam</c> maths crate and the
+/// <c>png</c> and <c>zune-jpeg</c> image decoders, and every crate they need, exactly as crates.io
+/// published them, with the third-party notices for them; and this repository's own crate
+/// <c>codebrix-webgpu</c> (the WebGPU context, the canvas host with its layers and clock, the
+/// maths, PNG and JPEG decoding), in vendored form. The package carries them as
 /// ONE archive, which it copies beside the build program as
 /// <c>&lt;build program folder&gt;/webgpu-crates/webgpu-crates.zip</c>, with
 /// <c>THIRD-PARTY-NOTICES-WebGpuCrates.txt</c> beside it. The build program calls

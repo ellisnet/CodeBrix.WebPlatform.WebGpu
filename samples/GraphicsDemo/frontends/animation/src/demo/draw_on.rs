@@ -72,7 +72,7 @@ impl DrawOnScene {
         session.animations_mut().bind(runner, AnimatedProperty::TrimOffset, floats(&[(0.0, 0.0, L), (8.0, 2.0, L)])).unwrap();
         // Marching ants: a dashed rounded rectangle rebuilt for each moment with a moving dash offset.
         let rounded = PathGeometry::rounded_rectangle(RectangleF::new(1010.0, 520.0, 200.0, 140.0), 18.0);
-        let dashes = PathStrokeStyle::new(4.0, PathStrokeStyleOptions { cap: PathStrokeCap::Butt, join: PathStrokeJoin::Round, miter_limit: 4.0, dash_pattern: Some(vec![14.0, 9.0]), dash_offset: 0.0 }).unwrap();
+        let dashes = PathStrokeStyle::new(4.0, PathStrokeStyleOptions { cap: PathStrokeCap::Butt, join: PathStrokeJoin::Round, miter_limit: 4.0, dash_pattern: Some(vec![14.0, 9.0]), dash_offset: 0.0, ..Default::default() }).unwrap();
         session.draw_shape(AnimatedShape::new(move |t| Some(PathShape::with_style(rounded.clone(), dashes.with_dash_offset(((-t * 46.0) % 23.0) as f32), Some(INK), None, None).into()), 0.0));
         DrawOnScene { session }
     }

@@ -13,7 +13,9 @@ namespace CodeBrix.WebPlatform.WebGpu.LibraryChecker.Checks;
 /// Writes, or checks, the generated notices of the vendored crates
 /// (<c>Rust/notices/THIRD-PARTY-NOTICES-WebGpuCrates.txt</c>, packed into the WebGpu package): the
 /// hand-written header beside it, then Part 1, the crates compiled into a platform application
-/// that uses wgpu, and Part 2, the rest of the vendored crates, each with its license texts.
+/// that uses wgpu, and Part 2, the rest of the vendored crates, each with its license texts; and
+/// the same for the Graphics and the Animation packages' own crates
+/// (<see cref="GenerateBundle"/>).
 /// </summary>
 public static class NoticesCheck
 {
@@ -118,22 +120,23 @@ public static class NoticesCheck
     }
 
     /// <summary>
-    /// Builds the Animation package's notices text
-    /// (<c>THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt</c>): its hand-written header (the vello
-    /// and Skia material of the first-party crate), then Part 1, the package's OWN third-party
-    /// crates that are compiled into an application that uses codebrix-webgpu-animation, and Part
-    /// 2, its own crates that are carried only. The crates it shares with the WebGpu package and
-    /// the platform are left out: their notices come with those.
+    /// Builds a package's notices text (<c>THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt</c>,
+    /// <c>THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt</c>): its hand-written header (the
+    /// first-party crate's own outside sources and the credits for its crates), then Part 1, the
+    /// package's OWN third-party crates that are compiled into an application that uses its crate,
+    /// and Part 2, its own crates that are carried only. The crates it shares with the WebGpu
+    /// package and the platform are left out: their notices come with those.
     /// </summary>
     /// <param name="layout">The repository's folders.</param>
-    /// <param name="set">The split Animation crate set.</param>
-    /// <param name="audits">The Animation crate set's license audits.</param>
+    /// <param name="set">The package's split crate set.</param>
+    /// <param name="audits">The crate set's license audits.</param>
     /// <exception cref="FileNotFoundException">The notices header file is missing.</exception>
-    public static string GenerateAnimation(RepositoryLayout layout, AnimationCrateSet set, LicenseAudits audits)
+    public static string GenerateBundle(RepositoryLayout layout, BundleCrateSet set, LicenseAudits audits)
     {
         ArgumentNullException.ThrowIfNull(layout);
         ArgumentNullException.ThrowIfNull(set);
         ArgumentNullException.ThrowIfNull(audits);
+        var package = set.Package;
         var own = new HashSet<string>(set.Own.Select(p => p.Name + "\n" + p.Version), StringComparer.Ordinal);
         bool IsOwn(CrateLicenseFinding f) => own.Contains(f.CrateName + "\n" + f.Version);
         var linked = audits.Application.Findings.Where(IsOwn).ToList();
@@ -143,50 +146,53 @@ public static class NoticesCheck
         {
             new ThirdPartyNoticesSection
             {
-                Title = "PART 1 - the crates compiled into a platform application that uses codebrix-webgpu-animation",
+                Title = $"PART 1 - the crates compiled into a platform application that uses {package.CrateName}",
                 Introduction = "These crates are linked into the WebAssembly file of a platform application whose frontend uses\n"
-                    + "the crate codebrix-webgpu-animation. They are the third-party crates that only the\n"
-                    + "CodeBrix.WebPlatform.WebGpu.Animation package carries; their source is in its crate archive, and\n"
-                    + $"in the repository at {layout.AnimationVendorRelative}, unmodified.",
+                    + $"the crate {package.CrateName}. They are the third-party crates that only the\n"
+                    + $"CodeBrix.WebPlatform.WebGpu.{package.Label} package carries; their source is in its crate archive, and\n"
+                    + $"in the repository at {layout.Relative(package.Vendor(layout))}, unmodified.",
                 Report = new LicenseAuditReport { Findings = linked, Policy = audits.Application.Policy, Scope = audits.Application.Scope },
                 LockFile = set.LockFile,
             },
             new ThirdPartyNoticesSection
             {
                 Title = "PART 2 - the crates that are carried but not compiled into an application",
-                Introduction = "These crates are named by the Animation crate set's Cargo.lock and carried by the package so\n"
+                Introduction = $"These crates are named by the {package.Label} crate set's Cargo.lock and carried by the package so\n"
                     + "that cargo can resolve a frontend offline, unmodified. None of their code is in an\n"
                     + "application's WebAssembly file.",
                 Report = new LicenseAuditReport { Findings = carriedOnly, Policy = audits.Vendored.Policy, Scope = audits.Vendored.Scope },
                 LockFile = set.LockFile,
             },
         };
-        return ThirdPartyNoticesGenerator.Generate(sections, new ThirdPartyNoticesOptions { Header = ReadHeader(layout.AnimationNoticesHeaderFile) });
+        return ThirdPartyNoticesGenerator.Generate(sections, new ThirdPartyNoticesOptions { Header = ReadHeader(package.NoticesHeaderFile(layout)) });
     }
 
     /// <summary>
-    /// Compares the generated Animation notices with the committed file.
+    /// Compares a package's generated notices with the committed file.
     /// </summary>
     /// <param name="layout">The repository's folders.</param>
-    /// <param name="set">The split Animation crate set.</param>
-    /// <param name="audits">The Animation crate set's license audits.</param>
-    public static CheckResult CheckAnimation(RepositoryLayout layout, AnimationCrateSet set, LicenseAudits audits)
+    /// <param name="set">The package's split crate set.</param>
+    /// <param name="audits">The crate set's license audits.</param>
+    public static CheckResult CheckBundle(RepositoryLayout layout, BundleCrateSet set, LicenseAudits audits)
     {
         ArgumentNullException.ThrowIfNull(layout);
-        const string name = "Notices: THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt is up to date";
+        ArgumentNullException.ThrowIfNull(set);
+        var package = set.Package;
+        var name = $"Notices: {package.NoticesFileName} is up to date";
         var problems = new List<string>();
-        var expected = GenerateAnimation(layout, set, audits);
-        var shown = layout.Relative(layout.AnimationNoticesFile);
-        if (!File.Exists(layout.AnimationNoticesFile))
+        var expected = GenerateBundle(layout, set, audits);
+        var file = package.NoticesFile(layout);
+        var shown = layout.Relative(file);
+        if (!File.Exists(file))
         {
             problems.Add($"{shown} does not exist; run `LibraryChecker notices --write`");
         }
         else
         {
-            var actual = File.ReadAllText(layout.AnimationNoticesFile, Encoding.UTF8).Replace("\r\n", "\n", StringComparison.Ordinal);
+            var actual = File.ReadAllText(file, Encoding.UTF8).Replace("\r\n", "\n", StringComparison.Ordinal);
             if (!string.Equals(actual, expected, StringComparison.Ordinal))
             {
-                problems.Add($"{shown} differs from what the header and the Animation package's crates produce; run `LibraryChecker notices --write` and review the change");
+                problems.Add($"{shown} differs from what the header and the {package.Label} package's crates produce; run `LibraryChecker notices --write` and review the change");
             }
         }
 
@@ -194,24 +200,26 @@ public static class NoticesCheck
     }
 
     /// <summary>
-    /// Writes the Animation notices file (line feeds, UTF-8 without a byte-order mark).
+    /// Writes a package's notices file (line feeds, UTF-8 without a byte-order mark).
     /// </summary>
     /// <param name="layout">The repository's folders.</param>
-    /// <param name="set">The split Animation crate set.</param>
-    /// <param name="audits">The Animation crate set's license audits.</param>
+    /// <param name="set">The package's split crate set.</param>
+    /// <param name="audits">The crate set's license audits.</param>
     /// <returns>True when the file's content changed.</returns>
-    public static bool WriteAnimation(RepositoryLayout layout, AnimationCrateSet set, LicenseAudits audits)
+    public static bool WriteBundle(RepositoryLayout layout, BundleCrateSet set, LicenseAudits audits)
     {
         ArgumentNullException.ThrowIfNull(layout);
-        var text = GenerateAnimation(layout, set, audits);
-        var existing = File.Exists(layout.AnimationNoticesFile) ? File.ReadAllText(layout.AnimationNoticesFile, Encoding.UTF8) : null;
+        ArgumentNullException.ThrowIfNull(set);
+        var text = GenerateBundle(layout, set, audits);
+        var file = set.Package.NoticesFile(layout);
+        var existing = File.Exists(file) ? File.ReadAllText(file, Encoding.UTF8) : null;
         if (string.Equals(existing, text, StringComparison.Ordinal))
         {
             return false;
         }
 
-        Directory.CreateDirectory(layout.AnimationNoticesFolder);
-        File.WriteAllText(layout.AnimationNoticesFile, text, new UTF8Encoding(false));
+        Directory.CreateDirectory(set.Package.NoticesFolder(layout));
+        File.WriteAllText(file, text, new UTF8Encoding(false));
         return true;
     }
 }

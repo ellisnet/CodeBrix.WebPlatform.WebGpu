@@ -38,3 +38,8 @@
 # CRLF) or cargo will refuse to build from them.
 src/CodeBrix.WebPlatform.WebGpu/Rust/vendor/**   -text
 src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendor/**   -text
+src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/vendor/**   -text
+
+# The model packs of the reference converter (test material) are kept byte for byte as they were
+# obtained: a .bin file is binary data, and a .gltf file keeps the line endings its source gave it.
+tests/CodeBrix.WebPlatform.WebGpu.Graphics.Tests.GltfReference/Models/**   -text

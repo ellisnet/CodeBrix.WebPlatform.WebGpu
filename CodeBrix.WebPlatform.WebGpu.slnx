@@ -14,6 +14,7 @@
   <Folder Name="/Tests/">
     <Project Path="tests/CodeBrix.WebPlatform.WebGpu.Animation.Tests/CodeBrix.WebPlatform.WebGpu.Animation.Tests.csproj" />
     <Project Path="tests/CodeBrix.WebPlatform.WebGpu.Graphics.Tests/CodeBrix.WebPlatform.WebGpu.Graphics.Tests.csproj" />
+    <Project Path="tests/CodeBrix.WebPlatform.WebGpu.Graphics.Tests.GltfReference/CodeBrix.WebPlatform.WebGpu.Graphics.Tests.GltfReference.csproj" />
     <Project Path="tests/CodeBrix.WebPlatform.WebGpu.LibraryChecker.Tests/CodeBrix.WebPlatform.WebGpu.LibraryChecker.Tests.csproj" />
     <Project Path="tests/CodeBrix.WebPlatform.WebGpu.Tests/CodeBrix.WebPlatform.WebGpu.Tests.csproj" />
     <Project Path="tests/CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend/CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend.csproj" />

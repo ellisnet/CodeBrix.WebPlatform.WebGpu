@@ -14,7 +14,8 @@ namespace CodeBrix.WebPlatform.WebGpu.LibraryChecker.Checks;
 /// The license gate: audits the crates that are compiled into a platform application that uses
 /// wgpu (the wasm32 build of the crate set) against the strictest tier, and every vendored crate
 /// against the vendored tier - each time also scanning the crate folders for license files the
-/// crates do not declare. It also confirms that every vendored crate was audited.
+/// crates do not declare; and the same for the Graphics and the Animation crate sets. It also
+/// confirms that every vendored crate was audited.
 /// </summary>
 public static class LicenseCheck
 {
@@ -60,21 +61,49 @@ public static class LicenseCheck
     }
 
     /// <summary>
+    /// Runs the audits of the Graphics crate set, offline, in a temporary copy of the set whose
+    /// vendor folder merges the Graphics package's own crates with the shared ones (see
+    /// <see cref="BundleCrateSet.CreateMergedSource"/>), as <see cref="RunBundleAsync"/> does.
+    /// </summary>
+    /// <param name="layout">The repository's folders.</param>
+    /// <param name="allowlist">The approved licenses.</param>
+    /// <param name="merged">The temporary copy of the Graphics crate set with its merged vendor folder.</param>
+    /// <param name="cancellationToken">Cancels the cargo runs.</param>
+    /// <returns>One result per audit, a coverage result, and the audit reports.</returns>
+    public static Task<(IReadOnlyList<CheckResult> Results, LicenseAudits Audits)> RunGraphicsAsync(RepositoryLayout layout, LicenseAllowlist allowlist, BundleCrateSet.MergedSource merged, CancellationToken cancellationToken = default)
+        => RunBundleAsync(layout, BundlePackage.Graphics, allowlist, merged, cancellationToken);
+
+    /// <summary>
     /// Runs the audits of the Animation crate set, offline, in a temporary copy of the set whose
     /// vendor folder merges the Animation package's own crates with the shared ones (see
-    /// <see cref="AnimationCrateSet.CreateMergedSource"/>). The audits cover the whole set; the
-    /// results judge every crate of it, and the coverage check confirms that every crate of the
-    /// Animation package's vendor folder was audited. The caller makes the temporary copy and
-    /// deletes it when it no longer needs the reports (the notices are written from them).
+    /// <see cref="BundleCrateSet.CreateMergedSource"/>), as <see cref="RunBundleAsync"/> does.
     /// </summary>
     /// <param name="layout">The repository's folders.</param>
     /// <param name="allowlist">The approved licenses.</param>
     /// <param name="merged">The temporary copy of the Animation crate set with its merged vendor folder.</param>
     /// <param name="cancellationToken">Cancels the cargo runs.</param>
     /// <returns>One result per audit, a coverage result, and the audit reports.</returns>
-    public static async Task<(IReadOnlyList<CheckResult> Results, LicenseAudits Audits)> RunAnimationAsync(RepositoryLayout layout, LicenseAllowlist allowlist, AnimationCrateSet.MergedSource merged, CancellationToken cancellationToken = default)
+    public static Task<(IReadOnlyList<CheckResult> Results, LicenseAudits Audits)> RunAnimationAsync(RepositoryLayout layout, LicenseAllowlist allowlist, BundleCrateSet.MergedSource merged, CancellationToken cancellationToken = default)
+        => RunBundleAsync(layout, BundlePackage.Animation, allowlist, merged, cancellationToken);
+
+    /// <summary>
+    /// Runs the audits of a package's crate set (the Graphics or the Animation package's), offline,
+    /// in a temporary copy of the set whose vendor folder merges the package's own crates with the
+    /// shared ones (see <see cref="BundleCrateSet.CreateMergedSource"/>). The audits cover the
+    /// whole set; the results judge every crate of it, and the coverage check confirms that every
+    /// crate of the package's vendor folder was audited. The caller makes the temporary copy and
+    /// deletes it when it no longer needs the reports (the notices are written from them).
+    /// </summary>
+    /// <param name="layout">The repository's folders.</param>
+    /// <param name="package">The package.</param>
+    /// <param name="allowlist">The approved licenses.</param>
+    /// <param name="merged">The temporary copy of the package's crate set with its merged vendor folder.</param>
+    /// <param name="cancellationToken">Cancels the cargo runs.</param>
+    /// <returns>One result per audit, a coverage result, and the audit reports.</returns>
+    public static async Task<(IReadOnlyList<CheckResult> Results, LicenseAudits Audits)> RunBundleAsync(RepositoryLayout layout, BundlePackage package, LicenseAllowlist allowlist, BundleCrateSet.MergedSource merged, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(layout);
+        ArgumentNullException.ThrowIfNull(package);
         ArgumentNullException.ThrowIfNull(allowlist);
         ArgumentNullException.ThrowIfNull(merged);
         var workbench = new RustWorkbench();
@@ -91,11 +120,12 @@ public static class LicenseCheck
             new CargoMetadataOptions { Frozen = true },
             LicenseAuditScope.AllPackages,
             cancellationToken).ConfigureAwait(false);
+        var label = package.Label;
         var results = new List<CheckResult>
         {
-            ToResult("Licenses: the Animation crate set's crates compiled into a platform application that uses codebrix-webgpu-animation (strictest tier)", application),
-            ToResult("Licenses: the Animation crate set's crates (its own carried by the Animation package; the shared ones by the WebGpu package or the platform)", vendored),
-            Coverage("Licenses: every crate of the Animation package's vendor folder was audited", VendorFolder.Load(layout.AnimationVendor), vendored),
+            ToResult($"Licenses: the {label} crate set's crates compiled into a platform application that uses {package.CrateName} (strictest tier)", application),
+            ToResult($"Licenses: the {label} crate set's crates (its own carried by the {label} package; the shared ones by the WebGpu package or the platform)", vendored),
+            Coverage($"Licenses: every crate of the {label} package's vendor folder was audited", VendorFolder.Load(package.Vendor(layout)), vendored),
         };
         return (results, new LicenseAudits { Application = application, Vendored = vendored });
     }

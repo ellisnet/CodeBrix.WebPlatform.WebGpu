@@ -1,12 +1,14 @@
 //! What the page keeps of what it fetched from the backend, for the life of the page: the bytes
-//! of each model-data blob and panorama, and the Viewer's scene description. A scene that is
+//! of each model file, model-data blob and panorama, and the Viewer's scene description. A scene that is
 //! selected again takes them from here and asks the backend for nothing; a failed request is not
 //! kept, so the next visit asks again.
 //!
 //! This is the application's own memory (a page that never switches scenes would need none).
-//! Across a page RELOAD the bytes are fetched again in full: the platform's client asks with the
-//! browser's HTTP cache switched off, so the backend's ETag is never sent back (see the sample's
-//! MAINTAINER-README).
+//! Across a page RELOAD the browser's HTTP cache takes over: the platform's client reads a file
+//! answer as bytes with the fetch cache mode "no-cache", so the browser KEEPS the answer and
+//! REVALIDATES it with the backend on the next request (sending the ETag back); the backend
+//! answers 304 with no body while the file is unchanged, and the browser hands over the bytes it
+//! kept (see the sample's MAINTAINER-README).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -16,7 +18,8 @@ use std::rc::Rc;
 use crate::generated::models::ViewerScene as ViewerSceneData;
 
 thread_local! {
-    /// The bytes fetched so far, by the name of what they are ("scene.cbmd", "model:archer", ...).
+    /// The bytes fetched so far, by the name of what they are ("model-file:survival-kit/tree.glb",
+    /// "model:ground", ...).
     static BYTES: RefCell<HashMap<String, Rc<Vec<u8>>>> = RefCell::new(HashMap::new());
     /// The Viewer's scene description, once fetched.
     static VIEWER_SCENE: RefCell<Option<ViewerSceneData>> = const { RefCell::new(None) };

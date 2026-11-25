@@ -114,6 +114,6 @@ impl DemoScene for HardEdgeScene {
         self.frame.get_layer_mut("Masked").unwrap().set_mask(Some(DrawingMask::from_plane(&hard, RectangleF::new(PANEL_X[2], PANEL_Y, DW as f32 * ZOOM, DH as f32 * ZOOM), false).unwrap()));
         self.frame.render_with_background(scene, width, height);
         let target = part(&self.frame, PANEL_X[0], PANEL_Y, DW as f32 * ZOOM, DH as f32 * ZOOM, width, height);
-        self.drawing.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(target) });
+        self.drawing.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(target), ..Default::default() });
     }
 }

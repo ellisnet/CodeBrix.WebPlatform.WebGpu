@@ -5,6 +5,7 @@ mod compute_pass;
 mod graphics_frame;
 mod graphics_frame_commands;
 pub(crate) mod indirect_args;
+mod pass_attachments;
 mod render_pass;
 
 pub use compute_pass::{ComputePass, ComputePassOptions};

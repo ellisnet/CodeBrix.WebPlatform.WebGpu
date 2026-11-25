@@ -70,6 +70,10 @@ public class RepositoryLayoutTests
         //Assert
         layout.GraphicsCrate.Should().Be(Path.Combine(graphics, "Rust", "codebrix-webgpu-graphics"));
         layout.GraphicsNoticesFile.Should().Be(Path.Combine(graphics, "Rust", "notices", "THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt"));
+        layout.GraphicsNoticesHeaderFile.Should().Be(Path.Combine(graphics, "Rust", "notices", "notices-header-WebGpuGraphicsCrates.txt"));
+        layout.GraphicsCrateSetLock.Should().Be(Path.Combine(graphics, "Rust", "graphics-crates", "Cargo.lock"));
+        layout.GraphicsVendor.Should().Be(Path.Combine(graphics, "Rust", "vendor"));
+        layout.GraphicsVendorRelative.Should().Be("src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/vendor");
         layout.GraphicsProjectFile.Should().Be(Path.Combine(graphics, "CodeBrix.WebPlatform.WebGpu.Graphics.csproj"));
         layout.AnimationCrate.Should().Be(Path.Combine(animation, "Rust", "codebrix-webgpu-animation"));
         layout.AnimationProjectFile.Should().Be(Path.Combine(animation, "CodeBrix.WebPlatform.WebGpu.Animation.csproj"));

@@ -3,7 +3,7 @@ name = "graphicsdemo-graphics"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "The graphics frontend application of the GraphicsDemo sample: WebGPU scenes (the complete model viewer scene with its animated actors, image-based lighting, skybox, HDR and tone mapping; two layers on one clock; the built-in shaders compiled; a textured quad; sprites; lit shapes under an orbit camera; a skinned model; a morph-target shape; animated textures, a panorama background, a render bundle, compute, an indirect draw and GPU timing) drawn through codebrix-webgpu-graphics, in Rust and Dioxus compiled to WebAssembly."
+description = "The graphics frontend application of the GraphicsDemo sample: WebGPU scenes (the complete model viewer scene from the kits' glTF files with its animated actors, image-based lighting, skybox, HDR and tone mapping; two layers on one clock; the built-in shaders compiled; a textured quad; sprites; lit shapes under an orbit camera; a skinned model; a morph-target shape; animated textures, a panorama background, a render bundle, compute, an indirect draw and GPU timing; feature demos of local lights, shadows, frustum culling, two-pass translucency, glow and bloom, GPU particles, picking with page labels, anti-aliasing (MSAA), level of detail, and water - a pond over a mosaic floor stirred by the pointer and rain, and a lake of open-water waves - each with frame timings) drawn through codebrix-webgpu-graphics, in Rust and Dioxus compiled to WebAssembly."
 license = "Apache-2.0"
 
 [dependencies]
@@ -20,11 +20,13 @@ serde_json = "1"
 codebrix-webgpu = "1.0"
 # The graphics library - the GraphicsContext, resources, pipelines and frames of
 # CodeBrix.WebGpu.Graphics - from the CodeBrix.WebPlatform.WebGpu.Graphics package's crate bundle
-# (the build program registers it, and with it the WebGpu package's bundle it builds on).
-codebrix-webgpu-graphics = "1.6"
+# (the build program registers it, and with it the WebGpu package's bundle it builds on). 1.7: the
+# glTF loader (GltfDocument, GltfModelSet), end_opaque / end_blended and panning (set_viewport);
+# 1.8: lights, shadows, culling, effects, multisampling (CanvasFrameTarget) and level of detail.
+codebrix-webgpu-graphics = "1.8"
 # The browser bindings the Viewer scene reads its query switches (?ldr, ?no-skybox) and the page's
 # clock (for a build-time read-out) through - the version the platform's crate set carries.
-web-sys = { version = "=0.3.107", features = ["Location", "Performance", "Window"] }
+web-sys = { version = "=0.3.107", features = ["Document", "DomRect", "Element", "Location", "Performance", "Window"] }
 
 [features]
 # Hot reload for `dx serve`; never enabled for a build that ships.

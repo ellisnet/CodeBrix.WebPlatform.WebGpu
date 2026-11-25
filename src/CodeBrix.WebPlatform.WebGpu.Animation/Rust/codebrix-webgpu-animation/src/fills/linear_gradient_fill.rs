@@ -5,15 +5,18 @@ use crate::color::Color;
 use crate::fills::color_stop::ColorStop;
 use crate::fills::gradient_spread::GradientSpread;
 use crate::geometry::PointF;
+use crate::painting::ColorInterpolation;
 
 /// A gradient from `start` to `end` (calibrated drawing units) through two or more stops,
-/// interpolated in straight sRGB as NoSkia does.
+/// interpolated in straight sRGB as NoSkia does (another space when chosen with
+/// [`LinearGradientFill::with_interpolation`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct LinearGradientFill {
     start: PointF,
     end: PointF,
     stops: Vec<ColorStop>,
     spread: GradientSpread,
+    interpolation: ColorInterpolation,
 }
 
 impl LinearGradientFill {
@@ -24,7 +27,7 @@ impl LinearGradientFill {
         if start == end {
             return Err("A linear gradient needs two different points: move the end away from the start.".to_string());
         }
-        Ok(LinearGradientFill { start, end, stops, spread })
+        Ok(LinearGradientFill { start, end, stops, spread, interpolation: ColorInterpolation::Srgb })
     }
 
     /// A two-colour gradient (C# `LinearGradientFill(start, end, startColor, endColor)`).
@@ -55,6 +58,23 @@ impl LinearGradientFill {
     /// A copy of the stops.
     pub fn get_stops(&self) -> Vec<ColorStop> {
         self.stops.clone()
+    }
+
+    /// The same gradient interpolating in another space (no C# equivalent; Srgb, the default, is
+    /// NoSkia's straight sRGB). The renderer samples the chosen space into the gradient's ramp.
+    pub fn with_interpolation(mut self, space: ColorInterpolation) -> LinearGradientFill {
+        self.interpolation = space;
+        self
+    }
+
+    /// Sets the space the gradient interpolates in (no C# equivalent; see `with_interpolation`).
+    pub fn set_interpolation(&mut self, space: ColorInterpolation) {
+        self.interpolation = space;
+    }
+
+    /// The space the gradient interpolates in (Srgb unless chosen).
+    pub fn interpolation(&self) -> ColorInterpolation {
+        self.interpolation
     }
 
     pub(crate) fn stops(&self) -> &[ColorStop] {

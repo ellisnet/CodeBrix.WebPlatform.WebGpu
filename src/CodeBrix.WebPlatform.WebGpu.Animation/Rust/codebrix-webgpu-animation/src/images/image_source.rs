@@ -15,10 +15,12 @@ use crate::geometry::Rectangle;
 /// (2) THE PICTURE-PIXELS FORM: [`ImageSource::from_picture_pixels`] reads what the .NET
 /// `PicturePixelsWriter` of the CodeBrix.WebPlatform.WebGpu.Animation package writes - a backend
 /// decodes any format it likes (with CodeBrix.Imaging, for example) and sends the pixels through
-/// the platform's generated `_bytes` call. (3) A PNG FILE: [`ImageSource::from_png`] decodes the
-/// file's bytes in the browser (PNG is the ONLY file format this crate reads). C#'s `FromEncoded`
-/// / `FromFile` / `FromImagingImage` have no equivalent here (no file access, no JPEG or other
-/// decoder); C#'s `FromPlaneImage` is [`ImageSource::from_plane_image`].
+/// the platform's generated `_bytes` call. (3) A PNG OR JPEG FILE: [`ImageSource::from_png`] and
+/// [`ImageSource::from_jpeg`] decode the file's bytes in the browser, through codebrix-webgpu's
+/// `decode_png` and `decode_jpeg` (PNG and JPEG are the only file formats this crate reads; a
+/// JPEG's EXIF orientation is not applied). C#'s `FromEncoded` / `FromFile` / `FromImagingImage`
+/// have no equivalent here (no file access, no decoder of other formats); C#'s `FromPlaneImage`
+/// is [`ImageSource::from_plane_image`].
 ///
 /// SHARING. A clone is the SAME picture (C# shares one reference): the pixels are kept once, and
 /// the renderer uploads them to the GPU once and keeps the texture while any shape draws it.

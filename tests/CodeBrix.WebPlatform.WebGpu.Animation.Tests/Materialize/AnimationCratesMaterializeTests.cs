@@ -31,9 +31,9 @@ public class AnimationCratesMaterializeTests
         Assert.SkipWhen(frontend.NoCratesReason != null, frontend.NoCratesReason ?? string.Empty);
     }
 
-    private string Vendor => _frontend.Options.ResolvedVendorDirectory;
+    private string Vendor => _frontend.Options.VendorDirectory;
 
-    private string BothVendor => _frontend.BothOptions.ResolvedVendorDirectory;
+    private string BothVendor => _frontend.BothOptions.VendorDirectory;
 
     private CrateBundleOutcome AnimationOutcome => _frontend.First.CrateBundles.Single(b => b.Name == AnimationCrates.BundleName);
 

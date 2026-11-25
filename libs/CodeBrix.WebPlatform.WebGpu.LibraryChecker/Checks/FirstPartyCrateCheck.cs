@@ -11,7 +11,8 @@ namespace CodeBrix.WebPlatform.WebGpu.LibraryChecker.Checks;
 /// The first-party crates of this repository: codebrix-webgpu (Rust/codebrix-webgpu of the WebGpu
 /// library), which the WebGpu package carries in its crate archive beside the vendored crates, and
 /// codebrix-webgpu-graphics (Rust/codebrix-webgpu-graphics of the Graphics library), which the
-/// Graphics package carries alone in its own archive, and codebrix-webgpu-animation
+/// Graphics package carries in its own archive beside the third-party crates only it needs, and
+/// codebrix-webgpu-animation
 /// (Rust/codebrix-webgpu-animation of the Animation library), which the Animation package carries
 /// in its own archive beside the third-party crates only it needs. They are OURS: covered by the repository's
 /// Apache-2.0 LICENSE, never published, and therefore exempt from the licence audit and absent
@@ -19,8 +20,9 @@ namespace CodeBrix.WebPlatform.WebGpu.LibraryChecker.Checks;
 /// declares the crate as ours; its name is no third-party crate's (nor another first-party
 /// crate's); and every dependency is at an EXACT version that the vendored crates or the
 /// platform's crates carry - or, for a crate that builds on another first-party crate (the
-/// Graphics crate on codebrix-webgpu), that crate at its own version - so that a consumer's
-/// offline build resolves it from the one vendor folder.
+/// Graphics and Animation crates on codebrix-webgpu), that crate at its own version, and for the
+/// Graphics and Animation crates also the crates their own package vendors - so that a
+/// consumer's offline build resolves it from the one vendor folder.
 /// </summary>
 public static class FirstPartyCrateCheck
 {
@@ -47,8 +49,9 @@ public static class FirstPartyCrateCheck
     /// Runs the check on each of the repository's first-party crates (codebrix-webgpu, then
     /// codebrix-webgpu-graphics, then codebrix-webgpu-animation), against the vendored crates and
     /// the platform release this tool references; the Graphics and Animation crates may also name
-    /// codebrix-webgpu, at that crate's version, and the Animation crate the crates only the
-    /// Animation package vendors (kurbo, peniko).
+    /// codebrix-webgpu, at that crate's version, the Graphics crate the crates only the Graphics
+    /// package vendors (gltf), and the Animation crate the crates only the Animation package
+    /// vendors (kurbo, peniko, ...). Neither may name the other package's vendored crates.
     /// </summary>
     /// <param name="layout">The repository's folders.</param>
     /// <returns>One result per crate.</returns>
@@ -84,7 +87,8 @@ public static class FirstPartyCrateCheck
                 firstParty[WebGpuCrateName] = webGpuVersion;
             }
 
-            results.Add(Check(File.ReadAllText(graphicsManifest), layout.Relative(graphicsManifest), vendored, platform, firstParty));
+            var graphicsVendored = Directory.Exists(layout.GraphicsVendor) ? CrateSnapshot.Combine(vendored, CrateSnapshot.FromDirectory(layout.GraphicsVendor)) : vendored;
+            results.Add(Check(File.ReadAllText(graphicsManifest), layout.Relative(graphicsManifest), graphicsVendored, platform, firstParty));
         }
 
         var animationManifest = Path.Combine(layout.AnimationCrate, "Cargo.toml");

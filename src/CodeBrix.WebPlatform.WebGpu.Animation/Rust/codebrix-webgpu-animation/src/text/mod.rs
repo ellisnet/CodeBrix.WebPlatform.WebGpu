@@ -1,5 +1,6 @@
 //! Text, single lines and laid-out blocks (CodeBrix.Imaging.Drawing's `Text` namespace): the
-//! [`FontRegistry`] that takes font BYTES, [`TextAlign`], and what this crate adds
+//! [`FontRegistry`] that takes font BYTES (a variable font at chosen axis values:
+//! [`FontVariation`]), [`TextAlign`], and what this crate adds
 //! by the owner's rule - the choice of what a missing character shows
 //! ([`MissingCharacterMode`]) and the report of what was missing ([`MissingCharacter`],
 //! [`ShapedCluster`]). The line itself is a [`TextShape`](crate::shapes::TextShape).
@@ -16,6 +17,7 @@
 
 pub(crate) mod font_face;
 mod font_registry;
+mod font_variation;
 mod missing_character;
 mod missing_character_mode;
 mod shaped_cluster;
@@ -34,6 +36,7 @@ mod text_vertical_align;
 pub(crate) mod text_shaping;
 
 pub use font_registry::{FontRegistry, MeasureTextOptions};
+pub use font_variation::{FontVariation, FontVariationAxis};
 pub use missing_character::MissingCharacter;
 pub use missing_character_mode::MissingCharacterMode;
 pub use shaped_cluster::ShapedCluster;

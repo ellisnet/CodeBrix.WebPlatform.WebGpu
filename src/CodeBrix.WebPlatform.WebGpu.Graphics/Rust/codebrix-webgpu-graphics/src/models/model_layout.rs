@@ -39,6 +39,16 @@ pub(crate) struct ModelLayout {
     pub(crate) bounds_max: Vec3,
     /// The triangles one instance draws (C#: `TriangleCount`).
     pub(crate) triangle_count: u32,
+    /// By mesh, primitive and morph target: how far the target moves the centre of the
+    /// primitive's bounds at weight 1, from the vertex buffer's positions (the default weights
+    /// baked in); empty until [`morph_center_shifts`] fills it at load. The translucent sort uses
+    /// it. Not in C#.
+    pub(crate) morph_center_shifts: Vec<Vec<Vec<Vec3>>>,
+    /// The culling bounds: the rest-pose bounds until the model is made, then grown at load to
+    /// hold every pose of the model's clips, its morph targets at full weight and its skin
+    /// round its moving joints (`model_bounds::culling_bounds`). Not in C#.
+    pub(crate) culling_bounds_min: Vec3,
+    pub(crate) culling_bounds_max: Vec3,
 }
 
 impl ModelLayout {
@@ -121,8 +131,59 @@ impl ModelLayout {
             min = Vec3::ZERO;
             max = Vec3::ZERO;
         }
-        ModelLayout { node_order, draw_items, morph_weight_offsets, morph_weight_count, baked_morph_weights, skin_palette_offsets, palette_size, bounds_min: min, bounds_max: max, triangle_count }
+        ModelLayout { node_order, draw_items, morph_weight_offsets, morph_weight_count, baked_morph_weights, skin_palette_offsets, palette_size, bounds_min: min, bounds_max: max, triangle_count, morph_center_shifts: Vec::new(), culling_bounds_min: min, culling_bounds_max: max }
     }
+}
+
+/// By mesh, primitive and morph target: how far the target, at weight 1, moves the centre of the
+/// bounds of the primitive's positions in `vertex_bytes` (the [`ModelVertex`](crate::ModelVertex)
+/// bytes of the model; the position is the vertex's first 12 bytes). A primitive whose vertices
+/// lie outside the bytes, or a target without position deltas, gets zero shifts. Not in C#.
+pub(crate) fn morph_center_shifts(meshes: &[ModelMesh], vertex_bytes: &[u8]) -> Vec<Vec<Vec<Vec3>>> {
+    let stride = std::mem::size_of::<crate::ModelVertex>();
+    let position = |vertex: usize| -> Option<Vec3> {
+        let at = vertex.checked_mul(stride)?;
+        let bytes = vertex_bytes.get(at..at + 12)?;
+        let float = |i: usize| f32::from_le_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
+        Some(Vec3::new(float(0), float(4), float(8)))
+    };
+    meshes
+        .iter()
+        .map(|mesh| {
+            mesh.primitives
+                .iter()
+                .map(|primitive| {
+                    let base = primitive.base_vertex as usize;
+                    let positions: Option<Vec<Vec3>> = (0..primitive.vertex_count as usize).map(|v| position(base + v)).collect();
+                    let positions = positions.unwrap_or_default();
+                    let center = bounds_center(positions.iter().copied());
+                    primitive
+                        .morph_targets
+                        .iter()
+                        .map(|target| match (&center, target.position_deltas.is_empty()) {
+                            (Some(center), false) => {
+                                let moved = positions.iter().enumerate().map(|(v, p)| *p + target.position_deltas.get(v).copied().unwrap_or(Vec3::ZERO));
+                                bounds_center(moved).map_or(Vec3::ZERO, |c| c - *center)
+                            }
+                            _ => Vec3::ZERO,
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// The centre of the bounds of some points, None for none.
+fn bounds_center(points: impl Iterator<Item = Vec3>) -> Option<Vec3> {
+    let mut bounds: Option<(Vec3, Vec3)> = None;
+    for point in points {
+        bounds = Some(match bounds {
+            Some((min, max)) => (min.min(point), max.max(point)),
+            None => (point, point),
+        });
+    }
+    bounds.map(|(min, max)| (min + max) * 0.5)
 }
 
 /// Every node's rest-pose model-space matrix (parents first).
@@ -137,4 +198,28 @@ pub(crate) fn rest_matrices(nodes: &[ModelNode], order: &[usize]) -> Vec<Mat4> {
         };
     }
     matrices
+}
+
+#[cfg(test)]
+mod tests {
+    use glam::Vec3;
+
+    use super::morph_center_shifts;
+    use crate::models::{ModelMesh, ModelMorphTarget, ModelPrimitive, ModelVertex};
+
+    #[test]
+    fn a_morph_target_s_centre_shift_is_the_move_of_the_bounds_centre() {
+        // Two vertices at x = 0 and x = 2 (centre 1); the target moves the second to x = 6
+        // (centre 3): a shift of 2 along x. A second target has no position deltas.
+        let vertices = [ModelVertex { position: Vec3::ZERO, ..ModelVertex::default() }, ModelVertex { position: Vec3::new(2.0, 0.0, 0.0), ..ModelVertex::default() }];
+        let bytes: Vec<u8> = bytemuck::cast_slice(&vertices).to_vec();
+        let grows = ModelMorphTarget { position_deltas: vec![Vec3::ZERO, Vec3::new(4.0, 0.0, 0.0)], normal_deltas: Vec::new(), tangent_deltas: Vec::new() };
+        let normals_only = ModelMorphTarget { position_deltas: Vec::new(), normal_deltas: vec![Vec3::X; 2], tangent_deltas: Vec::new() };
+        let primitive = ModelPrimitive { index: 0, material: None, first_index: 0, index_count: 0, base_vertex: 0, vertex_count: 2, skin_base_vertex: None, bounds_min: Vec3::ZERO, bounds_max: Vec3::new(2.0, 0.0, 0.0), has_vertex_colors: false, has_tex_coord1: false, has_tangents: false, tangents_generated: false, normals_generated: false, morph_targets: vec![grows, normals_only] };
+        let mesh = ModelMesh { index: 0, name: None, primitives: vec![primitive], default_morph_weights: vec![0.0, 0.0] };
+        let shifts = morph_center_shifts(std::slice::from_ref(&mesh), &bytes);
+        assert_eq!(shifts, vec![vec![vec![Vec3::new(2.0, 0.0, 0.0), Vec3::ZERO]]]);
+        // Vertices outside the bytes: zero shifts, no panic.
+        assert_eq!(morph_center_shifts(&[mesh], &bytes[..64]), vec![vec![vec![Vec3::ZERO, Vec3::ZERO]]]);
+    }
 }

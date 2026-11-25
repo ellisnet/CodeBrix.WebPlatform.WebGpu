@@ -104,7 +104,7 @@ impl DemoScene for TransitionScene {
             panel.set_time(seconds);
             panel.set_layer_transition("A", "B", transition, fraction).unwrap();
             let target = part(&self.frame, PANEL_X[i % 3], PANEL_Y[i / 3], PANEL_WIDTH as f32, PANEL_HEIGHT as f32, width, height);
-            panel.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(target) });
+            panel.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(target), ..Default::default() });
         }
     }
 }

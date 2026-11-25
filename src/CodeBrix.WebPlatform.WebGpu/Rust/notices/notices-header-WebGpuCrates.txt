@@ -1,6 +1,6 @@
 ================================================================================
-THIRD-PARTY NOTICES: the wgpu crates that the CodeBrix.WebPlatform.WebGpu
-package brings to an application's WebAssembly file
+THIRD-PARTY NOTICES: the wgpu, glam, png and zune-jpeg crates that the
+CodeBrix.WebPlatform.WebGpu package brings to an application's WebAssembly file
 ================================================================================
 
 This file travels with the CodeBrix.WebPlatform.WebGpu.ApacheLicenseForever
@@ -10,8 +10,9 @@ program finds it beside itself as webgpu-crates/THIRD-PARTY-NOTICES-WebGpuCrates
 bundle: the Rust crates the package carries (as webgpu-crates.zip) and that the
 platform's frontend build writes into the application's frontend beside the
 platform's own crates. They are the `wgpu` crate, for WebGPU in the browser,
-the `glam` crate, for vector and matrix maths, and every crate their
-resolution names. Part 1 lists those compiled into an
+the `glam` crate, for vector and matrix maths, the `png` crate, for reading
+PNG files, the `zune-jpeg` crate, for reading JPEG files, and every crate
+their resolution names. Part 1 lists those compiled into an
 application's WebAssembly file when its frontend uses `wgpu` with the features
 this package's crate set names; Part 2 those that are carried but not compiled
 in (they are needed so that cargo can resolve the frontend offline).
@@ -30,6 +31,39 @@ The crate archive also holds codebrix-webgpu, the first-party crate of the
 CodeBrix.WebPlatform.WebGpu repository (the WebGPU context, the canvas host
 and the maths it re-exports from glam). It is covered by that repository's
 own LICENSE (Apache-2.0) and is not third-party, so it is not listed below.
+
+PNG FILES: png and the crates it brings. png 0.18.1 (the image-rs project),
+fdeflate 0.3.7, flate2 1.1.11, miniz_oxide 0.8.9 and 0.9.1, crc32fast 1.5.5,
+adler2 2.0.1 and simd-adler32 0.3.10 are compiled into an application's
+WebAssembly file when it reads PNG files (codebrix-webgpu's decode_png, which
+the Graphics and Animation crates call). Their entries and licence files are
+in Part 1 below. png, fdeflate, flate2 and crc32fast are "MIT OR Apache-2.0"
+(Apache-2.0 is used); miniz_oxide is "MIT OR Zlib OR Apache-2.0" (Apache-2.0
+is used; its LICENSE-MIT.md also names the authors of the C miniz it was ported
+from - RAD Game Tools and Valve Software, Rich Geldreich and Tenacious Software
+LLC); adler2 is "0BSD OR MIT OR Apache-2.0" (Apache-2.0 is used); simd-adler32
+is "MIT". png's src/filter/paeth.rs says its Paeth predictor is "Adapted from
+public domain PNG implementation"; listed as a credit. zlib-rs 0.6.8 (Zlib) is
+named by the crate set's lock as an optional dependency of flate2 and is
+carried in the archive so that an offline build resolves, but nothing compiles
+it (flate2 is built with its default rust_backend, miniz_oxide). It carries
+src/deflate/test-data/paper-100k.pdf, a 100 KB PDF document with no terms of
+its own, used only by zlib-rs's tests: carried, never compiled, covered by the
+crate's declared licence. crc32fast and simd-adler32 carry GitHub workflow
+files (.github/workflows) of their own projects; they are part of the crates
+as published, never compiled and never run.
+
+JPEG FILES: zune-jpeg and zune-core. zune-jpeg 0.5.15 and zune-core 0.5.3
+(the zune-image project; "MIT OR Apache-2.0 OR Zlib", Apache-2.0 is used; their
+LICENSE-MIT and LICENSE-ZLIB name "zune-image developers") are compiled into an
+application's WebAssembly file when it reads JPEG files (codebrix-webgpu's
+decode_jpeg). Their entries and licence files are in Part 1 below. They are
+used with zune-jpeg's default features off and `std` on (no native SIMD, no
+logging). zune-jpeg's src/bitstream.rs says its accelerated AC table decoding
+is borrowed from stb_image.h, written by Fabian Giesen, and its src/worker.rs
+and src/mcu.rs name smaller parts borrowed from or derived from Sean Barrett's
+stb library (stb_image is offered as public domain or under the MIT License);
+listed as a credit.
 
 CODE PORTED INTO glam. The glam crate (listed below, with its own licence
 files) states in its ATTRIBUTION.md that it contains code ported from the

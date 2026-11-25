@@ -101,6 +101,6 @@ impl DemoScene for TransformScene {
         self.frame.render_with_background(scene, width, height);
         self.panel.set_time(seconds);
         let target = part(&self.frame, PANEL_X, PANEL_Y, PANEL_WIDTH, PANEL_HEIGHT, width, height);
-        self.panel.render_with(scene, width, height, &SessionRenderOptions { include_background: false, target: Some(target) });
+        self.panel.render_with(scene, width, height, &SessionRenderOptions { include_background: false, target: Some(target), ..Default::default() });
     }
 }

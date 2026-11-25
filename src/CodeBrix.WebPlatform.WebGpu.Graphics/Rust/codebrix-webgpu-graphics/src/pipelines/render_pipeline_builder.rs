@@ -5,6 +5,7 @@
 use crate::context::label_text;
 use crate::context::{GraphicsContext, GraphicsException};
 use crate::pipelines::{BlendPreset, CullPreset, DepthPreset, VertexLayout, VertexLayoutOptions, VertexType};
+use crate::presentation::SAMPLE_COUNTS;
 use crate::resources::{GpuBindGroupLayout, GpuShader};
 
 /// The defaulted arguments of [`RenderPipelineBuilder::with_color_target`] (C#: `blend =
@@ -133,7 +134,9 @@ impl RenderPipelineBuilder {
         self
     }
 
-    /// No fragment stage (depth-only drawing) (C#: `WithoutFragment`).
+    /// No fragment stage (depth-only drawing) (C#: `WithoutFragment`). A depth-only pipeline that
+    /// needs a fragment shader (one that discards, for alpha-tested parts) keeps its fragment
+    /// entry and has no colour target: `with_depth` and no `with_color_target` (Not in C#).
     pub fn without_fragment(mut self) -> RenderPipelineBuilder {
         self.has_fragment = false;
         self
@@ -190,7 +193,8 @@ impl RenderPipelineBuilder {
         self
     }
 
-    /// The sample count, for a multisampled target (C#: `WithSampleCount`).
+    /// The sample count, for a multisampled target (C#: `WithSampleCount`): 1 (the default) or 4
+    /// - `pass.target().sample_count()` for the target it will draw into; `build` refuses others.
     pub fn with_sample_count(mut self, count: u32) -> RenderPipelineBuilder {
         self.sample_count = count;
         self
@@ -274,17 +278,24 @@ impl RenderPipelineBuilder {
     }
 
     fn check(&self) -> Result<(), GraphicsException> {
-        if self.has_fragment && self.color_targets.is_empty() {
-            return Err(GraphicsException::new(format!("The render pipeline{} has a fragment stage but no colour target; add one with with_color_target (on a canvas: the frame's target.format), or call without_fragment.", label_text(self.label.as_deref()))));
-        }
-        if self.stencil.is_some() && self.depth.is_none() {
-            return Err(GraphicsException::new(format!("The render pipeline{} tests the stencil but has no depth-stencil format; add with_depth with a format that has a stencil aspect.", label_text(self.label.as_deref()))));
-        }
-        if self.sample_count == 0 {
-            return Err(GraphicsException::new("A render pipeline needs a sample count of 1 or more (4 for multisampling)."));
-        }
-        Ok(())
+        check_parts(self.has_fragment, self.color_targets.len(), self.depth.is_some(), self.stencil.is_some(), self.sample_count, self.label.as_deref())
     }
+}
+
+/// The checks [`RenderPipelineBuilder::build`] makes itself, on the builder's parts. A fragment
+/// stage without a colour target is a DEPTH-ONLY pipeline whose fragment shader only discards
+/// (an alpha-tested shadow caster) - valid WebGPU, so allowed when a depth format is set.
+fn check_parts(has_fragment: bool, color_target_count: usize, has_depth: bool, has_stencil: bool, sample_count: u32, label: Option<&str>) -> Result<(), GraphicsException> {
+    if has_fragment && color_target_count == 0 && !has_depth {
+        return Err(GraphicsException::new(format!("The render pipeline{} has a fragment stage but neither a colour target nor depth; add one with with_color_target (on a canvas: the frame's target.format), add with_depth for a depth-only pipeline, or call without_fragment.", label_text(label))));
+    }
+    if has_stencil && !has_depth {
+        return Err(GraphicsException::new(format!("The render pipeline{} tests the stencil but has no depth-stencil format; add with_depth with a format that has a stencil aspect.", label_text(label))));
+    }
+    if !SAMPLE_COUNTS.contains(&sample_count) {
+        return Err(GraphicsException::new(format!("The render pipeline{} cannot draw with {sample_count} samples per pixel: the counts are 1 and 4 (4x MSAA), the two every WebGPU implementation supports. Use pass.target().sample_count().", label_text(label))));
+    }
+    Ok(())
 }
 
 impl GraphicsContext {
@@ -341,7 +352,7 @@ impl GpuRenderPipeline {
 
 #[cfg(test)]
 mod tests {
-    use super::{ColorTargetOptions, DepthOptions, StencilMasks};
+    use super::{check_parts, ColorTargetOptions, DepthOptions, StencilMasks};
     use crate::pipelines::{BlendPreset, DepthPreset};
 
     #[test]
@@ -352,5 +363,25 @@ mod tests {
         assert_eq!(ColorTargetOptions::blended(BlendPreset::Additive).blend, BlendPreset::Additive);
         assert_eq!(DepthOptions::default().preset, DepthPreset::ReadWrite);
         assert_eq!(StencilMasks::default().read_mask, u32::MAX);
+    }
+
+    #[test]
+    fn a_fragment_stage_without_a_colour_target_is_a_depth_only_pipeline_when_depth_is_set() {
+        assert!(check_parts(true, 0, true, false, 1, Some("shadow")).is_ok(), "depth-only with a discarding fragment stage");
+        assert!(check_parts(false, 0, true, false, 1, None).is_ok(), "depth-only without a fragment stage");
+        let message = check_parts(true, 0, false, false, 1, Some("quad")).unwrap_err().to_string();
+        assert!(message.contains("'quad' has a fragment stage but neither a colour target nor depth"), "{message}");
+        assert!(check_parts(true, 1, false, false, 1, None).is_ok());
+        assert!(check_parts(true, 1, false, true, 1, None).unwrap_err().to_string().contains("stencil"));
+    }
+
+    #[test]
+    fn the_builder_accepts_one_and_four_samples_only() {
+        assert!(check_parts(true, 1, true, false, 1, None).is_ok());
+        assert!(check_parts(true, 1, true, false, 4, None).is_ok());
+        for refused in [0, 2, 8] {
+            let message = check_parts(true, 1, true, false, refused, Some("p")).unwrap_err().to_string();
+            assert!(message.contains(&format!("cannot draw with {refused} samples per pixel")), "{message}");
+        }
     }
 }

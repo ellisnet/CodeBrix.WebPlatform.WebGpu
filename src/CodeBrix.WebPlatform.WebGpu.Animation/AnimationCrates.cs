@@ -11,8 +11,8 @@ namespace CodeBrix.WebPlatform.WebGpu.Animation;
 /// <c>codebrix-webgpu-animation</c> (real-time 2D animation with the names and concepts of
 /// CodeBrix.Imaging.Drawing.NoSkia, drawn by its own renderer as a layer on the canvas host of
 /// <c>codebrix-webgpu</c>) and the third-party crates that only it needs (<c>kurbo</c>,
-/// <c>peniko</c>, <c>harfrust</c>, <c>i_overlay</c>, <c>png</c>, <c>usvg</c>, <c>velato</c> and what they bring beyond the platform's and the WebGpu
-/// package's crates). The
+/// <c>peniko</c>, <c>harfrust</c>, <c>i_overlay</c>, <c>usvg</c>, <c>velato</c> and what they bring beyond the platform's and the WebGpu
+/// package's crates; PNG and JPEG files are read through <c>codebrix-webgpu</c>). The
 /// package carries them as ONE archive, which it copies beside the build program as
 /// <c>&lt;build program folder&gt;/webgpu-animation-crates/webgpu-animation-crates.zip</c>, with
 /// <c>THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt</c> beside it. The crates it builds on

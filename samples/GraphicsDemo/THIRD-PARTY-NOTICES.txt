@@ -108,22 +108,26 @@ changed.
 
 
 --------------------------------------------------------------------------------
-Roboto Regular - Copyright 2011 The Roboto Project Authors
+Roboto Regular and Roboto (variable) - Copyright 2011 The Roboto Project Authors
 --------------------------------------------------------------------------------
 
   What:     the font of every header, label and read-out of the "animation"
             application (the font the C# AnimationDemoApp of
-            CodeBrix.Imaging.Drawing draws all of its text with).
+            CodeBrix.Imaging.Drawing draws all of its text with); and the
+            VARIABLE Roboto (Roboto.ttf, axes wght and wdth), registered at
+            several weights for the "text" scene's row of weights.
   Source:   https://github.com/googlefonts/roboto-classic (as its OFL.txt
             says).
   Licence:  SIL Open Font License, Version 1.1.
             backend/GraphicsDemo.Assets/Fonts/roboto/OFL.txt
-  Files:    backend/GraphicsDemo.Assets/Fonts/roboto/: Roboto-Regular.ttf.
-  Copied:   the font byte for byte, and its OFL.txt (the same text, with
+  Files:    backend/GraphicsDemo.Assets/Fonts/roboto/: Roboto-Regular.ttf,
+            Roboto.ttf.
+  Copied:   the fonts byte for byte, and their OFL.txt (the same text, with
             this repository's line endings), from the
             CodeBrix.Platform.Fonts.Roboto repository (the family's Roboto),
             where they are
-            src/CodeBrix.Platform.Fonts.Roboto/Fonts/Roboto-Regular.ttf and
+            src/CodeBrix.Platform.Fonts.Roboto/Fonts/Roboto-Regular.ttf,
+            src/CodeBrix.Platform.Fonts.Roboto/Fonts/Roboto.ttf and
             OFL.txt at the repository root.
 
 

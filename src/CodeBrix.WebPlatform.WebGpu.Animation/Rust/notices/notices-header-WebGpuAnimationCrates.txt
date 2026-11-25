@@ -18,13 +18,13 @@ renderer, and its text), and the third-party crates that ONLY that crate
 needs: `kurbo` (curves, flattening and strokes), `peniko` (brushes, gradients,
 images and blend modes), `harfrust` (text shaping and glyph outlines, with
 `read-fonts` and `font-types`), `i_overlay` (path combining, with `i_float`,
-`i_shape`, `i_tree` and `i_key_sort`), `png` (reading PNG files, with
-`fdeflate`, `flate2`, `miniz_oxide`, `crc32fast`, `adler2` and `simd-adler32`),
-`usvg` (SVG documents, with its `text` feature: `fontdb`, `skrifa` and the
-crates part G names), `velato` (Lottie documents, with `serde_repr`) and the
-crates their resolution adds
-beyond those the platform and the WebGpu package already carry. The crates it builds on (wgpu, glam,
-codebrix-webgpu) and the crates it shares with them (arrayvec, smallvec, ...)
+`i_shape`, `i_tree` and `i_key_sort`), `usvg` (SVG documents, with its
+`text` feature: `fontdb`, `skrifa` and the crates part F names), `velato`
+(Lottie documents, with `serde_repr`) and the crates their resolution adds
+beyond those the platform and the WebGpu package already carry. The crates it
+builds on (wgpu, glam, codebrix-webgpu, and png with its tree, which reads the
+PNG files of ImageSource::from_png) and the crates it shares with them
+(arrayvec, smallvec, ...)
 are carried by the CodeBrix.WebPlatform.WebGpu package and the platform, and
 their notices come with those (WebGpuCrates.ReadNotices,
 PlatformCrates.ReadNotices). Part 1 below lists the third-party crates of this
@@ -310,35 +310,7 @@ run.
 
 
 --------------------------------------------------------------------------------
-F. PNG files: png and the crates it brings
---------------------------------------------------------------------------------
-
-png 0.18.1 (the image-rs project), fdeflate 0.3.7, flate2 1.1.11, miniz_oxide
-0.8.9 and 0.9.1, crc32fast 1.5.5, adler2 2.0.1 and simd-adler32 0.3.10 are
-compiled into an application's WebAssembly file when it uses this crate (the
-crate reads PNG files: ImageSource::from_png). Their entries and licence files
-are in Part 1 below. png, fdeflate, flate2 and crc32fast are "MIT OR
-Apache-2.0" (Apache-2.0 is used); miniz_oxide is "MIT OR Zlib OR Apache-2.0"
-(Apache-2.0 is used; its LICENSE-MIT.md also names the authors of the C miniz
-it was ported from - RAD Game Tools and Valve Software, Rich Geldreich and
-Tenacious Software LLC); adler2 is "0BSD OR MIT OR Apache-2.0" (Apache-2.0 is
-used); simd-adler32 is "MIT". png's src/filter/paeth.rs says its Paeth predictor is
-"Adapted from public domain PNG implementation"; listed as a credit.
-
-zlib-rs 0.6.8 (Zlib) is named by the crate set's lock as an optional
-dependency of flate2 and is carried in the archive so that an offline build
-resolves, but nothing compiles it (flate2 is built with its default
-rust_backend, miniz_oxide). It carries src/deflate/test-data/paper-100k.pdf, a
-100 KB PDF document with no terms of its own, used only by zlib-rs's tests:
-carried, never compiled, covered by the crate's declared licence.
-
-crc32fast and simd-adler32 carry GitHub workflow files (.github/workflows) of
-their own projects; they are part of the crates as published, never compiled
-and never run.
-
-
---------------------------------------------------------------------------------
-G. SVG documents: usvg and the crates it brings (its `text` feature on)
+F. SVG documents: usvg and the crates it brings (its `text` feature on)
 --------------------------------------------------------------------------------
 
 usvg 0.50.0 (the resvg project of Linebender, "Apache-2.0 OR MIT") is used
@@ -394,7 +366,7 @@ and never run.
 
 
 --------------------------------------------------------------------------------
-H. Lottie documents: velato and serde_repr
+G. Lottie documents: velato and serde_repr
 --------------------------------------------------------------------------------
 
 velato 0.12.0 (the Linebender project; "Apache-2.0 OR MIT", USED UNDER

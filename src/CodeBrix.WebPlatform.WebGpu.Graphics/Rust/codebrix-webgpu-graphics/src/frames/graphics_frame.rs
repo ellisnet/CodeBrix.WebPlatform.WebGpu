@@ -2,11 +2,17 @@
 //! is handed, or on the encoder of a canvas frame (as a LAYER of the canvas host) - and the
 //! render and compute passes it begins (C#: `GraphicsFrame`, `RenderPassOptions`). The copies,
 //! clears, query resolves and debug groups are in `graphics_frame_commands.rs`.
+//!
+//! MULTISAMPLING (Not in C#): a pass on a multisampled target ends by resolving into the target's
+//! resolve view; a frame begun with [`GraphicsContext::begin_canvas_frame_on`] on a 4-sample
+//! [`CanvasFrameTarget`] draws into the target's multisampled buffers and, when it is dropped,
+//! lays the resolved picture over the canvas.
 
 use crate::common::Color4;
 use crate::context::{GraphicsContext, GraphicsException};
+use crate::frames::pass_attachments::{plan_color_attachment, ColorLoad, ResolveInto};
 use crate::frames::{ComputePass, ComputePassOptions, RenderPass};
-use crate::presentation::RenderTargetView;
+use crate::presentation::{CanvasFrameTarget, CanvasLayerResolve, RenderTargetView};
 use crate::queries::{GpuQuerySet, PassTimestamps};
 use crate::resources::{GpuBuffer, GpuTexture, TextureFormats};
 
@@ -30,7 +36,9 @@ pub struct RenderPassOptions {
     pub depth_read_only: bool,
     /// True when the pass does not write stencil.
     pub stencil_read_only: bool,
-    /// The view a multisampled colour target resolves into.
+    /// The view a multisampled colour target resolves into, in place of the target's own
+    /// [`RenderTargetView::resolve_view`] (Err on a 1-sample target: only a multisampled target
+    /// resolves). Usually None: a multisampled target names its resolve view itself.
     pub resolve_target: Option<wgpu::TextureView>,
     /// True to discard the colour target after the pass (it was only an intermediate).
     pub discard_color: bool,
@@ -50,11 +58,17 @@ enum FrameEncoder<'a> {
 ///
 /// Rust's borrows enforce what C# checks at run time: one pass open at a time, nothing recorded
 /// after submit.
+///
+/// A frame on a multisampled canvas layer ([`GraphicsContext::begin_canvas_frame_on`] with 4
+/// samples) records one more draw when it is DROPPED: the layer's resolved picture laid over the
+/// canvas. Let it go out of scope (as every canvas frame) once the layer's passes are recorded.
 pub struct GraphicsFrame<'a> {
     context: GraphicsContext,
-    encoder: FrameEncoder<'a>,
+    /// Always Some; taken only by `finish` (the frame implements Drop).
+    encoder: Option<FrameEncoder<'a>>,
     target: Option<RenderTargetView>,
     id: u64,
+    canvas_resolve: Option<CanvasLayerResolve>,
 }
 
 impl GraphicsContext {
@@ -62,26 +76,45 @@ impl GraphicsContext {
     /// target to each render pass, then [`GraphicsFrame::submit`].
     pub fn begin_frame(&self) -> GraphicsFrame<'static> {
         let encoder = self.device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("codebrix-webgpu-graphics frame") });
-        GraphicsFrame { context: self.clone(), encoder: FrameEncoder::Owned(encoder), target: None, id: self.next_frame_id() }
+        GraphicsFrame { context: self.clone(), encoder: Some(FrameEncoder::Owned(encoder)), target: None, id: self.next_frame_id(), canvas_resolve: None }
     }
 
     /// A frame that records into an encoder the caller owns and submits (C#:
     /// `BeginFrame(CommandEncoder)`).
     pub fn begin_frame_with_encoder<'a>(&self, encoder: &'a mut wgpu::CommandEncoder) -> GraphicsFrame<'a> {
-        GraphicsFrame { context: self.clone(), encoder: FrameEncoder::Borrowed(encoder), target: None, id: self.next_frame_id() }
+        GraphicsFrame { context: self.clone(), encoder: Some(FrameEncoder::Borrowed(encoder)), target: None, id: self.next_frame_id(), canvas_resolve: None }
     }
 
     /// A frame on a canvas host's frame (C#: `BeginFrame(IWebGpuTextureTarget, depth)`): it records
     /// into the frame's encoder (the host submits it once and presents), and its target is the
     /// frame's view in the canvas's draw format, with `depth` if given (a depth texture of the
     /// frame's size that the layer keeps). Begin passes with `clear_color: None` so that the
-    /// layer LOADS what the host and the layers below drew.
+    /// layer LOADS what the host and the layers below drew. Always 1 sample per pixel; for
+    /// multisampling, or a depth buffer that follows the canvas's size by itself, use
+    /// [`GraphicsContext::begin_canvas_frame_on`].
     pub fn begin_canvas_frame<'a>(&self, frame: &'a mut codebrix_webgpu::CanvasFrame<'_>, depth: Option<&GpuTexture>) -> GraphicsFrame<'a> {
         let mut target = RenderTargetView::from_canvas(frame);
         if let Some(depth) = depth {
             target = target.with_depth(depth);
         }
-        GraphicsFrame { context: self.clone(), encoder: FrameEncoder::Borrowed(&mut *frame.encoder), target: Some(target), id: self.next_frame_id() }
+        GraphicsFrame { context: self.clone(), encoder: Some(FrameEncoder::Borrowed(&mut *frame.encoder)), target: Some(target), id: self.next_frame_id(), canvas_resolve: None }
+    }
+
+    /// A frame on a canvas host's frame that draws through a [`CanvasFrameTarget`] the layer keeps
+    /// (Not in C#): with the target's depth buffer (at the canvas's size, made again after a
+    /// resize) and with its SAMPLE COUNT, which may change between frames. With 1 sample this is
+    /// [`GraphicsContext::begin_canvas_frame`] with the target's depth. With 4 the frame's target
+    /// ([`GraphicsFrame::target`]) is the target's multisampled colour and depth; every pass ends
+    /// by resolving, the first pass of the frame clears the multisampled colour (to its clear
+    /// colour, or to transparent when it asks to load), and when the frame is dropped the resolved
+    /// picture is laid over the canvas with premultiplied-alpha blending - the layer draws over
+    /// what is below exactly as with 1 sample, its edges smoothed. The library's renderers pick
+    /// the matching pipelines by themselves; a pipeline of the application's own must be made with
+    /// `.with_sample_count(pass.target().sample_count())` (one per count). Err when a buffer
+    /// cannot be made.
+    pub fn begin_canvas_frame_on<'a>(&self, frame: &'a mut codebrix_webgpu::CanvasFrame<'_>, target: &mut CanvasFrameTarget) -> Result<GraphicsFrame<'a>, GraphicsException> {
+        let (view, canvas_resolve) = target.prepare(frame.view, frame.info.width, frame.info.height, frame.target.format)?;
+        Ok(GraphicsFrame { context: self.clone(), encoder: Some(FrameEncoder::Borrowed(&mut *frame.encoder)), target: Some(view), id: self.next_frame_id(), canvas_resolve })
     }
 }
 
@@ -93,7 +126,7 @@ impl<'a> GraphicsFrame<'a> {
 
     /// The encoder, for `wgpu` commands of the caller's own (C#: `Encoder`).
     pub fn encoder(&mut self) -> &mut wgpu::CommandEncoder {
-        match &mut self.encoder {
+        match self.encoder.as_mut().expect("a frame keeps its encoder until finish") {
             FrameEncoder::Owned(encoder) => encoder,
             FrameEncoder::Borrowed(encoder) => encoder,
         }
@@ -101,7 +134,7 @@ impl<'a> GraphicsFrame<'a> {
 
     /// True when the frame made its encoder and submits it (C#: `OwnsEncoder`).
     pub fn owns_encoder(&self) -> bool {
-        matches!(self.encoder, FrameEncoder::Owned(_))
+        matches!(self.encoder, Some(FrameEncoder::Owned(_)))
     }
 
     /// The frame's own target, if it has one (a canvas frame's) (C#: `Target`).
@@ -133,14 +166,28 @@ impl<'a> GraphicsFrame<'a> {
             Some(target) => target.clone(),
             None => return Err(GraphicsException::new("The frame has no target of its own; pass a RenderTargetView (begin_render_pass_to), or begin the frame on a canvas frame (begin_canvas_frame).")),
         };
+        // A multisampled canvas layer's first pass clears (the layers below are not in its buffer).
+        let first_layer_pass = match &mut self.canvas_resolve {
+            Some(resolve) if !resolve.started && &resolve.multisampled_view == target.color_view() => {
+                resolve.started = true;
+                true
+            }
+            _ => false,
+        };
+        let plan = plan_color_attachment(target.sample_count(), target.resolve_view().is_some(), options.resolve_target.is_some(), clear_color, first_layer_pass)?;
+        let resolve_target = match plan.resolve {
+            ResolveInto::Nothing => None,
+            ResolveInto::TargetResolve => target.resolve_view(),
+            ResolveInto::OptionResolve => options.resolve_target.as_ref(),
+        };
         let color = wgpu::RenderPassColorAttachment {
             view: target.color_view(),
             depth_slice: None,
-            resolve_target: options.resolve_target.as_ref(),
+            resolve_target,
             ops: wgpu::Operations {
-                load: match clear_color {
-                    Some(color) => wgpu::LoadOp::Clear(color.to_wgpu()),
-                    None => wgpu::LoadOp::Load,
+                load: match plan.load {
+                    ColorLoad::Clear(color) => wgpu::LoadOp::Clear(color.to_wgpu()),
+                    ColorLoad::Load => wgpu::LoadOp::Load,
                 },
                 store: if options.discard_color { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store },
             },
@@ -199,10 +246,41 @@ impl<'a> GraphicsFrame<'a> {
 
     /// Finishes the frame's commands without submitting them (C#: `Finish`), for
     /// `GraphicsContext::queue().submit(...)` later.
-    pub fn finish(self) -> Result<wgpu::CommandBuffer, GraphicsException> {
-        match self.encoder {
+    pub fn finish(mut self) -> Result<wgpu::CommandBuffer, GraphicsException> {
+        match self.encoder.take().expect("a frame keeps its encoder until finish") {
             FrameEncoder::Owned(encoder) => Ok(encoder.finish()),
             FrameEncoder::Borrowed(_) => Err(GraphicsException::new("This frame records into an encoder it does not own (the canvas host's, or the caller's); the owner submits it - let the frame go out of scope instead of submitting it.")),
         }
+    }
+}
+
+impl Drop for GraphicsFrame<'_> {
+    /// A multisampled canvas layer lays its resolved picture over the canvas (premultiplied
+    /// alpha), once, if the frame drew into it.
+    fn drop(&mut self) {
+        let Some(resolve) = self.canvas_resolve.take() else {
+            return;
+        };
+        if !resolve.started {
+            return;
+        }
+        let Some(encoder) = self.encoder.as_mut() else {
+            return;
+        };
+        let encoder: &mut wgpu::CommandEncoder = match encoder {
+            FrameEncoder::Owned(encoder) => encoder,
+            FrameEncoder::Borrowed(encoder) => encoder,
+        };
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("canvas resolved layer"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &resolve.canvas_view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&resolve.pipeline);
+        pass.set_bind_group(0, &resolve.group, &[]);
+        pass.draw(0..3, 0..1);
     }
 }

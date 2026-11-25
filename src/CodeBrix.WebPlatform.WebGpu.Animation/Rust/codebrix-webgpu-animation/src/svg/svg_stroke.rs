@@ -46,6 +46,11 @@ pub struct SvgStroke {
     pub dash_array: Option<Vec<f32>>,
     /// `stroke-dashoffset`.
     pub dash_offset: f32,
+    /// True when the path has `vector-effect="non-scaling-stroke"`: the width and dashes are
+    /// FIXED in the drawing's own units (the session's calibrated units), not scaled by the
+    /// document's viewBox, its transforms, the shape's placement or the element's transform
+    /// (see [`StrokeWidthMode::Fixed`](crate::paths::StrokeWidthMode::Fixed)). Not in C#.
+    pub non_scaling: bool,
 }
 
 impl SvgStroke {

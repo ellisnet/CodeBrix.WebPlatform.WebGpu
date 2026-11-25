@@ -23,6 +23,7 @@ fn kind_name(shape: &DrawingShape) -> &'static str {
         ShapeKind::Group(_) => "DrawingGroup",
         ShapeKind::Animated(_) => "AnimatedShape",
         ShapeKind::BrushStroke(_) => "BrushStrokeShape",
+        ShapeKind::BrushStrokes(_) => "BrushStrokesShape",
         ShapeKind::Noise(_) => "NoiseShape",
         ShapeKind::Particles(_) => "ParticlesShape",
         ShapeKind::Ownership(_) => "OwnershipShape",

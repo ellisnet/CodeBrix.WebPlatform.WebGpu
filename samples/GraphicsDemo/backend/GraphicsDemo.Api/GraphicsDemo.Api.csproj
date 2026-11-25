@@ -5,10 +5,11 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <!--
-      wwwroot holds the developer's own page at the site root (index.html, its stylesheet and the
-      site icon) and the built frontend applications, which the build program copies in beside
-      them. They are served as plain files from that folder. The SDK's static-web-assets layer is
-      switched off so that a development or test host serves exactly its own web root.
+      wwwroot holds ONLY the developer's own page at the site root (index.html, its stylesheet and
+      the site icon). The built frontend applications are build output in frontend-built/ beside
+      it (written by the build program; it ignores itself in git), which the Backend package serves
+      and carries into the build and publish output. The SDK's static-web-assets layer is switched
+      off so that a development or test host serves exactly those two folders.
     -->
     <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
     <RootNamespace>GraphicsDemo.Api</RootNamespace>
@@ -21,7 +22,7 @@
       The published CodeBrix.WebPlatform packages, from nuget.org: ONE version for all of them,
       the same as in the build program's project file (build/GraphicsDemo.BuildFrontend).
     -->
-    <WebPlatformPackageVersion>1.0.327.240</WebPlatformPackageVersion>
+    <WebPlatformPackageVersion>1.0.329.452</WebPlatformPackageVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -31,8 +32,9 @@
 
   <ItemGroup>
     <!--
-      The sample's models and their conversion from glTF to the model data format
-      (GraphicsDemo.Assets, the sample's own project): ModelsController serves them.
+      The sample's assets (GraphicsDemo.Assets, the sample's own project): the model files and the
+      two models built in code, the panorama, the fonts, the pictures, the caption file, the SVG
+      documents and the Lottie files, which the controllers serve.
     -->
     <ProjectReference Include="..\GraphicsDemo.Assets\GraphicsDemo.Assets.csproj" />
   </ItemGroup>

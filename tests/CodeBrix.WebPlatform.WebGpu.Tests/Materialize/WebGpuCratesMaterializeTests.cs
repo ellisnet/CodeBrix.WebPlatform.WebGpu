@@ -29,7 +29,7 @@ public class WebGpuCratesMaterializeTests
         Assert.SkipWhen(frontend.NoCratesReason != null, frontend.NoCratesReason ?? string.Empty);
     }
 
-    private string Vendor => _frontend.Options.ResolvedVendorDirectory;
+    private string Vendor => _frontend.Options.VendorDirectory;
 
     private CrateBundleOutcome WebGpuOutcome => _frontend.First.CrateBundles.Single(b => b.Name == WebGpuCrates.BundleName);
 

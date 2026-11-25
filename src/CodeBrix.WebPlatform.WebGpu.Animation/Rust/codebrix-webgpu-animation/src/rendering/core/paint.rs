@@ -14,6 +14,8 @@ use kurbo::{Affine, Point};
 use peniko::color::Srgb;
 use peniko::{Brush, Extend, Gradient, GradientKind, ImageAlphaType, ImageBrush, ImageQuality, InterpolationAlphaSpace};
 
+use crate::painting::color_mix::mix_float;
+use crate::painting::ColorInterpolation;
 use crate::rendering::vector_scene::Hasher;
 
 /// Samples per gradient ramp (vello's N_SAMPLES).
@@ -136,14 +138,14 @@ pub(crate) fn gradient(g: &Gradient, to_device: Affine, alpha: f32, ramp_slot: u
 
 /// The noise paint (a [`NoiseShape`](crate::shapes::NoiseShape)): device pixels to the shape's
 /// calibrated space, where the noise is evaluated per pixel and mapped through the ramp.
-/// info: kind, (gradient | has z << 1 | octaves << 8), ramp slot, seed; color: frequency, z,
+/// info: kind, (gradient | has z << 1 | caustics << 2 | octaves << 8), ramp slot, seed; color: frequency, z,
 /// lacunarity, gain; m1.zw: the offset.
 pub(crate) fn noise(n: &crate::shapes::noise_shape::NoisePaintParams, to_device: Affine, alpha: f32, ramp_slot: u32) -> Option<PaintData> {
     if to_device.determinant().abs() < 1e-12 {
         return None;
     }
     let (m0, e) = matrix(to_device.inverse());
-    let mode = (n.gradient as u32) | ((n.z.is_some() as u32) << 1) | (n.octaves.clamp(1, 30) << 8);
+    let mode = (n.gradient as u32) | ((n.z.is_some() as u32) << 1) | ((n.caustics as u32) << 2) | (n.octaves.clamp(1, 30) << 8);
     Some(PaintData { info: [KIND_NOISE, mode, ramp_slot, n.seed], color: [n.frequency, n.z.unwrap_or(0.0), n.lacunarity, n.gain], m0, m1: [e[0], e[1], n.offset[0], n.offset[1]], extra: [alpha, 0.0, 0.0, 0.0] })
 }
 
@@ -251,9 +253,15 @@ pub(crate) fn radial_setup(p0: Point, r0: f32, p1: Point, r1: f32) -> (Affine, f
 /// ONE CHANGE from vello's: the first stop's own position is honoured (vello starts its first
 /// segment at 0), so a gradient whose first stop is past 0 holds that stop's colour up to it, as
 /// NoSkia (and CSS) do.
+/// THE OPT-IN SPACES (not vello's): a gradient whose `interpolation_cs` is linear sRGB, Oklab or
+/// Oklch (set by a fill's `with_interpolation`) has each segment mixed in that space by
+/// `painting::color_mix::mix_float` (premultiplied, as `ColorMix::mix`), then premultiplied for
+/// the ramp; every other tag - the default sRGB, all the crate sets otherwise - is sampled as
+/// before.
 pub(crate) fn make_ramp(gradient: &Gradient, out: &mut Vec<[f32; 4]>) {
     let stops = &gradient.stops;
     let space = gradient.interpolation_alpha_space;
+    let mix = ColorInterpolation::from_color_space_tag(gradient.interpolation_cs);
     out.clear();
     if stops.is_empty() {
         out.resize(RAMP_SAMPLES, [0.0; 4]);
@@ -283,12 +291,16 @@ pub(crate) fn make_ramp(gradient: &Gradient, out: &mut Vec<[f32; 4]>) {
             premultiply(this_c)
         } else {
             let t = (u - last_u) / du;
-            match space {
-                InterpolationAlphaSpace::Premultiplied => {
-                    let (a, b) = (premultiply(last_c), premultiply(this_c));
-                    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t]
+            if mix != ColorInterpolation::Srgb {
+                premultiply(mix_float(last_c, this_c, t, mix))
+            } else {
+                match space {
+                    InterpolationAlphaSpace::Premultiplied => {
+                        let (a, b) = (premultiply(last_c), premultiply(this_c));
+                        [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t]
+                    }
+                    InterpolationAlphaSpace::Unpremultiplied => premultiply([last_c[0] + (this_c[0] - last_c[0]) * t, last_c[1] + (this_c[1] - last_c[1]) * t, last_c[2] + (this_c[2] - last_c[2]) * t, last_c[3] + (this_c[3] - last_c[3]) * t]),
                 }
-                InterpolationAlphaSpace::Unpremultiplied => premultiply([last_c[0] + (this_c[0] - last_c[0]) * t, last_c[1] + (this_c[1] - last_c[1]) * t, last_c[2] + (this_c[2] - last_c[2]) * t, last_c[3] + (this_c[3] - last_c[3]) * t]),
             }
         };
         out.push(c);
@@ -315,6 +327,7 @@ impl RampCache {
     pub(crate) fn slot(&mut self, gradient: &Gradient, frame: u64) -> u32 {
         let mut h = Hasher::new();
         h.word(gradient.interpolation_alpha_space as u64);
+        h.word(gradient.interpolation_cs as u64);
         for stop in gradient.stops.iter() {
             h.f64(stop.offset as f64);
             for c in stop.color.to_alpha_color::<Srgb>().components {
@@ -440,6 +453,56 @@ mod tests {
     }
 
     #[test]
+    fn a_ramp_in_an_opt_in_space_is_the_colour_mix_premultiplied() {
+        use crate::painting::color_mix::mix_float;
+        use crate::painting::ColorInterpolation;
+        use peniko::color::ColorSpaceTag;
+        let (blue, yellow, half_red) = ([0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.5]);
+        for (tag, space) in [(ColorSpaceTag::Oklab, ColorInterpolation::Oklab), (ColorSpaceTag::Oklch, ColorInterpolation::Oklch), (ColorSpaceTag::LinearSrgb, ColorInterpolation::LinearRgb)] {
+            let mut g = Gradient::new_linear((0.0, 0.0), (1.0, 0.0)).with_interpolation_cs(tag);
+            g.stops.0.push(ColorStop::from((0.25, AlphaColor::<Srgb>::new(blue))));
+            g.stops.0.push(ColorStop::from((0.75, AlphaColor::<Srgb>::new(yellow))));
+            g.stops.0.push(ColorStop::from((1.0, AlphaColor::<Srgb>::new(half_red))));
+            g.interpolation_alpha_space = InterpolationAlphaSpace::Unpremultiplied;
+            let mut out = Vec::new();
+            make_ramp(&g, &mut out);
+            assert_eq!(out.len(), RAMP_SAMPLES);
+            // Before the first stop its colour is held, as in sRGB.
+            assert_eq!(out[0], blue);
+            for (i, sample) in out.iter().enumerate() {
+                let u = i as f32 / (RAMP_SAMPLES - 1) as f32;
+                let want = if u <= 0.25 {
+                    blue
+                } else if u <= 0.75 {
+                    mix_float(blue, yellow, (u - 0.25) / 0.5, space)
+                } else {
+                    mix_float(yellow, half_red, (u - 0.75) / 0.25, space)
+                };
+                let want = [want[0] * want[3], want[1] * want[3], want[2] * want[3], want[3]];
+                for k in 0..4 {
+                    assert!((sample[k] - want[k]).abs() < 1e-5, "{space:?} sample {i} channel {k}: {} vs {}", sample[k], want[k]);
+                }
+            }
+            // Oklab's middle keeps more colour than the sRGB grey (128, 128, 128).
+            if space == ColorInterpolation::Oklab {
+                let mid = out[255];
+                assert!((mid[0] - mid[2]).abs() > 0.05 || (mid[1] - mid[2]).abs() > 0.05, "{mid:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_same_stops_in_another_space_get_their_own_ramp() {
+        let mut cache = RampCache::default();
+        let srgb = stops(InterpolationAlphaSpace::Unpremultiplied);
+        let oklab = stops(InterpolationAlphaSpace::Unpremultiplied).with_interpolation_cs(peniko::color::ColorSpaceTag::Oklab);
+        let a = cache.slot(&srgb, 1);
+        let b = cache.slot(&oklab, 1);
+        assert_ne!(a, b);
+        assert_ne!(cache.uploads[0].1, cache.uploads[1].1);
+    }
+
+    #[test]
     fn the_radial_set_up_sorts_the_kinds_as_vello_does() {
         assert_eq!(radial_setup(Point::new(0.0, 0.0), 10.0, Point::new(50.0, 0.0), 10.0).3, RAD_GRAD_KIND_STRIP);
         let (xform, focal, _, kind, _) = radial_setup(Point::new(5.0, 5.0), 0.0, Point::new(5.0, 5.0), 10.0);
@@ -462,6 +525,27 @@ mod tests {
         cache.uploads.clear();
         assert_eq!(cache.slot(&stops(InterpolationAlphaSpace::Unpremultiplied), 2), a);
         assert!(cache.uploads.is_empty());
+    }
+
+    #[test]
+    fn noise_mode_has_the_caustics_bit_only_for_the_caustics_kind() {
+        use crate::planes::DrawingNoiseKind;
+        use crate::shapes::{NoiseShape, NoiseShapeOptions};
+        let seed = (5i64 << 32) + 7;
+        let paint = |kind| {
+            let shape = NoiseShape::new(0.0, 0.0, 10.0, 10.0, kind, seed, 0.1, NoiseShapeOptions::default()).unwrap().with_z(2.0);
+            noise(&shape.gpu_params(), Affine::IDENTITY, 1.0, 0).unwrap()
+        };
+        let (value, gradient, caustics) = (paint(DrawingNoiseKind::Value), paint(DrawingNoiseKind::Gradient), paint(DrawingNoiseKind::Caustics));
+        // The existing kinds keep their bits and the 64-bit seed folded with xor.
+        assert_eq!(value.info[1], 2 | (1 << 8));
+        assert_eq!(gradient.info[1], 1 | 2 | (1 << 8));
+        assert_eq!(value.info[3], 7 ^ 5);
+        assert_eq!(gradient.info[3], 7 ^ 5);
+        // The caustics kind: bit 4, and the seed's low 32 bits (its CPU twin's).
+        assert_eq!(caustics.info[1], 4 | 2 | (1 << 8));
+        assert_eq!(caustics.info[3], 7);
+        assert_eq!(caustics.color[1], 2.0);
     }
 
     #[test]

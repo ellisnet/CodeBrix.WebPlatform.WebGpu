@@ -7,8 +7,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use glam::{Mat4, Vec3};
 
 use crate::context::{GraphicsContext, GraphicsException, RgbaTextureOptions};
-use crate::models::model_layout::ModelLayout;
-use crate::models::{ModelAnimation, ModelData, ModelDataSet, ModelInstance, ModelMaterial, ModelMesh, ModelNode, ModelPrimitive, ModelSkin, ModelTextureSlot};
+use crate::models::model_bounds::{culling_bounds, BoundsSource};
+use crate::models::model_layout::{morph_center_shifts, ModelLayout};
+use crate::models::{ModelAnimation, ModelData, ModelDataSet, ModelInstance, ModelMaterial, ModelMesh, ModelNode, ModelPrimitive, ModelSkin, ModelTextureKind, ModelTextureSlot};
 use crate::resources::{GpuBuffer, GpuSampler, GpuTexture, SamplerDescription};
 
 /// Numbers the models, so that a renderer can keep GPU state per model.
@@ -213,6 +214,19 @@ impl Model {
         (self.inner.layout.bounds_min + self.inner.layout.bounds_max) * 0.5
     }
 
+    /// The CULLING BOUNDS (minimum, maximum), model space (Not in C#): the rest-pose bounds grown
+    /// when the model was made, conservatively, to hold every pose its own clips reach (each clip
+    /// sampled at and between its keyframes), every morph target at full weight, and a skinned
+    /// part's skin round its moving joints. [`ModelRenderer`](crate::ModelRenderer) culls an
+    /// instance whose culling bounds, placed by its world matrix, are entirely outside the view.
+    /// Equal to [`Model::bounds_min`] / [`Model::bounds_max`] for a model without clips or morph
+    /// targets. A pose set by hand that moves further than the clips is not covered: see
+    /// [`ModelInstance::never_cull`]. The same values without a GPU:
+    /// [`ModelData::culling_bounds`].
+    pub fn culling_bounds(&self) -> (Vec3, Vec3) {
+        (self.inner.layout.culling_bounds_min, self.inner.layout.culling_bounds_max)
+    }
+
     /// What was skipped or approximated when the model data was made (C#: `Warnings`).
     pub fn warnings(&self) -> &[String] {
         &self.inner.warnings
@@ -238,6 +252,100 @@ impl Model {
     /// The index of the first node with this name, or None (C#: `FindNode`, -1 for none).
     pub fn find_node(&self, name: &str) -> Option<usize> {
         self.inner.nodes.iter().position(|n| n.name.as_deref() == Some(name))
+    }
+
+    /// True when at least one part the model draws has an alpha-blended material (Not in C#).
+    /// Such parts are drawn by [`ModelRenderer::end_blended`](crate::ModelRenderer::end_blended).
+    pub fn has_blended_parts(&self) -> bool {
+        self.inner.layout.draw_items.iter().any(|item| self.primitive_material(&self.inner.meshes[item.mesh].primitives[item.primitive]).is_translucent())
+    }
+
+    /// True when at least one part the model draws is opaque or alpha-tested (Not in C#). Such
+    /// parts are drawn by [`ModelRenderer::end_opaque`](crate::ModelRenderer::end_opaque).
+    pub fn has_opaque_parts(&self) -> bool {
+        self.inner.layout.draw_items.iter().any(|item| !self.primitive_material(&self.inner.meshes[item.mesh].primitives[item.primitive]).is_translucent())
+    }
+
+    /// The name of every animation clip, in clip order (the index is the clip's index for
+    /// [`AnimationPlayer::play`](crate::AnimationPlayer::play)); None for an unnamed clip (Not in
+    /// C#; C# reads `Animations[i].Name`).
+    pub fn animation_names(&self) -> Vec<Option<&str>> {
+        self.inner.animations.iter().map(|a| a.name.as_deref()).collect()
+    }
+
+    /// The name of every node, in node order (the index is the node's index); None for an
+    /// unnamed node (Not in C#; C# reads `Nodes[i].Name`).
+    pub fn node_names(&self) -> Vec<Option<&str>> {
+        self.inner.nodes.iter().map(|n| n.name.as_deref()).collect()
+    }
+
+    /// The nodes at least one animation clip moves (translation, rotation, scale or morph
+    /// weights), each once, in node order (Not in C#). Read where they are on an instance with
+    /// [`ModelInstance::get_node_world_matrix`].
+    pub fn animated_nodes(&self) -> Vec<usize> {
+        let mut animated = vec![false; self.inner.nodes.len()];
+        for channel in self.inner.animations.iter().flat_map(|a| a.channels.iter()) {
+            if let Some(flag) = animated.get_mut(channel.node) {
+                *flag = true;
+            }
+        }
+        animated.iter().enumerate().filter(|(_, &a)| a).map(|(index, _)| index).collect()
+    }
+
+    /// A material to change, by index, or None for the glTF default material (Not in C#, whose
+    /// materials are read-only after loading). For changes made right after loading - its
+    /// factors, its alpha mode, [`ModelMaterial::emissive_vertex_color`] - BEFORE the model is
+    /// shared: an error while any other handle of this model exists (a clone, an instance, a
+    /// renderer that has drawn it), because they would not see the change. Texture indices are
+    /// best changed through [`Model::set_material_texture`].
+    pub fn material_mut(&mut self, material: Option<usize>) -> Result<&mut ModelMaterial, GraphicsException> {
+        self.check_material(material)?;
+        let inner = self.unshared("material_mut")?;
+        Ok(match material {
+            None => &mut inner.default_material,
+            Some(index) => &mut inner.materials[index],
+        })
+    }
+
+    fn check_material(&self, material: Option<usize>) -> Result<(), GraphicsException> {
+        let count = self.inner.materials.len();
+        match material {
+            Some(index) if index >= count => Err(GraphicsException::new(format!("The model has {count} material(s), so there is no material {index}; pass an index below that, or None for the default material."))),
+            _ => Ok(()),
+        }
+    }
+
+    /// Puts a texture the application made into a material's slot (Not in C#): material by index,
+    /// or None for the glTF default material; the slot's sampler and texture-coordinate set stay
+    /// (an empty slot samples with linear filtering and repeat). The texture is added to
+    /// [`Model::textures`] (once, however many slots use it) and kept by the model. Make it with
+    /// [`GraphicsContext::create_texture_from_rgba`], `_from_png`, `_from_jpeg` or
+    /// `_from_image`: base colour and emissive textures sRGB (`srgb: true`), the normal,
+    /// metallic-roughness and occlusion textures linear (`srgb: false`); a normal texture turns on
+    /// normal mapping. For changes right after loading, BEFORE the model is shared: an error while
+    /// any other handle of this model exists (a clone, an instance, a renderer that has drawn it).
+    pub fn set_material_texture(&mut self, material: Option<usize>, slot: ModelTextureKind, texture: impl Into<Rc<GpuTexture>>) -> Result<(), GraphicsException> {
+        let texture = texture.into();
+        self.check_material(material)?;
+        let inner = self.unshared("set_material_texture")?;
+        let index = match inner.textures.iter().position(|t| Rc::ptr_eq(t, &texture)) {
+            Some(index) => index,
+            None => {
+                inner.textures.push(texture);
+                inner.textures.len() - 1
+            }
+        };
+        let target = match material {
+            None => &mut inner.default_material,
+            Some(m) => &mut inner.materials[m],
+        };
+        target.slot_mut(slot).texture = Some(index);
+        Ok(())
+    }
+
+    fn unshared(&mut self, call: &str) -> Result<&mut ModelInner, GraphicsException> {
+        let others = Rc::strong_count(&self.inner) - 1;
+        Rc::get_mut(&mut self.inner).ok_or_else(|| GraphicsException::new(format!("Model::{call} needs the only handle of the model, but {others} other handle(s) exist (a clone, an instance, or a renderer that has drawn it); change the materials right after loading, before creating instances or drawing.")))
     }
 
     pub(crate) fn id(&self) -> u64 {
@@ -322,7 +430,9 @@ impl GraphicsContext {
             material.emissive_texture = remap(&source.emissive_texture);
             material
         };
-        let layout = ModelLayout::new(&data.nodes, &data.meshes, &data.skins);
+        let mut layout = ModelLayout::new(&data.nodes, &data.meshes, &data.skins);
+        layout.morph_center_shifts = morph_center_shifts(&data.meshes, data.vertex_bytes);
+        (layout.culling_bounds_min, layout.culling_bounds_max) = culling_bounds(&BoundsSource::of(data), &layout);
         Ok(Model {
             inner: Rc::new(ModelInner {
                 id: NEXT_MODEL_ID.fetch_add(1, Ordering::Relaxed),

@@ -1,6 +1,7 @@
 //! The rest of C#'s `DrawingNoise`: value noise, 3D noise (z is usually a time passed in),
-//! either kind by [`DrawingNoiseKind`], fractal sums and plane fills - beside the 2D gradient
-//! noise the formations brought ([`DrawingNoise::gradient`]).
+//! any kind by [`DrawingNoiseKind`], fractal sums and plane fills - beside the 2D gradient
+//! noise the formations brought ([`DrawingNoise::gradient`]). The caustics kind (not in C#)
+//! lives in drawing_caustics.rs and takes part here through the two `sample` arms.
 
 use crate::planes::drawing_noise::{clamp_unit, fade, hash, lerp};
 use crate::planes::drawing_random::mix;
@@ -52,19 +53,23 @@ impl DrawingNoise {
         clamp_unit(lerp(lerp(c00, c10, v), lerp(c01, c11, v), w) * SCALE_3D)
     }
 
-    /// 2D noise of either kind (C# `Sample(kind, x, y, seed)`).
+    /// 2D noise of any kind (C# `Sample(kind, x, y, seed)`; the caustics kind - not in C# - at z
+    /// = 0).
     pub fn sample(kind: DrawingNoiseKind, x: f64, y: f64, seed: i64) -> f64 {
         match kind {
             DrawingNoiseKind::Value => DrawingNoise::value(x, y, seed),
             DrawingNoiseKind::Gradient => DrawingNoise::gradient(x, y, seed),
+            DrawingNoiseKind::Caustics => DrawingNoise::caustics(x, y, 0.0, seed),
         }
     }
 
-    /// 3D noise of either kind (C# `Sample(kind, x, y, z, seed)`).
+    /// 3D noise of any kind (C# `Sample(kind, x, y, z, seed)`; for the caustics kind - not in C#
+    /// - z is the time-like coordinate the net drifts with).
     pub fn sample_3d(kind: DrawingNoiseKind, x: f64, y: f64, z: f64, seed: i64) -> f64 {
         match kind {
             DrawingNoiseKind::Value => DrawingNoise::value_3d(x, y, z, seed),
             DrawingNoiseKind::Gradient => DrawingNoise::gradient_3d(x, y, z, seed),
+            DrawingNoiseKind::Caustics => DrawingNoise::caustics(x, y, z, seed),
         }
     }
 

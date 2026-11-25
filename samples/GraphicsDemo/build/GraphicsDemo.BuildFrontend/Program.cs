@@ -22,8 +22,8 @@ namespace GraphicsDemo.BuildFrontend;
 /// three packages, so that it is also the proof that bundles carrying the same crates are merged
 /// into one copy - tells the platform's FrontendBuilder
 /// about the sample's TWO named frontend applications - they share the one backend - and lets
-/// it check the machine, materialize them, build them into the backend's web root, or serve one
-/// of them with hot reload.
+/// it check the machine, materialize them, build them (both, or one) into the backend project's
+/// frontend-built folder, or serve one of them with hot reload.
 /// </summary>
 public static class Program
 {
@@ -36,7 +36,10 @@ public static class Program
           generate         write the generated client code, the shared crate and the crates
                            (the platform's and the bundles') into the two frontends (after
                            this, plain cargo works there)
-          build [--debug]  generate, then build the two frontends into the backend's wwwroot
+          build [name] [--debug]
+                           generate, then build the two frontends into the backend project's
+                           frontend-built folder; with a name (graphics or animation) only that
+                           one, leaving the other's output in place
           run [--debug]    build, then start the backend (http://localhost:5220/)
           serve <name>     generate, then run `dx serve` (hot reload) for one application:
                            graphics or animation
@@ -82,16 +85,16 @@ public static class Program
                     return 0;
 
                 case "build":
-                    await BuildAsync(frontend, root, configuration, stop.Token);
+                    await BuildAsync(frontend, root, Name(args), configuration, stop.Token);
                     return 0;
 
                 case "run":
-                    await BuildAsync(frontend, root, configuration, stop.Token);
+                    await BuildAsync(frontend, root, null, configuration, stop.Token);
                     return Run("dotnet", $"run --project \"{BackendProject(root)}\" --configuration Release --no-launch-profile --urls {Url}", root);
 
                 case "serve":
                     await MaterializeAsync(frontend, stop.Token);
-                    return await frontend.ServeAsync(args.Skip(1).FirstOrDefault(a => !a.StartsWith('-')), stop.Token);
+                    return await frontend.ServeAsync(Name(args), stop.Token);
 
                 default:
                     Console.WriteLine(Usage);
@@ -142,23 +145,37 @@ public static class Program
         }
     }
 
-    private static async Task BuildAsync(PlatformFrontend frontend, string root, FrontendConfiguration configuration, CancellationToken cancellationToken)
+    /// <summary>
+    /// Builds both applications - or, with <paramref name="name"/>, only that one - into the backend
+    /// project's frontend-built folder, and writes the site's two notices files beside them
+    /// (PlatformFrontend.WriteBuiltFile, with their compressed copies): the crates' notices and a copy
+    /// of the sample's own. They are build output too, so they go with the built sites, never into
+    /// wwwroot (which holds only the developer's own page); the page at "/" links to both.
+    /// </summary>
+    private static async Task BuildAsync(PlatformFrontend frontend, string root, string name, FrontendConfiguration configuration, CancellationToken cancellationToken)
     {
         await MaterializeAsync(frontend, cancellationToken);
-        var webRoot = Path.Combine(root, "backend", "GraphicsDemo.Api", "wwwroot");
-        var built = await frontend.BuildAsync(configuration, webRoot, cancellationToken);
-        // One notices file for the whole site, written after the build: the platform's crates, the
-        // wgpu crates, the graphics crate and the animation crates are compiled into the
-        // applications' WebAssembly.
-        File.WriteAllText(Path.Combine(webRoot, "THIRD-PARTY-NOTICES.txt"),
-            PlatformCrates.ReadNotices() + "\n\n\n" + WebGpuCrates.ReadNotices() + "\n\n\n" + GraphicsCrates.ReadNotices() + "\n\n\n" + AnimationCrates.ReadNotices());
-        // Beside it, the sample's own notices: the models and the HDR panorama the backend serves.
-        File.Copy(Path.Combine(root, "THIRD-PARTY-NOTICES.txt"), Path.Combine(webRoot, "SAMPLE-THIRD-PARTY-NOTICES.txt"), overwrite: true);
+        var backendDirectory = Path.GetDirectoryName(BackendProject(root));
+        var built = name == null
+            ? await frontend.BuildAsync(configuration, backendDirectory, cancellationToken)
+            : await frontend.BuildAsync(name, configuration, backendDirectory, cancellationToken);
+        // After EVERY build (a full build removes the files it did not write itself; a one-application
+        // build leaves them): the platform's crates, the wgpu crates, the graphics crate and the
+        // animation crates are compiled into the applications' WebAssembly - one notices file for the
+        // whole site.
+        frontend.WriteBuiltFile(backendDirectory, "THIRD-PARTY-NOTICES.txt",
+            PlatformCrates.ReadNotices() + "\n\n\n" + WebGpuCrates.ReadNotices() + "\n\n\n" + GraphicsCrates.ReadNotices() + "\n\n\n" + AnimationCrates.ReadNotices(),
+            configuration, cancellationToken);
+        // Beside it, the sample's own notices: the model packs, the HDR panorama and the fonts the backend serves.
+        frontend.WriteBuiltFile(backendDirectory, "SAMPLE-THIRD-PARTY-NOTICES.txt", File.ReadAllText(Path.Combine(root, "THIRD-PARTY-NOTICES.txt")), configuration, cancellationToken);
         foreach (var application in built.Applications)
         {
-            Console.WriteLine($"  {application.ApplicationName,-9} {application.WebRootFileCount,3} files in {application.WebRootApplicationDirectory}");
+            Console.WriteLine($"  {application.ApplicationName,-9} {application.BuiltFileCount,3} files in {application.BuiltApplicationDirectory}");
         }
     }
+
+    /// <summary>The application name after the command, if there is one (options start with '-').</summary>
+    private static string Name(string[] args) => args.Skip(1).FirstOrDefault(a => !a.StartsWith('-'));
 
     private static string BackendProject(string root)
         => Path.Combine(root, "backend", "GraphicsDemo.Api", "GraphicsDemo.Api.csproj");

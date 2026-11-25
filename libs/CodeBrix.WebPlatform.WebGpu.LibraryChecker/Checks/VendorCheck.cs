@@ -9,9 +9,9 @@ using CodeBrix.RustTools.Vendoring;
 namespace CodeBrix.WebPlatform.WebGpu.LibraryChecker.Checks;
 
 /// <summary>
-/// Confirms that the vendor folder is an exact, untouched copy of the crates the crate set's
-/// derivation names (see <see cref="VendoredSet"/>), and that git neither hides nor rewrites any
-/// file inside it.
+/// Confirms that each vendor folder (the WebGpu package's, and the Graphics and Animation
+/// packages' own) is an exact, untouched copy of the crates its crate set's derivation names (see
+/// <see cref="VendoredSet"/>), and that git neither hides nor rewrites any file inside them.
 /// </summary>
 public static class VendorCheck
 {
@@ -42,33 +42,54 @@ public static class VendorCheck
     }
 
     /// <summary>
+    /// Verifies the Graphics package's vendor folder against its own crates (the Graphics crate
+    /// set's lock minus what the WebGpu package and the platform carry): every one present and
+    /// untouched, and no other crate there.
+    /// </summary>
+    /// <param name="layout">The repository's folders.</param>
+    /// <param name="set">The Graphics package's own crates.</param>
+    public static CheckResult GraphicsCrates(RepositoryLayout layout, VendoredSet set) => BundleCrates(layout, BundlePackage.Graphics, set);
+
+    /// <summary>
     /// Verifies the Animation package's vendor folder against its own crates (the Animation crate
     /// set's lock minus what the WebGpu package and the platform carry): every one present and
     /// untouched, and no other crate there.
     /// </summary>
     /// <param name="layout">The repository's folders.</param>
     /// <param name="set">The Animation package's own crates.</param>
-    public static CheckResult AnimationCrates(RepositoryLayout layout, VendoredSet set)
+    public static CheckResult AnimationCrates(RepositoryLayout layout, VendoredSet set) => BundleCrates(layout, BundlePackage.Animation, set);
+
+    /// <summary>
+    /// Verifies a package's vendor folder against its own crates (its crate set's lock minus what
+    /// the WebGpu package and the platform carry): every one present and untouched, and no other
+    /// crate there.
+    /// </summary>
+    /// <param name="layout">The repository's folders.</param>
+    /// <param name="package">The package (Graphics or Animation).</param>
+    /// <param name="set">The package's own crates.</param>
+    public static CheckResult BundleCrates(RepositoryLayout layout, BundlePackage package, VendoredSet set)
     {
         ArgumentNullException.ThrowIfNull(layout);
+        ArgumentNullException.ThrowIfNull(package);
         ArgumentNullException.ThrowIfNull(set);
-        var vendor = VendorFolder.Load(layout.AnimationVendor);
-        var report = VendorVerifier.Verify(vendor, new CargoLockFile { FilePath = layout.AnimationCrateSetLock, Packages = set.Packages });
+        var vendor = VendorFolder.Load(package.Vendor(layout));
+        var report = VendorVerifier.Verify(vendor, new CargoLockFile { FilePath = package.CrateSetLock(layout), Packages = set.Packages });
         var problems = report.Issues.Select(i => i.Kind switch
         {
-            VendorIssueKind.MissingCrate or VendorIssueKind.UnexpectedCrate => i.Message + $" ({set.Description}); re-vendor the Animation crate set (src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendoring/kurbo-peniko/UPGRADE-README.txt)",
-            VendorIssueKind.ModifiedFile or VendorIssueKind.MissingFile or VendorIssueKind.ExtraFile => i.Message + "; vendored crates are never edited - restore the crate as crates.io published it (src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendoring/kurbo-peniko/UPGRADE-README.txt)",
+            VendorIssueKind.MissingCrate or VendorIssueKind.UnexpectedCrate => i.Message + $" ({set.Description}); re-vendor the {package.Label} crate set ({package.UpgradeNotesShown})",
+            VendorIssueKind.ModifiedFile or VendorIssueKind.MissingFile or VendorIssueKind.ExtraFile => i.Message + $"; vendored crates are never edited - restore the crate as crates.io published it ({package.UpgradeNotesShown})",
             _ => i.Message,
         });
         return new CheckResult(
-            "Vendored crates: the Animation package's crates are untouched and are exactly the Animation crate set's " + set.ShortName,
+            $"Vendored crates: the {package.Label} package's crates are untouched and are exactly the {package.Label} crate set's " + set.ShortName,
             problems,
             new[] { $"{report.CratesChecked} crates, {report.FilesChecked} files hashed; the set: {set.Description}" });
     }
 
     /// <summary>
-    /// Asks git whether any file inside the two vendor folders (the WebGpu package's and the
-    /// Animation package's), or the two crate sets' lock files, is ignored. An ignored file would be missing from a fresh clone, and cargo refuses to build
+    /// Asks git whether any file inside the three vendor folders (the WebGpu package's, the
+    /// Graphics package's and the Animation package's), or the three crate sets' lock files, is
+    /// ignored. An ignored file would be missing from a fresh clone, and cargo refuses to build
     /// from a vendored crate with a missing file. Passes with a note when git is not installed or
     /// this is not a git checkout.
     /// </summary>
@@ -87,7 +108,7 @@ public static class VendorCheck
                 RedirectStandardError = true,
                 UseShellExecute = false,
             };
-            var paths = new[] { layout.Vendor, layout.CrateSetLock, layout.AnimationVendor, layout.AnimationCrateSetLock }.Where(p => File.Exists(p) || Directory.Exists(p)).Select(layout.Relative);
+            var paths = new[] { layout.Vendor, layout.CrateSetLock, layout.GraphicsVendor, layout.GraphicsCrateSetLock, layout.AnimationVendor, layout.AnimationCrateSetLock }.Where(p => File.Exists(p) || Directory.Exists(p)).Select(layout.Relative);
             foreach (var argument in new[] { "ls-files", "--others", "--ignored", "--exclude-standard", "--" }.Concat(paths))
             {
                 start.ArgumentList.Add(argument);
@@ -108,6 +129,6 @@ public static class VendorCheck
         }
 
         var ignored = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return new CheckResult(name, ignored.Select(f => $"{f} is ignored by git and would be missing from a clone; un-ignore it in the root .gitignore (its last line un-ignores the vendor folder)"));
+        return new CheckResult(name, ignored.Select(f => $"{f} is ignored by git and would be missing from a clone; un-ignore it in the root .gitignore (its last lines un-ignore the vendor folders)"));
     }
 }

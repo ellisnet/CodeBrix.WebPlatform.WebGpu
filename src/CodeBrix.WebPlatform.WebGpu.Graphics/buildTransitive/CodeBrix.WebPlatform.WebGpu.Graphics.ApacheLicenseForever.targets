@@ -1,9 +1,10 @@
 <Project>
 
   <!--
-    Copies the crate that ships in this package (tools/webgpu-graphics-crates/: the archive
-    webgpu-graphics-crates.zip - the first-party crate codebrix-webgpu-graphics in vendored form -
-    and THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt, the notices for what that crate contains)
+    Copies the crates that ship in this package (tools/webgpu-graphics-crates/: the archive
+    webgpu-graphics-crates.zip - the first-party crate codebrix-webgpu-graphics in vendored form
+    and the third-party crates only it needs, exactly as crates.io published them - and
+    THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt, the notices for them)
     into the output folder of the project that references it - directly or through another
     package - as webgpu-graphics-crates/. GraphicsCrates.Register() registers the WebGpu
     package's crates first and then hands the archive there to the platform's frontend build,

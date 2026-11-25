@@ -10,8 +10,9 @@ namespace CodeBrix.WebPlatform.WebGpu.LibraryChecker.Tests;
 
 /// <summary>
 /// Runs every LibraryChecker check against the real repository this test project lives in: the
-/// vendored crates, the comparison with the platform's crates, the first-party crates, the dependency rule, the license gate, the notices, the
-/// no-Node rule and the no-workflow rule. These tests need cargo (they run it offline against the
+/// vendored crates (the WebGpu, Graphics and Animation packages'), the comparison with the
+/// platform's crates, the first-party crates, the dependency rule, the license gate, the notices,
+/// the no-Node rule and the no-workflow rule. These tests need cargo (they run it offline against the
 /// vendor folder).
 /// </summary>
 public class CheckRunnerTests
@@ -59,15 +60,29 @@ public class CheckRunnerTests
     }
 
     [Fact]
-    public async Task the_vendor_and_platform_groups_check_the_animation_crate_set_too()
+    public async Task the_vendor_and_platform_groups_check_the_graphics_and_animation_crate_sets_too()
     {
         //Act
         var vendor = await CheckRunner.RunAsync(Layout(), "vendor", cancellationToken: TestContext.Current.CancellationToken);
         var platform = await CheckRunner.RunAsync(Layout(), "platform", cancellationToken: TestContext.Current.CancellationToken);
 
         //Assert
+        vendor.Should().Contain(r => r.Name.Contains("the Graphics package's crates are untouched", StringComparison.Ordinal) && r.Passed);
         vendor.Should().Contain(r => r.Name.Contains("the Animation package's crates are untouched", StringComparison.Ordinal) && r.Passed);
+        platform.Should().Contain(r => r.Name.Contains("the Graphics crate set shares every crate", StringComparison.Ordinal) && r.Passed);
         platform.Should().Contain(r => r.Name.Contains("the Animation crate set shares every crate", StringComparison.Ordinal) && r.Passed);
+        platform.Should().Contain(r => r.Name.Contains("no crate is vendored by both the Graphics and the Animation package", StringComparison.Ordinal) && r.Passed);
+    }
+
+    [Fact]
+    public async Task the_licenses_group_audits_the_graphics_and_animation_crate_sets_too()
+    {
+        //Act
+        var results = await CheckRunner.RunAsync(Layout(), "licenses", cancellationToken: TestContext.Current.CancellationToken);
+
+        //Assert
+        results.Should().Contain(r => r.Name == "Licenses: every crate of the Graphics package's vendor folder was audited" && r.Passed);
+        results.Should().Contain(r => r.Name == "Licenses: every crate of the Animation package's vendor folder was audited" && r.Passed);
     }
 
     [Fact]
@@ -77,7 +92,8 @@ public class CheckRunnerTests
         var results = await CheckRunner.RunAsync(Layout(), "notices", cancellationToken: TestContext.Current.CancellationToken);
 
         //Assert
-        results.Select(r => r.Name).Should().Contain(n => n.Contains("THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt"));
+        results.Select(r => r.Name).Should().Contain("Notices: THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt is up to date");
+        results.Select(r => r.Name).Should().Contain(GraphicsNoticesCheck.Name);
         results.Select(r => r.Name).Should().Contain(SampleNoticesCheck.Name);
     }
 

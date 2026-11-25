@@ -6,20 +6,26 @@
 //! demo shows the crate's "WebGPU is not available" message, and the page "on the page" shows its
 //! own content without the animation (its WebGpuBoundary). EVERY RESOURCE COMES FROM THE BACKEND (this
 //! sample's rule; the crate takes bytes from anywhere), fetched once with the generated `_bytes`
-//! calls before the catalogue is made: the fonts (`roboto_regular_bytes`,
-//! `open_sans_regular_bytes`), registered with the crate's FontRegistry; the pictures - the Cube
+//! calls before the catalogue is made: the fonts (`font_file_bytes`, by file name: the backend
+//! serves every font file it carries; this application asks for the two the demo draws with, in
+//! FONT_FILES), registered with the crate's FontRegistry, and the variable Roboto (`roboto.ttf`)
+//! registered at several weights (`register_font_with_variations`) for the "text" scene; the pictures - the Cube
 //! Pets colour map decoded there and sent as pixels (`cube_pets_colormap_bytes`), the same picture
-//! as its PNG file (`cube_pets_colormap_png_bytes`), and the Lottie image layer's badge made there
+//! as its PNG file (`cube_pets_colormap_png_bytes`) and as a JPEG file made from it there
+//! (`cube_pets_colormap_jpeg_bytes`, read with `ImageSource::from_jpeg`), and the Lottie image layer's badge made there
 //! in code (`lottie_badge_bytes`); the caption file of the "captions" scene
 //! (`caption_scene_srt_bytes`); the SVG documents of the SVG scenes (`..._svg_bytes`), their text
-//! laid out in the same Roboto and Open Sans bytes; and the Lottie files of the Lottie scenes
-//! (`..._json_bytes`).
+//! laid out in the same Roboto and Open Sans bytes; the Lottie files of the Lottie scenes
+//! (`..._json_bytes`); and, for the "live-pickup" scene's 3D source, five model files of the kits
+//! with the files they name (`model_file_bytes`, `model_folder_file_bytes`) and the ground's blob
+//! (`model_data_bytes`), read by codebrix-webgpu-graphics' glTF loader - the one scene of this
+//! application that draws through the graphics crate.
 
 mod demo;
 mod generated;
 
 use codebrix_webgpu::{GpuContext, WebGpuUnavailable};
-use codebrix_webgpu_animation::text::FontRegistry;
+use codebrix_webgpu_animation::text::{FontRegistry, FontVariation};
 use dioxus::prelude::*;
 
 use crate::demo::on_page::OnThePage;
@@ -27,12 +33,14 @@ use crate::demo::page::DemoPage;
 use crate::demo::captions::set_backend_captions;
 use crate::demo::lottie_files::set_backend_lottie;
 use crate::demo::lottie_images::set_backend_badge;
-use crate::demo::pictures::{from_pixel_form, set_backend_picture, set_backend_png_picture};
+use crate::demo::pictures::{from_pixel_form, set_backend_jpeg_picture, set_backend_picture, set_backend_png_picture};
 use crate::demo::svg_files::{fetch_svg_documents, set_svg_font};
 use crate::generated::api::{captions, fonts, pictures};
 use crate::generated::api::lottie;
 
-const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
+/// The Tailwind stylesheet the platform's frontend build generates from tailwind.css (build output,
+/// at the platform's fixed path assets/generated/tailwind.css).
+const TAILWIND_CSS: Asset = asset!("/assets/generated/tailwind.css");
 /// The site icon (the CodeBrix icon as an .ico file). Served without a hash suffix, at the fixed
 /// path `index.html` also links, so the browser finds it before the application has started.
 const FAVICON: Asset = asset!("/assets/favicon.ico", AssetOptions::builder().with_hash_suffix(false));
@@ -85,22 +93,35 @@ fn GpuPage() -> Element {
     }
 }
 
-/// Fetches the demo's fonts from the backend once (the generated `_bytes` calls), registers them
-/// - Roboto first, so it is the registry's default - and its decoded picture, then shows the demo.
+/// The fonts the demo draws with, by the backend's name for them (the font file's name in lower
+/// case), with a name for messages: Roboto FIRST, so it is the registry's default (the C# demo's
+/// font), then Open Sans (the missing-characters scene and the SVG text).
+const FONT_FILES: [(&str, &str); 2] = [("roboto-regular.ttf", "Roboto"), ("opensans-regular.ttf", "Open Sans")];
+
+/// Fetches the demo's fonts from the backend once (the generated `font_file_bytes` call),
+/// registers them in FONT_FILES' order - and its decoded picture, then shows the demo.
 async fn load_fonts() -> Result<FontRegistry, String> {
     let registry = FontRegistry::new();
-    let roboto = fonts::roboto_regular_bytes().await.map_err(|e| format!("The font Roboto could not be read from the backend: {}", e.message()))?;
-    set_svg_font(roboto.clone());
-    registry.register_font(roboto, None)?;
-    let open_sans = fonts::open_sans_regular_bytes().await.map_err(|e| format!("The font Open Sans could not be read from the backend: {}", e.message()))?;
-    set_svg_font(open_sans.clone());
-    registry.register_font(open_sans, None)?;
+    for (file, family) in FONT_FILES {
+        let bytes = fonts::font_file_bytes(file).await.map_err(|e| format!("The font {family} ({file}) could not be read from the backend: {}", e.message()))?;
+        set_svg_font(bytes.clone());
+        registry.register_font(bytes, None)?;
+    }
+    // The VARIABLE Roboto (axes wght, wdth), registered once per weight the "text" scene shows,
+    // each instance under its own family name (one instance per registration).
+    let variable = fonts::font_file_bytes("roboto.ttf").await.map_err(|e| format!("The variable font Roboto (roboto.ttf) could not be read from the backend: {}", e.message()))?;
+    for (weight, family) in demo::text::VARIABLE_WEIGHTS {
+        registry.register_font_with_variations(variable.clone(), Some(family), &[FontVariation::weight(weight)])?;
+    }
     // The picture the backend decoded (pixels: width, height, RGBA) - for the "images" scene.
     let pixels = pictures::cube_pets_colormap_bytes().await.map_err(|e| format!("The picture could not be read from the backend: {}", e.message()))?;
     set_backend_picture(from_pixel_form(&pixels)?);
     // The same picture as the PNG FILE itself, decoded here by the crate (ImageSource::from_png).
     let png = pictures::cube_pets_colormap_png_bytes().await.map_err(|e| format!("The PNG file could not be read from the backend: {}", e.message()))?;
     set_backend_png_picture(codebrix_webgpu_animation::images::ImageSource::from_png(&png)?);
+    // The same picture as a JPEG FILE the backend made from it, decoded here by the crate (ImageSource::from_jpeg).
+    let jpeg = pictures::cube_pets_colormap_jpeg_bytes().await.map_err(|e| format!("The JPEG file could not be read from the backend: {}", e.message()))?;
+    set_backend_jpeg_picture(codebrix_webgpu_animation::images::ImageSource::from_jpeg(&jpeg)?);
     // The captions scene's cues (SRT text) - a text resource of the backend, like the fonts.
     let srt = captions::caption_scene_srt_bytes().await.map_err(|e| format!("The caption file could not be read from the backend: {}", e.message()))?;
     set_backend_captions(String::from_utf8(srt).map_err(|_| "The caption file from the backend is not UTF-8 text.".to_string())?);
@@ -116,6 +137,9 @@ async fn load_fonts() -> Result<FontRegistry, String> {
     // The picture of that file's image layer: a badge the backend made in code (pixels).
     let badge = pictures::lottie_badge_bytes().await.map_err(|e| format!("The Lottie badge could not be read from the backend: {}", e.message()))?;
     set_backend_badge(from_pixel_form(&badge)?);
+    // The "live-pickup" scene's 3D source: model files the graphics crate's glTF loader reads, and
+    // the ground's blob (about 0.4 MB; each file once).
+    demo::live_pickup::fetch_scene_models().await?;
     Ok(registry)
 }
 

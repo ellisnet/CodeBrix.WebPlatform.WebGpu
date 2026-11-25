@@ -1,7 +1,10 @@
 //! "text" (AnimationDemoApp's TextScene): text from a registered font - left, centre and right
 //! alignment about one anchor line, letter spacing (tracking) easing in and out, the measured
 //! width drawn as a bracket under each line, the outline bounds drawn as a box, and a row of
-//! sizes laid end to end by the widths the registry measures.
+//! sizes laid end to end by the widths the registry measures; at the bottom (not in C#) a row of
+//! WEIGHTS of the variable Roboto, each registered at its own `wght` value
+//! (`FontRegistry::register_font_with_variations`), with the font's axes as `get_variation_axes`
+//! reports them.
 
 use codebrix_webgpu_animation::animation::Easing;
 use codebrix_webgpu_animation::rendering::VectorScene;
@@ -15,6 +18,9 @@ const TITLE: &str = "Text";
 const DESCRIPTION: &str = "TextShape from a registered font: alignment, tracking, measured width (bracket) and outline bounds (box)";
 const ANCHOR: f32 = 640.0;
 const SAMPLE: &str = "Animate";
+
+/// The weights of the variable Roboto the page registers (main.rs), with their family names.
+pub const VARIABLE_WEIGHTS: [(f32, &str); 5] = [(100.0, "Roboto wght 100"), (300.0, "Roboto wght 300"), (500.0, "Roboto wght 500"), (700.0, "Roboto wght 700"), (900.0, "Roboto wght 900")];
 
 pub struct TextScene {
     session: DrawingSession,
@@ -35,6 +41,18 @@ impl TextScene {
         label(guides, fonts, "TextAlign.Center", 40.0, 300.0, 13.0, DIM, TextAlign::Left);
         label(guides, fonts, "TextAlign.Right", 40.0, 410.0, 13.0, DIM, TextAlign::Left);
         label(guides, fonts, "sizes, all measured before drawing (FontRegistry.MeasureText):", 40.0, 520.0, 13.0, DIM, TextAlign::Left);
+        // The variable Roboto at five weights (one registration per weight), laid end to end.
+        let axes = fonts.get_variation_axes(Some(VARIABLE_WEIGHTS[0].1)).map(|axes| axes.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ")).unwrap_or_else(|e| e);
+        label(guides, fonts, &format!("variable Roboto ({axes}):"), 40.0, 696.0, 13.0, DIM, TextAlign::Left);
+        let mut x = 560.0;
+        for (weight, family) in VARIABLE_WEIGHTS {
+            let text = format!("Weight {weight}");
+            let options = TextShapeOptions { color: Some(INK), family_name: Some(family.to_string()), ..TextShapeOptions::default() };
+            if let Ok(shape) = TextShape::new(&text, x, 698.0, 24.0, fonts, options) {
+                x += shape.width() + 22.0;
+                guides.add_shape(shape);
+            }
+        }
         session.add_layer("Text", INK);
         TextScene { session, fonts: fonts.clone() }
     }

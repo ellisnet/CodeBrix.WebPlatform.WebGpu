@@ -8,6 +8,7 @@ use glam::{Quat, Vec3};
 use crate::context::GraphicsException;
 use crate::drawing3d::MaterialAlphaMode;
 use crate::models::data_reader::{read_u32, Pools, Record, Section};
+use crate::models::model_layout::ModelLayout;
 use crate::models::{AnimationInterpolation, AnimationPath, ModelAnimation, ModelAnimationChannel, ModelMaterial, ModelMesh, ModelMorphTarget, ModelNode, ModelPrimitive, ModelSkin, ModelTextureSlot, NodeTransform};
 use crate::resources::SamplerDescription;
 
@@ -114,6 +115,51 @@ pub struct ModelData<'a> {
     pub samplers: Vec<SamplerDescription>,
     /// What was skipped or approximated while the model data was made.
     pub warnings: Vec<String>,
+}
+
+impl ModelData<'_> {
+    /// The model's facts without a GPU (Not in C#; wish: per-model facts readable without
+    /// drawing): the rest-pose model-space bounds (minimum, maximum) - what
+    /// [`Model::bounds_min`](crate::Model::bounds_min) / `bounds_max` report once loaded; (0, 0, 0)
+    /// twice for a model that draws nothing.
+    pub fn bounds(&self) -> (Vec3, Vec3) {
+        let layout = ModelLayout::new(&self.nodes, &self.meshes, &self.skins);
+        (layout.bounds_min, layout.bounds_max)
+    }
+
+    /// True when at least one part the model draws has an alpha-blended material (as
+    /// [`Model::has_blended_parts`](crate::Model::has_blended_parts)). Not in C#.
+    pub fn has_blended_parts(&self) -> bool {
+        self.parts(true)
+    }
+
+    /// True when at least one part the model draws is opaque or alpha-tested (as
+    /// [`Model::has_opaque_parts`](crate::Model::has_opaque_parts)). Not in C#.
+    pub fn has_opaque_parts(&self) -> bool {
+        self.parts(false)
+    }
+
+    /// The name of every animation clip, in clip order; None for an unnamed clip (as
+    /// [`Model::animation_names`](crate::Model::animation_names)). Not in C#.
+    pub fn animation_names(&self) -> Vec<Option<&str>> {
+        self.animations.iter().map(|a| a.name.as_deref()).collect()
+    }
+
+    /// The name of every node, in node order; None for an unnamed node (as
+    /// [`Model::node_names`](crate::Model::node_names)). Not in C#.
+    pub fn node_names(&self) -> Vec<Option<&str>> {
+        self.nodes.iter().map(|n| n.name.as_deref()).collect()
+    }
+
+    /// True when a drawn part's material is (`translucent`) or is not alpha-blended.
+    fn parts(&self, translucent: bool) -> bool {
+        let layout = ModelLayout::new(&self.nodes, &self.meshes, &self.skins);
+        layout.draw_items.iter().any(|item| {
+            let primitive = &self.meshes[item.mesh].primitives[item.primitive];
+            let material = primitive.material.and_then(|m| self.materials.get(m)).unwrap_or(&self.default_material);
+            material.is_translucent() == translucent
+        })
+    }
 }
 
 /// A blob of the model-data format, read: one or more models and the textures they use, each

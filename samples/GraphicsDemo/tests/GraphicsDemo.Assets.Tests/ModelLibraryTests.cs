@@ -3,106 +3,145 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Text.Json;
 using CodeBrix.WebPlatform.WebGpu.Graphics.Models;
 using GraphicsDemo.Assets;
-using GraphicsDemo.Assets.Conversion;
+using GraphicsDemo.Assets.BuiltModels;
 using GraphicsDemo.Assets.Scene;
 using SilverAssertions;
 using Xunit;
 
 namespace GraphicsDemo.Assets.Tests;
 
-/// <summary>The embedded models, their conversion to model data, the scene set and the blobs.</summary>
+/// <summary>
+/// The embedded model files (served unchanged, read in the browser by the graphics crate's glTF loader), the two models
+/// built in code and their blobs, and the Viewer scene's layout. What the glTF loader makes of the files is checked on
+/// the repository's test side (the reference converter, which links this sample's Models folder).
+/// </summary>
 public class ModelLibraryTests
 {
     private static readonly ModelLibrary Library = new ModelLibrary();
 
     private static int Triangles(ModelData model) => (int)model.Meshes.SelectMany(mesh => mesh.Primitives).Sum(primitive => primitive.IndexCount / 3);
 
+    /// <summary>The JSON chunk of a .glb file (glTF 2.0 binary container: a 12-byte header, then the JSON chunk).</summary>
+    private static JsonDocument GlbJson(byte[] glb)
+    {
+        BinaryPrimitives.ReadUInt32LittleEndian(glb).Should().Be(0x46546C67u, "a .glb file starts with 'glTF'");
+        BinaryPrimitives.ReadUInt32LittleEndian(glb.AsSpan(4)).Should().Be(2u, "the container is glTF 2.0");
+        int length = (int)BinaryPrimitives.ReadUInt32LittleEndian(glb.AsSpan(12));
+        BinaryPrimitives.ReadUInt32LittleEndian(glb.AsSpan(16)).Should().Be(0x4E4F534Au, "the first chunk is JSON");
+        return JsonDocument.Parse(glb.AsMemory(20, length));
+    }
+
+    private static IEnumerable<string> Names(JsonElement root, string array)
+        => root.TryGetProperty(array, out JsonElement items) ? items.EnumerateArray().Select(item => item.TryGetProperty("name", out JsonElement name) ? name.GetString() : null) : Enumerable.Empty<string>();
+
     [Fact]
-    public void ModelNames_lists_every_embedded_model_the_ground_and_the_morph_shape()
+    public void ModelNames_lists_every_embedded_model_file_the_ground_and_the_morph_shape()
     {
         Library.ModelNames.Should().Contain(new[] { "ground", "morph-shape", "character-archer", "tree", "tree-tall", "tree-autumn", "rock-a", "rock-b", "rock-c", "barrel", "campfire-pit", "patch-grass-large", "fence", "chest", "avian", "animal-cat", "animal-bunny" });
         Library.ModelNames.Count.Should().Be(23);
+        ModelLibrary.BuiltModelNames.Should().Equal("ground", "morph-shape");
+        Library.FileOf("character-archer").Should().Be("kenney-mini-forest/character-archer.glb");
         Library.PackOf("character-archer").Should().Be("kenney-mini-forest");
-        Library.PackOf("morph-shape").Should().BeNull();
-        Library.Contains("morph-shape").Should().BeTrue();
+        Library.FileOf("tree").Should().Be("survival-kit/tree.glb");
         Library.PackOf("tree").Should().Be("survival-kit");
         Library.PackOf("avian").Should().Be("crystals-and-avian");
         Library.PackOf("animal-fox").Should().Be("cube-pets");
+        Library.FileOf("morph-shape").Should().BeNull();
+        Library.FileOf("ground").Should().BeNull();
+        Library.Contains("morph-shape").Should().BeTrue();
+        ModelLibrary.IsBuilt("ground").Should().BeTrue();
+        ModelLibrary.IsBuilt("tree").Should().BeFalse();
         Library.Contains("no-such-model").Should().BeFalse();
-        Library.GetModelBlob("no-such-model").Should().BeNull();
+        Library.FileOf("no-such-model").Should().BeNull();
     }
 
     [Fact]
-    public void Tree_converts_with_its_geometry_material_texture_and_sampler()
+    public void GetFile_serves_a_model_file_and_its_texture_unchanged_with_their_content_types()
     {
         //Arrange
-        ModelDataSet set = Library.BuildModelSet("tree");
+        ModelFile tree = Library.GetFile("survival-kit/tree.glb");
 
         //Act
-        ModelData tree = set.Models.Single();
+        ModelFile colormap = Library.GetFile("survival-kit/Textures/colormap.png");
 
         //Assert
-        tree.Name.Should().Be("tree");
-        tree.Vertices.Length.Should().Be(396);
-        Triangles(tree).Should().Be(226);
-        tree.IndexFormat.Should().Be(ModelIndexFormat.Uint16);
-        tree.Nodes.Count.Should().Be(1);
-        tree.Nodes[0].InScene.Should().BeTrue();
-        tree.RootNodes.Should().Equal(0);
-        tree.Warnings.Should().BeEmpty();
-
-        ModelPrimitiveData primitive = tree.Meshes.Single().Primitives.Single();
-        primitive.Material.Should().Be(0);
-        primitive.HasTangents.Should().BeTrue();
-        primitive.NormalsGenerated.Should().BeFalse();
-
-        ModelMaterialData material = tree.Materials.Single();
-        material.Name.Should().Be("colormap");
-        material.BaseColorTexture.TextureIndex.Should().Be(0);
-        material.BaseColorTexture.Texture.Should().Be(0);
-        material.BaseColorTexture.HasTransform.Should().BeTrue();
-        tree.Textures.Should().Equal(0);
-
-        ModelTextureData texture = set.Textures.Single();
-        texture.Name.Should().Be("survival-kit/Textures/colormap.png");
-        texture.ColorSpace.Should().Be(TextureColorSpace.Srgb);
-        texture.Mipmaps.Should().BeTrue();
-        texture.Width.Should().Be(512);
-        texture.Height.Should().Be(512);
-        texture.Pixels.Length.Should().Be(512 * 512 * 4);
-
-        ModelSamplerData sampler = tree.Samplers[material.BaseColorTexture.Sampler];
-        sampler.MagFilter.Should().Be(SamplerFilter.Nearest);
-        sampler.MinFilter.Should().Be(SamplerFilter.Nearest);
-        sampler.MipmapFilter.Should().Be(SamplerFilter.Nearest);
-        sampler.AddressModeU.Should().Be(SamplerAddressMode.Repeat);
-        sampler.AddressModeV.Should().Be(SamplerAddressMode.Repeat);
-        sampler.MaxLod.Should().Be(32f);
+        tree.Path.Should().Be("survival-kit/tree.glb");
+        tree.ContentType.Should().Be("model/gltf-binary");
+        tree.Bytes.Should().Equal(Library.ReadResource("survival-kit/tree.glb"));
+        colormap.ContentType.Should().Be("image/png");
+        colormap.Length.Should().BeGreaterThan(8);
+        colormap.Bytes.AsSpan(1, 3).ToArray().Should().Equal(new[] { (byte)'P', (byte)'N', (byte)'G' });
     }
 
     [Fact]
-    public void Avian_converts_with_its_nodes_meshes_and_clips()
+    public void GetFile_refuses_licence_files_unknown_paths_and_paths_not_written_as_embedded()
     {
         //Arrange
-        ModelDataSet set = Library.BuildModelSet("avian");
+        string[] paths =
+        {
+            "survival-kit/LICENSE-Kenney-survival-kit.txt",
+            "survival-kit/no-such.glb",
+            "Survival-Kit/tree.glb",
+            "survival-kit/../survival-kit/tree.glb",
+            "survival-kit\\tree.glb",
+            "/survival-kit/tree.glb",
+            "tree.glb",
+            "",
+            null,
+        };
 
         //Act
-        ModelData avian = set.Models.Single();
+        List<string> served = paths.Where(path => Library.GetFile(path) != null).ToList();
 
         //Assert
-        avian.Nodes.Count.Should().Be(13);
-        avian.Meshes.Count.Should().Be(11);
-        avian.Vertices.Length.Should().Be(3347);
-        Triangles(avian).Should().Be(1798);
-        avian.Animations.Select(animation => animation.Name).Should().Equal("static", "idle", "fly", "take-off", "land", "create", "nod-yes", "nod-no");
-        avian.Animations.Single(animation => animation.Name == "fly").Channels.Should().NotBeEmpty();
-        avian.Skins.Should().BeEmpty();
-        avian.SkinVertices.Should().BeNull();
-        set.Textures.Single().Name.Should().Be("crystals-and-avian/Textures/colormap.png");
-        avian.Samplers.Single().MinFilter.Should().Be(SamplerFilter.Linear);
-        avian.Samplers.Single().MipmapFilter.Should().Be(SamplerFilter.Linear);
+        served.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_model_file_is_read_once_and_carries_a_strong_etag_of_its_bytes()
+    {
+        //Arrange
+        ModelFile first = Library.GetFile("cube-pets/animal-cat.glb");
+
+        //Act
+        ModelFile again = Library.GetFile("cube-pets/animal-cat.glb");
+
+        //Assert
+        ReferenceEquals(first, again).Should().BeTrue();
+        first.ETag.Should().MatchRegex("^\"[0-9a-f]{64}\"$");
+        first.ETag.Should().NotBe(Library.GetFile("cube-pets/animal-dog.glb").ETag);
+    }
+
+    [Fact]
+    public void Every_model_file_is_a_gltf_2_binary_whose_external_files_are_served_from_its_pack()
+    {
+        //Arrange
+        List<string> problems = new List<string>();
+
+        //Act
+        foreach (string name in Library.ModelNames.Where(name => !ModelLibrary.IsBuilt(name)))
+        {
+            string pack = Library.PackOf(name);
+            using JsonDocument json = GlbJson(Library.GetFile(Library.FileOf(name)).Bytes);
+            JsonElement root = json.RootElement;
+            if (root.GetProperty("asset").GetProperty("version").GetString() != "2.0") problems.Add(name + ": not glTF 2.0");
+            foreach (string array in new[] { "images", "buffers" })
+            {
+                if (!root.TryGetProperty(array, out JsonElement items)) continue;
+                foreach (JsonElement item in items.EnumerateArray())
+                {
+                    if (!item.TryGetProperty("uri", out JsonElement uri)) continue;
+                    string path = pack + "/" + Uri.UnescapeDataString(uri.GetString());
+                    if (Library.GetFile(path) == null) problems.Add(name + ": " + array + " names '" + uri.GetString() + "', which is not served as " + path);
+                }
+            }
+        }
+
+        //Assert
+        problems.Should().BeEmpty();
     }
 
     [Fact]
@@ -118,9 +157,16 @@ public class ModelLibraryTests
         ground.Name.Should().Be("ground");
         ground.Vertices.Length.Should().Be(4);
         Triangles(ground).Should().Be(2);
-        ground.Vertices.Should().OnlyContain(vertex => vertex.Normal == Vector3.UnitY && vertex.Position.Y == 0f);
+        ground.Vertices.Should().OnlyContain(vertex => vertex.Normal == Vector3.UnitY && vertex.Position.Y == 0f && vertex.Color == Vector4.One);
         ground.Vertices.Max(vertex => vertex.Position.X).Should().Be(GroundModel.HalfSize);
-        ground.Meshes.Single().Primitives.Single().NormalsGenerated.Should().BeFalse();
+        ground.Indices.Should().Equal(0u, 1u, 2u, 0u, 2u, 3u);
+        ModelPrimitiveData primitive = ground.Meshes.Single().Primitives.Single();
+        primitive.NormalsGenerated.Should().BeFalse();
+        primitive.HasTangents.Should().BeFalse();
+        primitive.BoundsMin.Should().Be(new Vector3(-GroundModel.HalfSize, 0, -GroundModel.HalfSize));
+        primitive.BoundsMax.Should().Be(new Vector3(GroundModel.HalfSize, 0, GroundModel.HalfSize));
+        ground.Nodes.Single().Mesh.Should().Be(0);
+        ground.RootNodes.Should().Equal(0);
         ModelMaterialData grass = ground.Materials.Single();
         grass.Name.Should().Be("grass");
         grass.MetallicFactor.Should().Be(0f);
@@ -133,104 +179,44 @@ public class ModelLibraryTests
     }
 
     [Fact]
-    public void Scene_set_holds_the_ground_the_actors_and_the_props_models_with_one_texture_per_pack()
+    public void Blobs_are_written_only_for_the_models_built_in_code_carry_the_format_header_and_are_built_once()
     {
         //Arrange
-        IReadOnlyList<string> models = ViewerSceneLayout.SceneModels();
+        ModelBlob ground = Library.GetModelBlob("ground");
 
         //Act
-        ModelDataSet set = Library.BuildSceneSet();
-
-        //Assert
-        models.Take(11).Should().Equal("chest", "animal-cat", "animal-dog", "animal-fox", "animal-pig", "animal-cow", "animal-panda", "animal-penguin", "animal-bunny", "avian", "tree");
-        set.Models.Select(model => model.Name).Should().Equal(new[] { "ground" }.Concat(models));
-        set.Models.Count.Should().Be(21);
-        set.Textures.Select(texture => texture.Name).Should().Equal("survival-kit/Textures/colormap.png", "cube-pets/Textures/colormap.png", "crystals-and-avian/Textures/colormap.png");
-        set.Models[0].Textures.Should().BeEmpty();
-        set.Models.Skip(1).Should().OnlyContain(model => model.Textures.Count == 1);
-        set.Models.Single(model => model.Name == "avian").Textures.Should().Equal(2);
-        set.Models.Where(model => model.Name.StartsWith("animal-", StringComparison.Ordinal)).Should().OnlyContain(model => model.Textures[0] == 1);
-        set.Models.Single(model => model.Name == "chest").Animations.Select(clip => clip.Name).Should().Contain("open-close");
-    }
-
-    [Fact]
-    public void Texture_cache_shares_one_image_per_colour_space_across_models_of_a_pack()
-    {
-        //Arrange
-        ModelDataSet set = new ModelDataSet();
-        ModelTextureCache cache = new ModelTextureCache(set);
-
-        //Act
-        Library.AddModel(set, cache, "tree");
-        Library.AddModel(set, cache, "rock-a");
-        Library.AddModel(set, cache, "animal-cat");
-        Library.AddModel(set, cache, "animal-dog");
-
-        //Assert
-        set.Textures.Select(texture => texture.Name).Should().Equal("survival-kit/Textures/colormap.png", "cube-pets/Textures/colormap.png");
-        cache.Count.Should().Be(2);
-        set.Models[2].Textures.Should().Equal(1);
-        set.Models[3].Textures.Should().Equal(1);
-    }
-
-    [Fact]
-    public void Converter_refuses_a_cache_of_another_set()
-    {
-        //Arrange
-        ModelDataSet set = new ModelDataSet();
-        ModelTextureCache other = new ModelTextureCache(new ModelDataSet());
-
-        //Act
-        Action act = () => GltfModelConverter.Convert(set, GroundModel.CreateGlb(), "ground", null, null, other);
-
-        //Assert
-        act.Should().Throw<ArgumentException>().WithMessage("*belongs to another model data set*");
-    }
-
-    [Fact]
-    public void Blobs_carry_the_format_header_and_are_built_once()
-    {
-        //Arrange
-        ModelBlob scene = Library.SceneBlob;
-        ModelBlob tree = Library.GetModelBlob("tree");
-
-        //Act
-        ReadOnlySpan<byte> bytes = scene.Bytes;
+        ReadOnlySpan<byte> bytes = ground.Bytes;
 
         //Assert
         bytes.Slice(0, 4).ToArray().Should().Equal(ModelDataFormat.Magic.ToArray());
         BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(4)).Should().Be((ushort)ModelDataFormat.MajorVersion);
         BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(6)).Should().Be((ushort)ModelDataFormat.MinorVersion);
-        BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(16)).Should().Be((uint)scene.Length);
-        (scene.Length % 16).Should().Be(0);
-        Library.SceneBlob.Should().BeSameAs(scene);
-        Library.GetModelBlob("tree").Should().BeSameAs(tree);
-        scene.ETag.Should().MatchRegex("^\"[0-9a-f]{64}\"$");
-        scene.TextureCount.Should().Be(3);
-        scene.Models.Select(entry => entry.Index).Should().Equal(Enumerable.Range(0, 21));
-        scene.Models[11].Name.Should().Be("tree");
-        scene.Models[11].VertexCount.Should().Be(396);
-        scene.Models[11].TriangleCount.Should().Be(226);
-        tree.Models.Single().Name.Should().Be("tree");
-        tree.TextureCount.Should().Be(1);
+        BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(16)).Should().Be((uint)ground.Length);
+        (ground.Length % 16).Should().Be(0);
+        Library.GetModelBlob("ground").Should().BeSameAs(ground);
+        ground.ETag.Should().MatchRegex("^\"[0-9a-f]{64}\"$");
+        ground.TextureCount.Should().Be(0);
+        ground.Models.Single().Name.Should().Be("ground");
+        ground.Models.Single().VertexCount.Should().Be(4);
+        ground.Models.Single().TriangleCount.Should().Be(2);
+        Library.GetModelBlob("tree").Should().BeNull();
+        Library.GetModelBlob("no-such-model").Should().BeNull();
     }
 
     [Fact]
-    public void Every_embedded_model_converts_without_an_exception_or_a_warning()
+    public void Scene_models_are_the_actors_then_the_props_models_each_a_file()
     {
         //Arrange
-        List<string> warnings = new List<string>();
+        IReadOnlyList<string> models = ViewerSceneLayout.SceneModels();
 
         //Act
-        foreach (string name in Library.ModelNames)
-        {
-            ModelData model = Library.BuildModelSet(name).Models.Single();
-            model.Vertices.Should().NotBeEmpty();
-            foreach (string warning in model.Warnings) warnings.Add(name + ": " + warning);
-        }
+        List<string> files = models.Select(Library.FileOf).ToList();
 
         //Assert
-        warnings.Should().BeEmpty();
+        models.Take(11).Should().Equal("chest", "animal-cat", "animal-dog", "animal-fox", "animal-pig", "animal-cow", "animal-panda", "animal-penguin", "animal-bunny", "avian", "tree");
+        models.Count.Should().Be(20);
+        files.Should().OnlyContain(file => file != null);
+        models.Select(Library.PackOf).Distinct().Should().Equal("survival-kit", "cube-pets", "crystals-and-avian");
     }
 
     [Fact]
@@ -294,7 +280,7 @@ public class ModelLibraryTests
     }
 
     [Fact]
-    public void Every_actor_names_a_clip_its_model_has()
+    public void Every_actor_names_a_clip_its_model_file_has()
     {
         //Arrange
         List<string> missing = new List<string>();
@@ -302,8 +288,8 @@ public class ModelLibraryTests
         //Act
         foreach (ViewerActor actor in ViewerSceneLayout.Actors)
         {
-            ModelData model = Library.BuildModelSet(actor.Model).Models.Single();
-            HashSet<string> clips = model.Animations.Select(clip => clip.Name).ToHashSet(StringComparer.Ordinal);
+            using JsonDocument json = GlbJson(Library.GetFile(Library.FileOf(actor.Model)).Bytes);
+            HashSet<string> clips = Names(json.RootElement, "animations").ToHashSet(StringComparer.Ordinal);
             foreach (string clip in actor.Routine.Append(actor.Clip).Where(clip => clip != null))
             {
                 if (!clips.Contains(clip)) missing.Add(actor.Model + ": " + clip);
@@ -315,21 +301,18 @@ public class ModelLibraryTests
     }
 
     [Fact]
-    public void Archer_converts_with_its_skins_and_clips()
+    public void Archer_file_has_skins_its_clips_and_the_node_the_skinned_scene_reads_out()
     {
         //Arrange
-        ModelDataSet set = Library.BuildModelSet("character-archer");
+        ModelFile archer = Library.GetFile(Library.FileOf("character-archer"));
 
         //Act
-        ModelData archer = set.Models.Single();
+        using JsonDocument json = GlbJson(archer.Bytes);
 
         //Assert
-        archer.Skins.Should().NotBeEmpty();
-        archer.SkinVertices.Should().NotBeNull();
-        archer.SkinVertices.Length.Should().Be(archer.Vertices.Length);
-        archer.Animations.Select(clip => clip.Name).Should().Contain("walk");
-        archer.Meshes.SelectMany(mesh => mesh.Primitives).Should().Contain(primitive => primitive.SkinBaseVertex >= 0);
-        archer.Warnings.Should().BeEmpty();
-        set.Textures.Single().Name.Should().Be("kenney-mini-forest/Textures/colormap.png");
+        json.RootElement.GetProperty("skins").GetArrayLength().Should().BeGreaterThan(0);
+        Names(json.RootElement, "animations").Should().Contain("walk");
+        Names(json.RootElement, "nodes").Should().Contain("arm-left");
+        json.RootElement.GetProperty("images").EnumerateArray().Select(image => image.GetProperty("uri").GetString()).Should().Equal("Textures/colormap.png");
     }
 }

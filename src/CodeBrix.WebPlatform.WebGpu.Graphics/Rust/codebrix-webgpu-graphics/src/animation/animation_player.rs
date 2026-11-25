@@ -43,6 +43,8 @@ pub(crate) struct PlayerData {
     states: Vec<AnimationState>,
     speed: f32,
     paused: bool,
+    /// The most states this player plays at once (Not in C#, where it is the constant).
+    max_states: usize,
     last_time: Option<f64>,
     finished: Vec<usize>,
     sample: Vec<f32>,
@@ -53,7 +55,7 @@ impl PlayerData {
     /// The playback state of a model with these clips.
     pub(crate) fn new(animations: &[ModelAnimation]) -> PlayerData {
         let components = animations.iter().flat_map(|a| a.channels.iter()).map(|c| c.component_count).max().unwrap_or(0);
-        PlayerData { states: Vec::with_capacity(AnimationPlayer::MAX_STATES), speed: 1.0, paused: false, last_time: None, finished: Vec::new(), sample: vec![0.0; components.max(4)], scratch: None }
+        PlayerData { states: Vec::with_capacity(AnimationPlayer::MAX_STATES), speed: 1.0, paused: false, max_states: AnimationPlayer::MAX_STATES, last_time: None, finished: Vec::new(), sample: vec![0.0; components.max(4)], scratch: None }
     }
 }
 
@@ -76,7 +78,8 @@ pub(crate) struct PoseTarget<'a> {
 /// Plays a model's animation clips on one [`ModelInstance`] (C#: `AnimationPlayer`, reached as
 /// `instance.Animation`): [`ModelInstance::animation`] hands it out. The clips are shared,
 /// immutable model data; the player holds only this instance's playback state - up to
-/// [`AnimationPlayer::MAX_STATES`] clips at once, each with its own playhead, speed, loop mode,
+/// [`AnimationPlayer::max_states`] clips at once ([`AnimationPlayer::MAX_STATES`], 8, unless
+/// [`AnimationPlayer::set_max_states`] changed it), each with its own playhead, speed, loop mode,
 /// weight and layer. Every update advances the playheads and writes the blended pose into the
 /// instance's local transforms and morph weights; node matrices, joint palettes (skinning) and the
 /// renderer's morph weights follow from there.
@@ -99,8 +102,11 @@ pub(crate) struct PoseTarget<'a> {
 /// ([`AnimationPlayer::update_to`]: the player advances by the difference to the time of its
 /// previous `update_to`, so a seek of the host's clock moves the clips to the matching place -
 /// looping and ping-pong clips land exactly where playing forwards would have put them; a fade or
-/// a once-clip that already ended stays ended). The player's own speed and pause scale or stop
-/// only this instance, on top of the clock's.
+/// a once-clip that already ended stays ended). The first `update_to` only records the time; for
+/// a page whose clock does not start at 0 (a seek before the first frame, a `?t=12` still), use
+/// [`AnimationPlayer::update_to_since_zero`] instead, which poses the clips as if they had been
+/// playing since clock time zero. The player's own speed and pause scale or stop only this
+/// instance, on top of the clock's.
 ///
 /// THE DIFFERENCE FROM C#: C#'s `ClipFinished` callback becomes a polled list,
 /// [`AnimationPlayer::finished_clips`], read after an update.
@@ -111,7 +117,8 @@ pub struct AnimationPlayer<'a> {
 }
 
 impl<'a> AnimationPlayer<'a> {
-    /// The most clips one player plays at once, cross-fades included (C#: `MaxStates`).
+    /// The most clips one player plays at once by default, cross-fades included (C#: `MaxStates`;
+    /// here the default of [`AnimationPlayer::max_states`]).
     pub const MAX_STATES: usize = 8;
 
     pub(crate) fn new(data: &'a mut PlayerData, source: PoseSource<'a>, target: PoseTarget<'a>) -> AnimationPlayer<'a> {
@@ -126,6 +133,20 @@ impl<'a> AnimationPlayer<'a> {
     /// Sets the speed (C#: the `Speed` setter).
     pub fn set_speed(&mut self, speed: f32) {
         self.data.speed = speed;
+    }
+
+    /// The most clips this player plays at once, cross-fades included; default
+    /// [`AnimationPlayer::MAX_STATES`] (8). Not in C#, where the limit is the constant.
+    pub fn max_states(&self) -> usize {
+        self.data.max_states
+    }
+
+    /// Sets the most clips this player plays at once (at least 1). Starting a clip beyond the
+    /// limit stops the faintest clip that is fading out, else fails (as with the default). A
+    /// lower limit stops nothing that already plays; it applies to the next start. Each playing
+    /// clip costs one sampling pass per update. Not in C#.
+    pub fn set_max_states(&mut self, limit: usize) {
+        self.data.max_states = limit.max(1);
     }
 
     /// True while every playhead and fade is frozen; an update still applies the current pose
@@ -195,8 +216,8 @@ impl<'a> AnimationPlayer<'a> {
     /// Fades clip `clip` in over `duration` seconds of player time while every other clip on its
     /// layer fades out (and stops at weight 0); a duration of 0 or less is
     /// [`AnimationPlayer::play`] (C#: `CrossFade(int, duration, ...)`). The new state starts at
-    /// weight 0. Err when the clip does not exist, or when MAX_STATES clips play and none of them
-    /// is fading out.
+    /// weight 0. Err when the clip does not exist, or when [`AnimationPlayer::max_states`] clips
+    /// play and none of them is fading out.
     pub fn cross_fade(&mut self, clip: usize, duration: f32, options: PlayOptions) -> Result<&mut AnimationState, GraphicsException> {
         self.sweep();
         self.check_clip(clip)?;
@@ -297,6 +318,19 @@ impl<'a> AnimationPlayer<'a> {
         self.update(delta);
     }
 
+    /// Advances to the frame's TIME as if the clips had been playing since clock time ZERO: the
+    /// first call advances by `time` itself (a page opened at `?t=12`, or a clock seeked before
+    /// its first frame, shows the pose of second 12 at once - loops wrapped, once-clips finished
+    /// and listed in [`AnimationPlayer::finished_clips`], fades completed), and every later call is
+    /// [`AnimationPlayer::update_to`] (the difference to the previous time). Start the clips
+    /// before the first call. [`AnimationPlayer::update_to`] is unchanged: its first call only
+    /// records the time. Pass `frame.info.time`. Not in C#.
+    pub fn update_to_since_zero(&mut self, time: f64) {
+        let last = self.data.last_time.unwrap_or(0.0);
+        self.data.last_time = Some(time);
+        self.update((time - last) as f32);
+    }
+
     /// Writes the pose at the current playheads into the instance without advancing time - after
     /// a seek, for example (C#: `Evaluate`).
     pub fn evaluate(&mut self) {
@@ -328,6 +362,15 @@ impl<'a> AnimationPlayer<'a> {
         }
     }
 
+    /// Updates the players of many instances to the frame's time as if their clips had been
+    /// playing since clock time zero ([`AnimationPlayer::update_to_since_zero`]); instances whose
+    /// player was never used are skipped. Not in C#.
+    pub fn update_all_to_since_zero(instances: &mut [ModelInstance], time: f64) {
+        for instance in instances.iter_mut().filter(|i| i.has_animation_player()) {
+            instance.animation().update_to_since_zero(time);
+        }
+    }
+
     fn check_clip(&self, clip: usize) -> Result<(), GraphicsException> {
         if clip >= self.source.animations.len() {
             return Err(GraphicsException::new(format!("The model has {} animation(s), so there is no clip {clip}. Use an index below that, or find one by name with Model::find_animation.", self.source.animations.len())));
@@ -342,10 +385,10 @@ impl<'a> AnimationPlayer<'a> {
         })
     }
 
-    /// Starts a state, making room by stopping the faintest state that is fading out when
-    /// MAX_STATES play.
+    /// Starts a state, making room by stopping the faintest state that is fading out when the
+    /// player's limit of states play.
     fn start(&mut self, clip: usize, options: PlayOptions, weight: f32) -> Result<usize, GraphicsException> {
-        if self.data.states.len() >= Self::MAX_STATES {
+        while self.data.states.len() >= self.data.max_states {
             let mut victim: Option<usize> = None;
             for (index, state) in self.data.states.iter().enumerate() {
                 if state.stops_when_faded() && victim.is_none_or(|v| state.weight() < self.data.states[v].weight()) {
@@ -353,7 +396,7 @@ impl<'a> AnimationPlayer<'a> {
                 }
             }
             let Some(victim) = victim else {
-                return Err(GraphicsException::new(format!("The player already plays {} clips; stop one first (stop_state, stop_layer or stop).", Self::MAX_STATES)));
+                return Err(GraphicsException::new(format!("The player already plays {} clip(s) and its limit is {}; stop one first (stop_state, stop_layer or stop), or raise the limit with set_max_states.", self.data.states.len(), self.data.max_states)));
             };
             self.remove(victim);
         }

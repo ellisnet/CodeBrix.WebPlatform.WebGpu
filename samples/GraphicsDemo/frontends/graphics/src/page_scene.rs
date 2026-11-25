@@ -12,14 +12,13 @@
 //! background" swaps the page's gradient (where the models are drawn nothing changes; around and
 //! between them the new page shows).
 
-use std::rc::Rc;
-
 use codebrix_webgpu::glam::{Mat4, Quat, Vec3};
 use codebrix_webgpu::{wgpu, CanvasClock, CanvasFrame, CanvasLayers, CanvasRenderer, CanvasTarget, GpuContext, RendererHandle, WebGpuCanvas};
-use codebrix_webgpu_graphics::{Camera, Color4, GraphicsContext, HeadlessRenderTarget, HeadlessTargetOptions, ModelInstance, ModelLoadOptions, ModelRenderer, SceneLighting, ToneMapOperator, ToneMapper};
+use codebrix_webgpu_graphics::{Camera, Color4, GltfLoadOptions, GltfModelSet, GraphicsContext, HeadlessRenderTarget, HeadlessTargetOptions, ModelInstance, ModelLoadOptions, ModelRenderer, SceneLighting, ToneMapOperator, ToneMapper};
 use dioxus::prelude::*;
 
 use crate::generated::api::models;
+use crate::model_files::{self, ModelFileRequest, ModelFiles};
 use crate::page_cache;
 
 /// How many of the viewer's models turn on the page.
@@ -38,7 +37,7 @@ struct Gpu {
 /// A few models turning in a row, HDR on, the scene's alpha kept for the page.
 struct PageModelsLayer {
     graphics: GraphicsContext,
-    blob: Rc<Vec<u8>>,
+    files: ModelFiles,
     gpu: Option<Gpu>,
     hdr: Option<HeadlessRenderTarget>,
     camera: Camera,
@@ -54,18 +53,30 @@ impl PageModelsLayer {
         }
     }
 
-    /// Loads the viewer's models and takes MODEL_COUNT of them that stand up (not flat ground
-    /// tiles), each scaled to the same size.
+    /// Takes the viewer's model files in the scene's order until MODEL_COUNT of them stand up (not
+    /// flat ground tiles: judged by each model's bounds, built without its textures first, so
+    /// nothing is decoded for a model that is left out), then builds those into ONE GltfModelSet
+    /// (their shared colour map once) and makes the GPU models, each scaled to the same size.
     fn create_gpu(&mut self) -> Result<Gpu, String> {
-        let models = self.graphics.load_models(&self.blob, &ModelLoadOptions::default()).map_err(|e| e.to_string())?;
-        let mut chosen = Vec::new();
-        for model in &models {
-            let size = model.bounds_max() - model.bounds_min();
+        let shape_only = GltfLoadOptions { load_textures: false, ..GltfLoadOptions::default() };
+        let mut standing = Vec::new();
+        for index in 0..self.files.models.len() {
+            if standing.len() >= MODEL_COUNT {
+                break;
+            }
+            let mut probe = GltfModelSet::new();
+            let added = model_files::add_models(&mut probe, &self.files, &[index], &shape_only)?;
+            let (min, max) = probe.data_set().models[added[0]].bounds();
+            let size = max - min;
             let wide = size.x.max(size.z);
-            if size.y > 0.4 * wide && wide > 0.0 && chosen.len() < MODEL_COUNT {
-                chosen.push(model);
+            if size.y > 0.4 * wide && wide > 0.0 {
+                standing.push(index);
             }
         }
+        let mut set = GltfModelSet::new();
+        model_files::add_models(&mut set, &self.files, &standing, &GltfLoadOptions::default())?;
+        let models = set.create_models(&self.graphics, &ModelLoadOptions::default()).map_err(|e| e.to_string())?;
+        let chosen: Vec<_> = models.iter().collect();
         let mut instances = Vec::new();
         for (i, model) in chosen.iter().enumerate() {
             let radius = ((model.bounds_max() - model.bounds_min()).length() * 0.5).max(0.001);
@@ -144,9 +155,12 @@ impl CanvasRenderer for PageModelsLayer {
     }
 }
 
-/// Fetches the viewer's model data, or takes it from what the page kept.
-async fn load() -> Result<Rc<Vec<u8>>, String> {
-    page_cache::bytes("models:scene", async { models::scene_data_bytes().await.map_err(|e| format!("The scene's model data could not be read from the backend: {}", e.message())) }).await
+/// Fetches the viewer's scene description and its model files (with what they name), or takes
+/// them from what the page kept.
+async fn load() -> Result<ModelFiles, String> {
+    let scene = page_cache::viewer_scene(async { models::scene().await.map_err(|e| format!("The scene's description could not be read from the backend: {}", e.message())) }).await?;
+    let requests: Vec<ModelFileRequest> = scene.models.iter().filter(|m| !m.file.is_empty()).map(|m| ModelFileRequest { name: m.name.clone(), file: m.file.clone(), pack: m.pack.clone() }).collect();
+    model_files::fetch(&requests).await
 }
 
 /// The loading line, the failure message, or the page with its canvas.
@@ -157,13 +171,13 @@ pub fn PageScene(context: GpuContext) -> Element {
     match &*state {
         None => rsx! { p { id: "page-loading", role: "status", class: "rounded-lg bg-slate-900 p-4 text-sm text-slate-300 ring-1 ring-white/10", "Loading the viewer's models from the backend..." } },
         Some(Err(message)) => rsx! { p { id: "page-failed", role: "alert", class: "rounded-lg border border-red-400/40 bg-red-400/10 p-5 text-red-100", "{message}" } },
-        Some(Ok(blob)) => rsx! { PageCanvas { context: context.clone(), blob: blob.clone() } },
+        Some(Ok(files)) => rsx! { PageCanvas { context: context.clone(), files: files.clone() } },
     }
 }
 
 /// The page's own background and text, with the frameless transparent canvas over them.
 #[component]
-fn PageCanvas(context: GpuContext, blob: Rc<Vec<u8>>) -> Element {
+fn PageCanvas(context: GpuContext, files: ModelFiles) -> Element {
     let graphics = use_hook(|| GraphicsContext::wrap_gpu_context(&context));
     let errors = use_signal(Vec::<String>::new);
     let frames = use_signal(|| 0u64);
@@ -178,7 +192,7 @@ fn PageCanvas(context: GpuContext, blob: Rc<Vec<u8>>) -> Element {
         camera.field_of_view = 40f32.to_radians();
         camera.near_plane = 0.1;
         camera.far_plane = 100.0;
-        CanvasLayers::single(RendererHandle::new(PageModelsLayer { graphics: graphics.clone(), blob, gpu: None, hdr: None, camera, errors, frames }))
+        CanvasLayers::single(RendererHandle::new(PageModelsLayer { graphics: graphics.clone(), files, gpu: None, hdr: None, camera, errors, frames }))
     });
     let toggle_clock = {
         let clock = clock.clone();

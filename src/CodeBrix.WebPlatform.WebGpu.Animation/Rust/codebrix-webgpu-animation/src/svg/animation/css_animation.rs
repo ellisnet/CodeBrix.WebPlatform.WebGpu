@@ -334,7 +334,8 @@ impl StyleSheet {
                 if !decls.iter().any(|(n, _)| n.starts_with("animation") || n == "transform-origin" || n == "transform-box") {
                     // A static rule that sets an inherited property the crate animates: kept to
                     // know which elements set it themselves (see specified_inherited).
-                    if decls.iter().any(|(n, _)| INHERITED_PROPERTIES.contains(&n.as_str())) {
+                    // (vector-effect too: the drawing half reads non-scaling strokes from it.)
+                    if decls.iter().any(|(n, _)| INHERITED_PROPERTIES.contains(&n.as_str()) || n == "vector-effect") {
                         for s in prelude.split(',') {
                             if let Some(sel) = parse_selector(s.trim()) {
                                 sheet.style_rules.push((sel, decls.clone(), order));
@@ -395,6 +396,30 @@ impl StyleSheet {
             }
         }
         out
+    }
+
+    /// True when the element's `vector-effect` is `non-scaling-stroke`: the cascade of its
+    /// presentation attribute (lowest), the style sheet's rules by specificity and order, and
+    /// its style attribute (highest). The property is not inherited.
+    pub(crate) fn non_scaling_stroke(&self, e: roxmltree::Node) -> bool {
+        let mut value: Option<String> = e.attributes().find(|a| a.namespace().is_none() && a.name() == "vector-effect").map(|a| a.value().trim().to_string());
+        let mut matched: Vec<&(Selector, Vec<(String, String)>, usize)> = self.rules.iter().chain(self.style_rules.iter()).filter(|(s, _, _)| selector_matches(s, e)).collect();
+        matched.sort_by_key(|(s, _, o)| (s.specificity, *o));
+        for (_, decls, _) in matched {
+            for (n, v) in decls {
+                if n == "vector-effect" {
+                    value = Some(v.clone());
+                }
+            }
+        }
+        if let Some(style) = e.attribute("style") {
+            for (n, v) in declarations(style) {
+                if n == "vector-effect" {
+                    value = Some(v);
+                }
+            }
+        }
+        value.map(|v| v.split_whitespace().any(|w| w == "non-scaling-stroke")).unwrap_or(false)
     }
 
     pub(crate) fn keyframes(&self, name: &str) -> Option<Arc<Vec<Keyframe>>> {

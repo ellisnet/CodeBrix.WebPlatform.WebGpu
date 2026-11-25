@@ -211,11 +211,37 @@ impl DrawingSvg {
                         }
                         counter += 1;
                         inserts.push((qualified_name_end(svg_markup, d.range().start), format!(" id=\"{id}\"")));
+                        ids.insert(d.id(), id.clone());
                         id
                     }
                 };
                 blockers.push((id, own));
             }
+        }
+        // Non-scaling strokes (vector-effect="non-scaling-stroke"): usvg drops the property, so
+        // each such shape is found by its id (one is given where there is none) and the scene
+        // marks its stroke fixed in the drawing's units.
+        let mut non_scaling: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for e in doc.descendants().filter(|n| n.is_element() && matches!(n.tag_name().name(), "rect" | "circle" | "ellipse" | "line" | "polyline" | "polygon" | "path")) {
+            if !sheet.non_scaling_stroke(e) {
+                continue;
+            }
+            let id = match (ids.get(&e.id()), e.attribute("id")) {
+                (Some(id), _) => id.clone(),
+                (None, Some(id)) => id.to_string(),
+                (None, None) => {
+                    let mut id = format!("{SYNTHETIC_ID_PREFIX}{counter}");
+                    while existing.contains(id.as_str()) {
+                        counter += 1;
+                        id = format!("{SYNTHETIC_ID_PREFIX}{counter}");
+                    }
+                    counter += 1;
+                    inserts.push((qualified_name_end(svg_markup, e.range().start), format!(" id=\"{id}\"")));
+                    ids.insert(e.id(), id.clone());
+                    id
+                }
+            };
+            non_scaling.insert(id);
         }
         // The ids usvg clears: every id inside content a <use> instances, the <use>d element's
         // own included. An animation that targets one cannot be played - say so by name.
@@ -280,7 +306,7 @@ impl DrawingSvg {
         });
         let tree = usvg::Tree::from_str(&prepared, &opt).map_err(|e| format!("The SVG could not be loaded as a drawing ({e}); check that it is a valid SVG document with a size."))?;
         let prepared_doc = parse_xml(&prepared)?;
-        let mut scene = SceneBuilder::new(&mut warnings).build(&tree, &prepared_doc, &forced);
+        let mut scene = SceneBuilder::new(&mut warnings).with_non_scaling_strokes(non_scaling).build(&tree, &prepared_doc, &forced);
         for (id, own) in blockers {
             if let Some(p) = scene.part_index.get(&id).copied() {
                 for o in scene.parts[p].owners.clone() {

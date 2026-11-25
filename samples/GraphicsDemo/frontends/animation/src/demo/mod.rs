@@ -5,8 +5,10 @@
 //! feature sheet) and "missing-characters" (the three missing-character modes) among them; then
 //! the SVG scenes ("svg-parts" is the C# scene SvgPartsScene; "svg-smil", "svg-css" and
 //! "svg-features" are the sample's own: documents that animate themselves, and what is drawn);
-//! last, the sample's own Lottie scenes (NoSkia has no Lottie). REGISTRATIONS below is the one
-//! list. Scenes draw everything - their text included - through codebrix-webgpu-animation, in the
+//! then the sample's own Lottie scenes (NoSkia has no Lottie); last, the feature scenes of the
+//! second GO (render-time looks, sketching, colours-only uploads, painterly stroke sets, planning
+//! and colour, live colour pickup, the surface finish, the checkpoint cache of a still painting,
+//! stroke-level transitions, and water: ripples, a reflection, the painted pond and a simulated pond). REGISTRATIONS below is the one list. Scenes draw everything - their text included - through codebrix-webgpu-animation, in the
 //! fonts of ONE FontRegistry that the page fills with the bytes the backend serves; their
 //! pictures, caption text, SVG documents and Lottie files are resources of the backend too
 //! (pictures.rs, captions.rs, svg_files.rs, lottie_files.rs, lottie_images.rs). (The page
@@ -18,13 +20,18 @@ pub mod brush_texture;
 pub mod brushwork;
 pub mod camera;
 pub mod captions;
+pub mod checkpoints;
 pub mod clip_mask;
 pub mod colour_pickup;
+pub mod colour_rules;
+pub mod controls;
+pub mod direction_fields;
 pub mod draw_on;
 pub mod easing;
 pub mod effects;
 pub mod effects_follow;
 pub mod fade;
+pub mod fixed_width;
 pub mod formation_heap;
 pub mod formation_spiral;
 pub mod gradients;
@@ -37,6 +44,7 @@ pub mod kit;
 pub mod layer_visibility;
 pub mod layout;
 pub mod light;
+pub mod live_pickup;
 pub mod lottie_features;
 pub mod lottie_files;
 pub mod lottie_images;
@@ -48,7 +56,12 @@ pub mod motion_path;
 pub mod on_page;
 pub mod outlined_text;
 pub mod ownership;
+pub mod ownership_colours;
 pub mod page;
+pub mod paint_override;
+pub mod painting_timeline;
+pub mod painted;
+pub mod painted_pond;
 pub mod paragraph;
 pub mod particles;
 pub mod path_combine;
@@ -59,8 +72,14 @@ pub mod procedural;
 pub mod ramps;
 pub mod rolling_text;
 pub mod safe_areas;
+pub mod session_blend;
 pub mod shapes;
+pub mod simulated_pond;
+pub mod sketch;
 pub mod sprites;
+pub mod surface_finish;
+pub mod stroke_sets;
+pub mod stroke_transition;
 pub mod svg_css;
 pub mod svg_features;
 pub mod svg_files;
@@ -71,14 +90,21 @@ pub mod time_keys;
 pub mod timeline;
 pub mod transforms;
 pub mod transitions;
+pub mod travelling_strokes;
 pub mod typewriter;
+pub mod water_reflection;
+pub mod water_ripples;
+pub mod wipe;
 
+use codebrix_webgpu::CanvasInput;
 use codebrix_webgpu_animation::animation::{AnimationTimeline, EasingKind};
 use codebrix_webgpu_animation::models::DrawingLayer;
-use codebrix_webgpu_animation::rendering::VectorScene;
+use codebrix_webgpu_animation::rendering::{RenderStats, VectorScene};
 use codebrix_webgpu_animation::shapes::{LineShape, LineShapeOptions, RectangleShape, RectangleShapeOptions, TextShape, TextShapeOptions};
 use codebrix_webgpu_animation::text::{FontRegistry, TextAlign};
 use codebrix_webgpu_animation::{Color, DrawingSession, DrawingSessionOptions};
+
+pub use controls::{Control, Readout, Settings};
 
 /// The frame the scenes are written for (AnimationDemoApp's DemoFrame), calibrated units.
 pub const FRAME_WIDTH: u32 = 1280;
@@ -146,6 +172,34 @@ pub trait DemoScene {
     fn time_points(&self) -> Vec<(String, f64)> {
         Vec::new()
     }
+    /// The controls the page shows under the canvas while this scene is shown (the feature
+    /// scenes of the second GO; most scenes have none).
+    fn controls(&self) -> &'static [Control] {
+        &[]
+    }
+    /// Takes the values of the scene's controls (called by the page after every change).
+    fn apply_settings(&mut self, _settings: &Settings) {}
+    /// The short legend the page shows beside the controls: what to look at.
+    fn legend(&self) -> &'static [&'static str] {
+        &[]
+    }
+    /// The scene's read-outs after the frame just recorded.
+    fn readouts(&self) -> Vec<Readout> {
+        Vec::new()
+    }
+    /// A primary-button press (a click, a finger, a pen's tip) on the canvas at a point of the
+    /// frame (calibrated units, the frame being 1280 x 720), handed to the scene shown; true when
+    /// the scene used it (the water scenes drop a stone there). Most scenes take no pointer input.
+    fn pointer_down(&mut self, _x: f32, _y: f32) -> bool {
+        false
+    }
+    /// Every pointer event on the canvas (down, move, up), with the map from the canvas's CSS
+    /// pixels to the frame's units, handed to the scene shown (the simulated pond stirs its wave
+    /// field with them). Most scenes take no pointer input.
+    fn pointer_input(&mut self, _input: &CanvasInput, _to_frame: &dyn Fn(f64, f64) -> (f32, f32)) {}
+    /// The renderer's statistics of the frame just drawn (the water scenes show the ripples it
+    /// evaluated and skipped among their read-outs).
+    fn see_stats(&mut self, _stats: &RenderStats) {}
 }
 
 /// A session for part of a frame (or a whole one), sharing the demo's fonts, with opaque layers
@@ -198,7 +252,7 @@ pub type SceneFactory = fn(&FontRegistry) -> Box<dyn DemoScene>;
 /// threads) - the sample's README says why), plus "shapes", the renderer's feature sheet, and
 /// "missing-characters", the three missing-character modes side by side; then the SVG scenes and
 /// the Lottie scenes.
-pub const REGISTRATIONS: [(&str, SceneFactory); 54] = [
+pub const REGISTRATIONS: [(&str, SceneFactory); 73] = [
     ("easing", |f| Box::new(easing::EasingScene::new(f))),
     ("ramps", |f| Box::new(ramps::ColorRampScene::new(f))),
     ("gradients", |f| Box::new(gradients::GradientScene::new(f))),
@@ -253,6 +307,34 @@ pub const REGISTRATIONS: [(&str, SceneFactory); 54] = [
     ("lottie-files", |f| Box::new(lottie_files::LottieFilesScene::new(f))),
     ("lottie-features", |f| Box::new(lottie_features::LottieFeaturesScene::new(f))),
     ("lottie-images", |f| Box::new(lottie_images::LottieImagesScene::new(f))),
+    // The feature scenes of the second GO (render-time looks, sketching, colours-only uploads, the
+    // painterly stroke sets, planning and colour), each with controls of its own on the page.
+    ("fixed-width", |f| Box::new(fixed_width::FixedWidthScene::new(f))),
+    ("session-blend", |f| Box::new(session_blend::SessionBlendScene::new(f))),
+    ("paint-override", |f| Box::new(paint_override::PaintOverrideScene::new(f))),
+    ("wipe", |f| Box::new(wipe::WipeScene::new(f))),
+    ("sketch", |f| Box::new(sketch::SketchScene::new(f))),
+    ("ownership-colours", |f| Box::new(ownership_colours::OwnershipColoursScene::new(f))),
+    ("stroke-sets", |f| Box::new(stroke_sets::StrokeSetsScene::new(f))),
+    ("travelling-strokes", |f| Box::new(travelling_strokes::TravellingStrokesScene::new(f))),
+    ("direction-fields", |f| Box::new(direction_fields::DirectionFieldsScene::new(f))),
+    ("painting-timeline", |f| Box::new(painting_timeline::PaintingTimelineScene::new(f))),
+    ("colour-rules", |f| Box::new(colour_rules::ColourRulesScene::new(f))),
+    // Painterly P3: strokes coloured every frame from a live source (a still picture, another
+    // session through a picture target, a 3D scene of the graphics crate), and the surface finish.
+    ("live-pickup", |f| Box::new(live_pickup::LivePickupScene::new(f))),
+    ("surface-finish", |f| Box::new(surface_finish::SurfaceFinishScene::new(f))),
+    // Painterly P4: a still painting drawn from its checkpoints (the cache on and off, its
+    // counters), and a stroke-level transition between two paintings.
+    ("checkpoints", |f| Box::new(checkpoints::CheckpointsScene::new(f))),
+    ("stroke-transition", |f| Box::new(stroke_transition::StrokeTransitionScene::new(f))),
+    // Water A1 + A2: a pool seen through a ripple field (clicks drop stones; exact under seeking),
+    // a bank mirrored below a waterline, and the painted pond that brings the round together.
+    ("water-ripples", |f| Box::new(water_ripples::WaterRipplesScene::new(f))),
+    ("water-reflection", |f| Box::new(water_reflection::WaterReflectionScene::new(f))),
+    ("painted-pond", |f| Box::new(painted_pond::PaintedPondScene::new(f))),
+    // The graphics crate's simulated wave field as the water of a refraction (cannot be rewound).
+    ("simulated-pond-2d", |f| Box::new(simulated_pond::SimulatedPondScene::new(f))),
 ];
 
 impl SceneCatalog {

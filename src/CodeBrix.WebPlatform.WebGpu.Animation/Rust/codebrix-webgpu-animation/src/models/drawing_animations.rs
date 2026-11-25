@@ -152,6 +152,9 @@ pub(crate) fn apply_to_element(element: &mut DrawingShape, property: AnimatedPro
         (P::MorphFraction, BoundValue::Float(v)) => {
             if let Some(p) = element.as_path_mut() {
                 let _ = p.set_morph_fraction(clamp_opacity(v));
+            } else if let ShapeKind::BrushStrokes(b) = element.kind_mut() {
+                // A stroke-level transition's fraction (Not in C#).
+                b.set_morph_fraction(clamp_opacity(v));
             }
         }
         (P::Color, BoundValue::Color(c)) => {
@@ -257,9 +260,10 @@ pub(crate) fn check_binding(target: &BindingTarget, property: AnimatedProperty, 
                     Some(_) => Ok(()),
                     None => Err(format!("{property:?} can only be bound on a path shape.")),
                 },
-                (P::MorphFraction, "float") => match path {
-                    Some(p) if p.morph().is_some() => Ok(()),
-                    _ => Err("MorphFraction can only be bound on a path shape made from a PathMorph (PathShape::from_morph or with_morph).".to_string()),
+                (P::MorphFraction, "float") => match (path, element.map(|e| e.kind())) {
+                    (Some(p), _) if p.morph().is_some() => Ok(()),
+                    (_, Some(ShapeKind::BrushStrokes(b))) if b.transition().is_some() => Ok(()),
+                    _ => Err("MorphFraction can only be bound on a path shape made from a PathMorph (PathShape::from_morph or with_morph) or on a stroke-level transition (BrushStrokesShape::morph).".to_string()),
                 },
                 (P::Color, "color") => match element.map(|e| e.kind()) {
                     Some(ShapeKind::Group(_)) => Ok(()),

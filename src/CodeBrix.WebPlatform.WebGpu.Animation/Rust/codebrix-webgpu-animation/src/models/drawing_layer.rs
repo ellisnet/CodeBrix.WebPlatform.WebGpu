@@ -1,5 +1,6 @@
 //! `DrawingLayer`: a named, coloured layer of a drawing session holding shapes, with its own
-//! transform, parallax, mask and effects (C# `DrawingLayer`).
+//! transform, parallax, mask and effects (C# `DrawingLayer`), and (Not in C#) a surface finish, a
+//! refraction and a reflection.
 
 use crate::color::Color;
 use crate::effects::{DrawingEffects, DrawingMask};
@@ -22,6 +23,9 @@ pub struct DrawingLayer {
     mask: Option<DrawingMask>,
     effects: Option<DrawingEffects>,
     frame_operations: Option<crate::effects::DrawingFrameOperations>,
+    surface_finish: Option<crate::effects::SurfaceFinish>,
+    refraction: Option<crate::water::WaterRefraction>,
+    reflection: Option<crate::water::WaterReflection>,
     is_safe_area_checked: bool,
     elements: Vec<DrawingShape>,
 }
@@ -29,7 +33,7 @@ pub struct DrawingLayer {
 impl DrawingLayer {
     /// An empty layer.
     pub fn new(name: &str, color: Color) -> DrawingLayer {
-        DrawingLayer { name: name.to_string(), color, opacity: 1.0, is_visible: true, transform: DrawingTransform::IDENTITY, parallax: 1.0, mask: None, effects: None, frame_operations: None, is_safe_area_checked: false, elements: Vec::new() }
+        DrawingLayer { name: name.to_string(), color, opacity: 1.0, is_visible: true, transform: DrawingTransform::IDENTITY, parallax: 1.0, mask: None, effects: None, frame_operations: None, surface_finish: None, refraction: None, reflection: None, is_safe_area_checked: false, elements: Vec::new() }
     }
 
     /// The name.
@@ -115,6 +119,59 @@ impl DrawingLayer {
     /// them to a plane image on the CPU).
     pub fn set_frame_operations(&mut self, operations: Option<crate::effects::DrawingFrameOperations>) {
         self.frame_operations = operations.filter(|o| !o.is_empty());
+    }
+
+    /// The layer's surface finish (None by default): the canvas weave and the paint's thickness,
+    /// lit (Not in C#; see [`SurfaceFinish`](crate::effects::SurfaceFinish)).
+    pub fn surface_finish(&self) -> Option<crate::effects::SurfaceFinish> {
+        self.surface_finish
+    }
+
+    /// Sets (or removes) the surface finish (Not in C#). A finished layer is drawn through its
+    /// effect group (one nesting level, shared with its effects and frame operations); its stroke
+    /// sets give the paint its thickness. The error says which value of the finish is unusable
+    /// (the layer keeps its finish then).
+    pub fn set_surface_finish(&mut self, finish: Option<crate::effects::SurfaceFinish>) -> Result<(), String> {
+        if let Some(f) = &finish {
+            f.validate()?;
+        }
+        self.surface_finish = finish;
+        Ok(())
+    }
+
+    /// The layer's refraction (None by default): its picture seen through water (Not in C#; see
+    /// [`WaterRefraction`](crate::water::WaterRefraction)).
+    pub fn refraction(&self) -> Option<&crate::water::WaterRefraction> {
+        self.refraction.as_ref()
+    }
+
+    /// Sets (or removes) the refraction (Not in C#). The layer is drawn through its effect group
+    /// (one nesting level, shared with its effects, frame operations, finish and reflection). The
+    /// error says which value is unusable (the layer keeps its refraction then). Replace it each
+    /// frame to animate its settings; a ripple field moves by itself with the session time.
+    pub fn set_refraction(&mut self, refraction: Option<crate::water::WaterRefraction>) -> Result<(), String> {
+        if let Some(r) = &refraction {
+            r.validate()?;
+        }
+        self.refraction = refraction;
+        Ok(())
+    }
+
+    /// The layer's reflection (None by default): the layer mirrored below a waterline (Not in C#;
+    /// see [`WaterReflection`](crate::water::WaterReflection)).
+    pub fn reflection(&self) -> Option<&crate::water::WaterReflection> {
+        self.reflection.as_ref()
+    }
+
+    /// Sets (or removes) the reflection (Not in C#): drawn from the layer's own picture in its
+    /// effect group (shared with its refraction - nothing is drawn twice). The error says which
+    /// value is unusable (the layer keeps its reflection then).
+    pub fn set_reflection(&mut self, reflection: Option<crate::water::WaterReflection>) -> Result<(), String> {
+        if let Some(r) = &reflection {
+            r.validate()?;
+        }
+        self.reflection = reflection;
+        Ok(())
     }
 
     /// True when the layer is drawn.

@@ -1,7 +1,9 @@
 //! The viewer layer: the desktop model viewer's COMPLETE scene - the ground, the static props and
 //! the animated actors (the chest opening and closing, the animals walking a ring or
-//! cross-fading through their routine, the Avian circling overhead; viewer_actors.rs), glTF models
-//! converted on the backend into ONE model-data blob, loaded with GraphicsContext::load_models,
+//! cross-fading through their routine, the Avian circling overhead; viewer_actors.rs), the kits'
+//! .glb files READ IN THE BROWSER by the graphics crate's glTF loader into ONE GltfModelSet (in two
+//! loads - the actors' models, then the props' - which share each kit's colour map: it is decoded
+//! and uploaded once), and the ground, built in code on the backend, from its model data blob;
 //! placed as ModelInstances, animated by each instance's AnimationPlayer on the host's clock and
 //! drawn by the ModelRenderer with physically based shading - lit the way the desktop viewer
 //! lights it:
@@ -11,8 +13,9 @@
 //!   "Small Cathedral" panorama, whose Radiance .hdr bytes the page fetched from the backend and
 //!   the graphics crate decoded and baked (the sun light is off then: the panorama carries its own
 //!   light);
-//! - the SKYBOX drawn after the opaque models (`?no-skybox` clears to the flat sky colour
-//!   instead);
+//! - the SKYBOX drawn between the opaque and the blended parts of the models (the renderer's
+//!   `end_opaque`, the sky, then `end_blended`: the sky fills only what nothing opaque covered, and
+//!   translucent parts blend over it); `?no-skybox` clears to the flat sky colour instead;
 //! - the HDR PATH: the scene into an RGBA16Float HeadlessRenderTarget with its own depth, then the
 //!   ToneMapper (Khronos PBR Neutral by default, as the desktop viewer) into the canvas frame, with
 //!   the operator and the exposure the page's controls choose (`?ldr` draws straight into the
@@ -20,7 +23,8 @@
 //!
 //! The camera is the viewer's orbit camera (target, distance, pitch, field of view) driven by the
 //! OrbitController: it orbits by itself as the desktop viewer does (0.7 + 0.18 t) until the first
-//! drag. It is a LAYER of the canvas host: it takes its time from the frame; in the LDR path it
+//! drag; a right-button, middle-button or Shift drag pans (the controller is told the canvas's size
+//! every frame, so the scene follows the pointer). It is a LAYER of the canvas host: it takes its time from the frame; in the LDR path it
 //! loads the colour and clears only its own depth; in the HDR path its tone-map pass covers the
 //! whole canvas (the scene is opaque), loading what is there first.
 
@@ -28,11 +32,30 @@ use std::rc::Rc;
 
 use codebrix_webgpu::glam::{Mat4, Quat, Vec3};
 use codebrix_webgpu::{wgpu, CanvasFrame, CanvasInput, CanvasRenderer, CanvasTarget, GpuContext};
-use codebrix_webgpu_graphics::{Camera, Color4, DepthTextureOptions, EnvironmentMap, EnvironmentOptions, GpuTexture, GraphicsContext, HeadlessRenderTarget, HeadlessTargetOptions, ModelInstance, ModelLoadOptions, ModelRenderer, OrbitCamera, OrbitController, ProceduralSkyOptions, SceneLighting, SkyboxRenderer, ToneMapOperator, ToneMapper};
+use codebrix_webgpu_graphics::{Camera, Color4, DepthTextureOptions, EnvironmentMap, EnvironmentOptions, GltfLoadOptions, GltfModelSet, GpuTexture, GraphicsContext, HeadlessRenderTarget, HeadlessTargetOptions, Model, ModelInstance, ModelLoadOptions, ModelRenderer, OrbitCamera, OrbitController, ProceduralSkyOptions, SceneLighting, SkyboxRenderer, ToneMapOperator, ToneMapper};
 use dioxus::prelude::*;
 
 use crate::generated::models::{SceneVector, ViewerScene as ViewerSceneData};
+use crate::model_files::{self, ModelFiles};
 use crate::viewer_actors::ViewerActors;
+
+/// The bytes of the scene's models as the page fetched them: the model files (parsed, with the
+/// files they name) and the blobs of the models built in code, by their index in the scene.
+#[derive(Clone, PartialEq)]
+pub struct ViewerModels {
+    /// The model files, in the order of the scene's models that have a file.
+    pub files: ModelFiles,
+    /// The models built in code: (index in the scene's models, the blob's bytes).
+    pub blobs: Rc<Vec<(usize, Rc<Vec<u8>>)>>,
+}
+
+impl ViewerModels {
+    /// The bytes fetched from the backend for the models: every model file, every file they name
+    /// and every blob.
+    pub fn download_bytes(&self) -> usize {
+        self.files.bytes + self.blobs.iter().map(|(_, bytes)| bytes.len()).sum::<usize>()
+    }
+}
 
 /// How the viewer renders: the desktop viewer's `--ldr` and `--no-skybox` switches, read from
 /// the page's query string (`?ldr`, `?no-skybox`).
@@ -102,8 +125,14 @@ pub struct ViewerView {
     pub distance: f32,
     /// True while the camera orbits by itself.
     pub auto_orbit: bool,
-    /// The models loaded from the blob.
+    /// The models loaded (from the model files and the blobs).
     pub models: usize,
+    /// The GPU textures of the model files (each kit's colour map once).
+    pub textures: usize,
+    /// Whether the two loads of the scene's model files share their textures ("ok: ..."), or why not.
+    pub texture_sharing: String,
+    /// How long building and uploading the models took (milliseconds of the page's clock).
+    pub build_ms: f64,
     /// The instances placed.
     pub instances: usize,
     /// The triangles of one frame.
@@ -159,7 +188,7 @@ struct Gpu {
 /// Draws the viewer's scene.
 pub struct ViewerRenderer {
     graphics: GraphicsContext,
-    blob: Rc<Vec<u8>>,
+    loaded: ViewerModels,
     scene: ViewerSceneData,
     options: ViewerOptions,
     controls: ViewerControls,
@@ -173,6 +202,9 @@ pub struct ViewerRenderer {
     resumes_seen: u64,
     triangles: u64,
     models: usize,
+    textures: usize,
+    texture_sharing: String,
+    build_ms: f64,
     environment_build_ms: f64,
     cathedral_failed: bool,
 }
@@ -181,10 +213,10 @@ pub struct ViewerRenderer {
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 
 impl ViewerRenderer {
-    /// A renderer for the scene `scene` describes, whose models are in `blob`, rendering as
-    /// `options` say and reading `controls` every frame; it publishes its view into `view` and
+    /// A renderer for the scene `scene` describes, whose models' bytes are in `loaded`, rendering
+    /// as `options` say and reading `controls` every frame; it publishes its view into `view` and
     /// every error into `errors`.
-    pub fn new(graphics: GraphicsContext, blob: Rc<Vec<u8>>, scene: ViewerSceneData, options: ViewerOptions, controls: ViewerControls, view: Signal<ViewerView>, errors: Signal<Vec<String>>) -> ViewerRenderer {
+    pub fn new(graphics: GraphicsContext, loaded: ViewerModels, scene: ViewerSceneData, options: ViewerOptions, controls: ViewerControls, view: Signal<ViewerView>, errors: Signal<Vec<String>>) -> ViewerRenderer {
         let mut orbit = OrbitCamera::new();
         orbit.target = vec3(&scene.camera.target);
         orbit.set_distance(scene.camera.distance);
@@ -196,7 +228,7 @@ impl ViewerRenderer {
         camera.field_of_view = scene.camera.field_of_view_degrees.to_radians();
         camera.near_plane = scene.camera.near_plane;
         camera.far_plane = scene.camera.far_plane;
-        ViewerRenderer { graphics, blob, scene, options, controls, gpu: None, depth: None, hdr: None, controller, camera, view, errors, resumes_seen: 0, triangles: 0, models: 0, environment_build_ms: 0.0, cathedral_failed: false }
+        ViewerRenderer { graphics, loaded, scene, options, controls, gpu: None, depth: None, hdr: None, controller, camera, view, errors, resumes_seen: 0, triangles: 0, models: 0, textures: 0, texture_sharing: String::new(), build_ms: 0.0, environment_build_ms: 0.0, cathedral_failed: false }
     }
 
     fn report(&mut self, error: String) {
@@ -206,15 +238,65 @@ impl ViewerRenderer {
         }
     }
 
+    /// Makes the GPU models of the scene, in the scene's model order: the models built in code
+    /// from their blobs, the model files through ONE GltfModelSet in TWO calls - the actors' models
+    /// first, then the props' - so the second call reuses the textures the first uploaded (each
+    /// kit's colour map is decoded and uploaded once for the whole scene).
+    fn create_models(&mut self) -> Result<Vec<Model>, String> {
+        let started = model_files::now_ms();
+        let count = self.scene.models.len();
+        let mut models: Vec<Option<Model>> = (0..count).map(|_| None).collect();
+        for (index, bytes) in self.loaded.blobs.iter() {
+            let model = self.graphics.load_model(bytes, &ModelLoadOptions::default()).map_err(|e| e.to_string())?;
+            if let Some(slot) = models.get_mut(*index) {
+                *slot = Some(model);
+            }
+        }
+        // The scene's models with a file, in the order the files were fetched (scene order).
+        let with_file: Vec<usize> = self.scene.models.iter().filter(|m| !m.file.is_empty()).map(|m| m.index as usize).collect();
+        let actor_models: Vec<usize> = self.scene.actors.iter().map(|a| a.model_index as usize).collect();
+        let (first, second): (Vec<usize>, Vec<usize>) = (0..with_file.len()).partition(|&k| actor_models.contains(&with_file[k]));
+        let mut set = GltfModelSet::new();
+        let mut made: Vec<(usize, Model)> = Vec::new();
+        for batch in [&first, &second] {
+            model_files::add_models(&mut set, &self.loaded.files, batch, &GltfLoadOptions::default())?;
+            let gpu = set.create_models(&self.graphics, &ModelLoadOptions::default()).map_err(|e| e.to_string())?;
+            for (k, model) in batch.iter().zip(gpu) {
+                made.push((with_file[*k], model));
+            }
+        }
+        // THE PROOF of texture sharing across the two calls: a model of the first load and one of
+        // the second from the same kit hold the SAME GPU texture.
+        let pack_of = |index: usize| self.scene.models.get(index).map(|m| m.pack.clone()).unwrap_or_default();
+        let first_load: Vec<&(usize, Model)> = made.iter().filter(|(index, _)| actor_models.contains(index)).collect();
+        let second_load: Vec<&(usize, Model)> = made.iter().filter(|(index, _)| !actor_models.contains(index)).collect();
+        self.texture_sharing = match second_load.iter().find_map(|(b, mb)| first_load.iter().find(|(a, _)| pack_of(*a) == pack_of(*b)).map(|(a, ma)| (*a, ma, *b, mb))) {
+            Some((a, ma, b, mb)) => match (ma.textures().first(), mb.textures().first()) {
+                (Some(ta), Some(tb)) if Rc::ptr_eq(ta, tb) => format!("ok: '{}' (first load) and '{}' (second load) hold the same texture of {}", self.scene.models[a].name, self.scene.models[b].name, pack_of(a)),
+                (Some(_), Some(_)) => format!("NOT SHARED: '{}' and '{}' hold different textures", self.scene.models[a].name, self.scene.models[b].name),
+                _ => "a model of the pair has no texture".to_string(),
+            },
+            None => "no kit has a model in both loads".to_string(),
+        };
+        self.textures = set.texture_count();
+        for (index, model) in made {
+            if let Some(slot) = models.get_mut(index) {
+                *slot = Some(model);
+            }
+        }
+        self.build_ms = ((model_files::now_ms() - started) * 10.0).round() / 10.0;
+        models.into_iter().enumerate().map(|(index, model)| model.ok_or_else(|| format!("The scene's model {index} was neither a model file nor a blob."))).collect()
+    }
+
     /// Loads the models, places the instances, bakes the procedural sky and makes the skybox and
     /// tone-map renderers.
     fn create_gpu(&mut self) -> Result<Gpu, String> {
-        let models = self.graphics.load_models(&self.blob, &ModelLoadOptions::default()).map_err(|e| e.to_string())?;
+        let models = self.create_models()?;
         let mut instances = Vec::with_capacity(self.scene.placements.len());
         let mut triangles = 0u64;
         for placement in &self.scene.placements {
             let Some(model) = models.get(placement.model_index as usize) else {
-                return Err(format!("The placement of '{}' names model {} of the blob, which holds {}.", placement.model, placement.model_index, models.len()));
+                return Err(format!("The placement of '{}' names model {} of the scene, which has {}.", placement.model, placement.model_index, models.len()));
             };
             // The desktop viewer's order: scale, then the turn about Y, then the translation.
             let world = Mat4::from_scale_rotation_translation(Vec3::splat(placement.scale), Quat::from_rotation_y(placement.rotation_y), vec3(&placement.translation));
@@ -225,7 +307,7 @@ impl ViewerRenderer {
         let first_actor = instances.len();
         for actor in &self.scene.actors {
             let Some(model) = models.get(actor.model_index as usize) else {
-                return Err(format!("The actor '{}' names model {} of the blob, which holds {}.", actor.model, actor.model_index, models.len()));
+                return Err(format!("The actor '{}' names model {} of the scene, which has {}.", actor.model, actor.model_index, models.len()));
             };
             triangles += model.triangle_count() as u64;
             instances.push(model.create_instance_at(ViewerActors::world_at(actor, 0.0)));
@@ -379,6 +461,8 @@ impl CanvasRenderer for ViewerRenderer {
             self.controller.set_auto_orbit(true);
         }
         self.controller.update(time);
+        // The canvas's CSS height: a pan moves the scene exactly with the pointer.
+        self.controller.set_viewport(&self.camera, frame.info.height as f32 / frame.info.pixel_ratio as f32);
         self.controller.apply(&mut self.camera);
         let lighting = self.lighting();
         let graphics = self.graphics.clone();
@@ -407,11 +491,13 @@ impl CanvasRenderer for ViewerRenderer {
                             for instance in &gpu.instances {
                                 gpu.renderer.draw(instance)?;
                             }
-                            gpu.renderer.end(&mut pass)?;
-                            // After the opaque models: the sky only fills the pixels nothing covered.
+                            // Opaque parts, then the sky (it fills only the pixels nothing opaque
+                            // covered), then the blended parts over both.
+                            gpu.renderer.end_opaque(&mut pass)?;
                             if options.skybox {
                                 gpu.skybox.draw(&mut pass, &self.camera, Some(lighting))?;
                             }
+                            gpu.renderer.end_blended(&mut pass)?;
                         }
                         // Then the tone map into the canvas frame (LOAD: a layer never clears).
                         let mut pass = graphics_frame.begin_render_pass(None, None)?;
@@ -428,10 +514,11 @@ impl CanvasRenderer for ViewerRenderer {
                         for instance in &gpu.instances {
                             gpu.renderer.draw(instance)?;
                         }
-                        gpu.renderer.end(&mut pass)?;
+                        gpu.renderer.end_opaque(&mut pass)?;
                         if options.skybox {
                             gpu.skybox.draw(&mut pass, &self.camera, Some(lighting))?;
                         }
+                        gpu.renderer.end_blended(&mut pass)?;
                         Ok(())
                     }
                     _ => Ok(()),
@@ -463,6 +550,9 @@ impl CanvasRenderer for ViewerRenderer {
             distance: orbit.distance(),
             auto_orbit: self.controller.is_auto_orbiting(),
             models: self.models,
+            textures: self.textures,
+            texture_sharing: self.texture_sharing.clone(),
+            build_ms: self.build_ms,
             instances: self.gpu.as_ref().map_or(0, |g| g.instances.len()),
             triangles: self.triangles,
             draw_calls: counts.0,
@@ -488,8 +578,8 @@ impl CanvasRenderer for ViewerRenderer {
         }
     }
 
-    /// Drag (or one finger): orbit, the scene following the pointer. Wheel: zoom. Two fingers:
-    /// pinch-zoom.
+    /// Drag (or one finger): orbit, the scene following the pointer. Right-button, middle-button or
+    /// Shift drag: pan. Wheel: zoom. Two fingers: pan and pinch-zoom.
     fn input(&mut self, input: &CanvasInput) {
         self.controller.input(input);
     }

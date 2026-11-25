@@ -12,6 +12,7 @@
 //! versions of the named whole-frame operations, and keeps planes for masks, data and small
 //! images. Raw pixel access (`data`, `to_rgba`) is in memory only: there are no file encoders.
 
+mod drawing_caustics;
 mod drawing_frame_accumulator;
 mod drawing_motion_blur;
 mod drawing_noise;

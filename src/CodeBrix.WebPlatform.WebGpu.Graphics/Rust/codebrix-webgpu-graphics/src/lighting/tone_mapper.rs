@@ -11,7 +11,7 @@ use crate::context::{GraphicsContext, GraphicsException};
 use crate::frames::{DrawOptions, GraphicsFrame, RenderPass};
 use crate::models::pbr_data::needs_shader_encoding;
 use crate::pipelines::{BlendPreset, ColorTargetOptions, DepthOptions, DepthPreset, GpuRenderPipeline};
-use crate::presentation::RenderTargetView;
+use crate::presentation::{RenderTargetView, TargetFormats};
 use crate::resources::{BindingEntry, BindingLayoutEntry, GpuBindGroup, GpuBindGroupLayout, GpuBuffer, GpuSampler, GpuShader, GpuTexture, SamplerDescription};
 use crate::shaders::EnvironmentShaders;
 
@@ -84,12 +84,17 @@ unsafe impl bytemuck::Pod for ToneMapUniforms {}
 /// emissive surfaces) or for filmic highlight roll-off. Draw 2D overlays AFTER tone mapping, into
 /// the final target. It keeps the bind groups of the last few source textures it read (and so
 /// holds those textures).
+///
+/// MULTISAMPLING (Not in C#): it READS a resolved, single-sampled texture (a 4-sample
+/// [`crate::HeadlessRenderTarget`]'s [`crate::HeadlessRenderTarget::color`]; a multisampled
+/// texture is refused) and draws INTO any target: on a multisampled destination (a 4-sample
+/// canvas frame) it uses the 4-sample pipeline and the pass resolves as usual.
 pub struct ToneMapper {
     context: GraphicsContext,
     shader: GpuShader,
     layout: GpuBindGroupLayout,
     sampler: GpuSampler,
-    pipelines: std::collections::HashMap<(wgpu::TextureFormat, Option<wgpu::TextureFormat>, bool), GpuRenderPipeline>,
+    pipelines: std::collections::HashMap<(TargetFormats, bool), GpuRenderPipeline>,
     groups: Vec<(wgpu::Texture, GpuBindGroup)>,
     uniforms: GpuBuffer,
     capacity: u64,
@@ -129,7 +134,7 @@ impl ToneMapper {
     /// (C#: `Apply(frame, source, destination)`). On a canvas layer that must keep what lies
     /// below, use [`ToneMapper::apply_in_pass`] on a pass that loads.
     pub fn apply(&mut self, frame: &mut GraphicsFrame<'_>, source: &GpuTexture, destination: &RenderTargetView) -> Result<(), GraphicsException> {
-        let color_only = RenderTargetView::new(destination.color_view().clone(), destination.color_format(), destination.width(), destination.height(), None);
+        let color_only = destination.without_depth();
         let clear = if self.preserve_alpha { Color4::TRANSPARENT } else { Color4::BLACK };
         let mut pass = frame.begin_render_pass_to(&color_only, Some(clear), None)?;
         self.apply_in_pass(&mut pass, source)
@@ -140,6 +145,9 @@ impl ToneMapper {
     /// neither tested nor written; `source` must not be the pass's own target. A source of another
     /// size is scaled with linear filtering.
     pub fn apply_in_pass(&mut self, pass: &mut RenderPass<'_>, source: &GpuTexture) -> Result<(), GraphicsException> {
+        if source.sample_count() > 1 {
+            return Err(GraphicsException::new("The tone mapper reads a resolved texture, and this source is multisampled; give it the HeadlessRenderTarget's color() (what its passes resolve into), not multisampled_color()."));
+        }
         if self.frame_id != Some(pass.frame_id()) {
             self.frame_id = Some(pass.frame_id());
             self.slot = 0;
@@ -158,7 +166,7 @@ impl ToneMapper {
         let offset = self.slot * SLOT_SIZE;
         self.uniforms.write_value(&data, offset)?;
         self.slot += 1;
-        let pipeline = self.pipeline(target.color_format(), target.depth_format(), self.preserve_alpha)?;
+        let pipeline = self.pipeline(target.formats(), self.preserve_alpha)?;
         let group = self.group(source);
         pass.set_pipeline(&pipeline);
         pass.set_bind_group_with_offsets(0, &group, &[offset as u32]);
@@ -228,17 +236,18 @@ impl ToneMapper {
         group
     }
 
-    fn pipeline(&mut self, color: wgpu::TextureFormat, depth: Option<wgpu::TextureFormat>, preserve_alpha: bool) -> Result<GpuRenderPipeline, GraphicsException> {
-        if let Some(pipeline) = self.pipelines.get(&(color, depth, preserve_alpha)) {
+    fn pipeline(&mut self, formats: TargetFormats, preserve_alpha: bool) -> Result<GpuRenderPipeline, GraphicsException> {
+        if let Some(pipeline) = self.pipelines.get(&(formats, preserve_alpha)) {
             return Ok(pipeline.clone());
         }
+        let (color, depth) = (formats.color, formats.depth);
         let target = if preserve_alpha { ColorTargetOptions { blend: BlendPreset::PremultipliedAlpha, ..ColorTargetOptions::default() } } else { ColorTargetOptions::default() };
-        let mut builder = self.context.create_render_pipeline(&self.shader).with_label(&format!("tone map {color:?}")).with_color_target(color, target).with_bind_group_layouts(&[&self.layout]);
+        let mut builder = self.context.create_render_pipeline(&self.shader).with_label(&format!("tone map {color:?}")).with_color_target(color, target).with_bind_group_layouts(&[&self.layout]).with_sample_count(formats.sample_count);
         if let Some(depth) = depth {
             builder = builder.with_depth(depth, DepthOptions { preset: DepthPreset::None, ..DepthOptions::default() });
         }
         let pipeline = builder.build()?;
-        self.pipelines.insert((color, depth, preserve_alpha), pipeline.clone());
+        self.pipelines.insert((formats, preserve_alpha), pipeline.clone());
         Ok(pipeline)
     }
 }
@@ -317,5 +326,16 @@ mod tests {
         let numbers: Vec<u32> = ToneMapOperator::ALL.iter().map(|o| *o as u32).collect();
         assert_eq!(numbers, vec![0, 1, 2, 3, 4]);
         assert_eq!(ToneMapOperator::KhronosPbrNeutral.name(), "KhronosPbrNeutral");
+    }
+
+    #[test]
+    fn the_tone_mappers_pipelines_are_kept_per_sample_count() {
+        let formats = |count| crate::presentation::TargetFormats::new(wgpu::TextureFormat::Bgra8UnormSrgb, None, count);
+        let mut keys: std::collections::HashSet<(crate::presentation::TargetFormats, bool)> = std::collections::HashSet::new();
+        for count in crate::presentation::SAMPLE_COUNTS {
+            keys.insert((formats(count), false));
+            keys.insert((formats(count), true));
+        }
+        assert_eq!(keys.len(), 4, "1 and 4 samples, each with and without preserve_alpha");
     }
 }

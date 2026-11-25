@@ -518,7 +518,7 @@ impl TextBlockShape {
                     let local = block * cluster.glyph_transform(g);
                     // A gradient is in calibrated units: placed back from the glyph's own space.
                     let brush_transform = if is_gradient { Some(local.inverse()) } else { None };
-                    scene.fill_cached(Fill::NonZero, transform * local, &brush, brush_transform, &outline.elements, glyph_key(cluster.face.id, g.key));
+                    scene.fill_cached(Fill::NonZero, transform, local, &brush, brush_transform, &outline.elements, glyph_key(cluster.face.id, g.key));
                 }
             }
             return;
@@ -566,7 +566,7 @@ impl TextBlockShape {
         let outside = self.stroke_style.is_some() && self.stroke_placement == TextStrokePlacement::Outside;
         if let (true, Some(style)) = (outside, &self.stroke_style) {
             scene.push_layer(BlendMode::default(), 1.0, Affine::IDENTITY, &ctx.area);
-            scene.stroke(&style.to_kurbo(), transform, &Brush::Solid(stroke_color.to_peniko(alpha)), None, path);
+            scene.stroke_with_style(style, transform, ctx.drawing, &Brush::Solid(stroke_color.to_peniko(alpha)), None, path);
             scene.push_layer(Compose::DestOut, 1.0, Affine::IDENTITY, &ctx.area);
             scene.fill(Fill::NonZero, transform, &Brush::Solid(Color::WHITE.to_peniko(1.0)), None, path);
             scene.pop_layer();
@@ -577,7 +577,7 @@ impl TextBlockShape {
             scene.fill(Fill::NonZero, transform, &brush, None, path);
         }
         if let (false, Some(style)) = (outside, &self.stroke_style) {
-            scene.stroke(&style.to_kurbo(), transform, &Brush::Solid(stroke_color.to_peniko(alpha)), None, path);
+            scene.stroke_with_style(style, transform, ctx.drawing, &Brush::Solid(stroke_color.to_peniko(alpha)), None, path);
         }
     }
 }

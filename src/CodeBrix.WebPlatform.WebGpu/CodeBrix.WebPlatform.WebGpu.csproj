@@ -53,7 +53,7 @@
     <Product>CodeBrix.WebPlatform.WebGpu</Product>
     <Title>CodeBrix.WebPlatform.WebGpu</Title>
     <Authors>Jeremy Ellis</Authors>
-    <Description>Brings the Rust wgpu and glam crates, and the crate codebrix-webgpu (the WebGPU context, a canvas host with layers and one clock, the maths), to the browser frontend of a CodeBrix.WebPlatform application, for showing 3D graphics, scenes and animations through WebGPU: the third-party crates exactly as crates.io published them, carried with codebrix-webgpu as one archive with their third-party notices, and the one call the build program makes to register them as a crate bundle, so that the frontend builds offline.</Description>
+    <Description>Brings the Rust wgpu and glam crates, the png and zune-jpeg image decoders, and the crate codebrix-webgpu (the WebGPU context, a canvas host with layers and one clock, the maths, PNG and JPEG decoding), to the browser frontend of a CodeBrix.WebPlatform application, for showing 3D graphics, scenes and animations through WebGPU: the third-party crates exactly as crates.io published them, carried with codebrix-webgpu as one archive with their third-party notices, and the one call the build program makes to register them as a crate bundle, so that the frontend builds offline.</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/ellisnet/CodeBrix.WebPlatform.WebGpu</PackageProjectUrl>
     <RepositoryUrl>https://github.com/ellisnet/CodeBrix.WebPlatform.WebGpu</RepositoryUrl>
@@ -80,7 +80,7 @@
     Every republish of Core means a rebuild and republish of this package against that Core.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.WebPlatform.Core.ApacheLicenseForever" Version="[1.0.327.240]" />
+    <PackageReference Include="CodeBrix.WebPlatform.Core.ApacheLicenseForever" Version="[1.0.329.452]" />
   </ItemGroup>
 
   <!--

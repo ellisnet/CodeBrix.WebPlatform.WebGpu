@@ -10,7 +10,7 @@
 //! ANIMATION MODEL - [keyframe tracks](animation::KeyframeTrack) bound to element, layer and
 //! [camera](models::DrawingCamera) properties, [transforms](models::DrawingTransform), time
 //! windows, [`layout`] - and PATHS (measuring, trims for draw-on, motion along a path,
-//! [morphs](paths::PathMorph)); PICTURES and SPRITES from decoded pixels or PNG files
+//! [morphs](paths::PathMorph)); PICTURES and SPRITES from decoded pixels or PNG and JPEG files
 //! ([`ImageSource`](images::ImageSource), [`ImageShape`](shapes::ImageShape),
 //! [`SpriteSheet`](images::SpriteSheet), [`SpriteShape`](shapes::SpriteShape) - the frame a
 //! function of the session time); MASKS ([`DrawingMask`](effects::DrawingMask): inside or outside
@@ -38,6 +38,15 @@
 //! ([`DrawingSession::draw_lottie`]), with its markers as the clock's named points and a report of
 //! what is not drawn.
 //!
+//! RENDER-TIME LOOKS (Not in C#), set on [`SessionRenderOptions`] and never changing the scene:
+//! a whole session's [blend mode](SessionBlendMode) and opacity, its [paint](SessionPaint) - as
+//! authored, a [line drawing](LinePaint) or flat colours - with effects on or off and layers kept
+//! as authored; a [`SessionWipe`] with a soft edge (a straight line at any angle, or an iris)
+//! between any two renders. Strokes whose width is
+//! [fixed in the drawing's units](paths::StrokeWidthMode) (SVG's
+//! `vector-effect="non-scaling-stroke"` too), and [sketched paths](paths::SketchOptions) that
+//! can "boil" with the clock time.
+//!
 //! A frame is a FUNCTION OF THE TIME: set the session's time from the frame
 //! ([`DrawingSession::set_time`]) and its bindings, animated shapes and time windows follow.
 //!
@@ -58,15 +67,41 @@
 //! the CPU - one thread - with NoSkia's values, ownership maps coloured on the GPU
 //! ([`OwnershipShape`](shapes::OwnershipShape)).
 //!
+//! STROKE SETS (Not in C#, [`strokes`]): tens of thousands of brushstrokes as records drawn by ONE
+//! instanced GPU draw ([`BrushStrokesShape`](shapes::BrushStrokesShape)), painted on, anchored to
+//! moving elements, boiling and flowing with the time, with brush tips; planned from pictures by
+//! direction fields, stroke layouts and painting timelines with colour rules and perceptual
+//! mixing ([`painting`]); a still painting drawn from its checkpoints (pixel for pixel the same
+//! frame), and stroke-level transitions between two sets. LIVE COLOUR SOURCES AND THE SURFACE
+//! FINISH: stroke sets coloured every frame on the GPU from a picture, another session drawn into
+//! a [`PictureTarget`](rendering::PictureTarget), or an application's texture (a 3D render); a
+//! layer's canvas weave and paint thickness, lit
+//! ([`SurfaceFinish`](effects::SurfaceFinish)).
+//!
+//! WATER (Not in C#, [`water`]): a [`RippleField`](water::RippleField) - rings from drops and
+//! seeded rain spreading and fading over a swell, inside a rectangle whose edges can reflect
+//! them - as a FUNCTION OF THE TIME (seeking shows exactly the water playing shows), with its
+//! height, slope and focus readable on the CPU; a layer's or a whole session's picture seen
+//! THROUGH water ([`WaterRefraction`](water::WaterRefraction): bent by the slope, shaded, with
+//! glints and a caustic light; the ripples evaluated per pixel on the GPU) and a layer MIRRORED
+//! below a waterline, broken up by the water and fading
+//! ([`WaterReflection`](water::WaterReflection)) - both drawn from the layer's own picture, the
+//! water a ripple field or any height picture (decoded pixels, a picture target, an application's
+//! texture such as the Graphics package's simulated wave field); and the
+//! [caustics](planes::DrawingNoiseKind::Caustics) noise kind, the light net of a pool floor, the
+//! same pattern on the CPU and drawn on the GPU.
+//!
 //! Nothing in it talks to a backend or reads a file: fonts are bytes, and pictures are DECODED
 //! pixels the application hands over (from its backend in the picture-pixels form, or made in the
-//! frontend) or the bytes of a PNG FILE, which the crate decodes itself (PNG is the only file
-//! format it reads); caption text, SVG documents and Lottie JSON are text or bytes the application
-//! hands over too.
+//! frontend) or the bytes of a PNG or JPEG FILE, which the crate decodes through codebrix-webgpu
+//! (PNG and JPEG are the only file formats it reads; a JPEG's EXIF orientation is not applied);
+//! caption text, SVG documents and Lottie JSON are text or bytes the application hands over too.
 //!
-//! THE RULE OF THIS CRATE: nothing in it reads a clock. Time comes from the frame
+//! THE RULE OF THIS CRATE: nothing it DRAWS depends on a clock. Time comes from the frame
 //! (`frame.info.time`, `frame.info.delta`) - the host's ONE clock, which every layer shares, can
-//! be paused, and carries named points in time.
+//! be paused, and carries named points in time. The one clock reading in the crate is a
+//! MEASUREMENT: the CPU milliseconds of a frame in [`RenderStats`](rendering::RenderStats), which
+//! nothing drawn ever reads.
 //!
 //! C# names are kept for types; members are snake_case with the same argument order; C# default
 //! arguments are option structs with `Default`; where C# throws, Rust returns a `Result` or an
@@ -78,6 +113,11 @@ pub mod animation;
 pub mod captions;
 mod color;
 mod drawing_session;
+mod drawing_session_blend;
+mod drawing_session_paint;
+mod drawing_session_wipe;
+#[cfg(test)]
+mod drawing_session_looks_tests;
 mod drawing_session_options;
 mod drawing_session_painting;
 mod drawing_session_transitions;
@@ -96,11 +136,16 @@ pub mod planes;
 pub mod rendering;
 pub mod safe_areas;
 pub mod shapes;
+pub mod strokes;
 pub mod svg;
 pub mod text;
+pub mod water;
 
 pub use color::Color;
 pub use drawing_session::{DrawingSession, SessionRenderOptions};
+pub use drawing_session_blend::SessionBlendMode;
+pub use drawing_session_paint::{LinePaint, SessionPaint};
+pub use drawing_session_wipe::{SessionWipe, WipeEdge};
 pub use drawing_session_options::DrawingSessionOptions;
 pub use geometry::{PointF, Rectangle, RectangleF};
 pub use mask_meaning::MaskMeaning;

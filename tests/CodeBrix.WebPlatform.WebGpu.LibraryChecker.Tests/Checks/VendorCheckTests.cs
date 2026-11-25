@@ -59,4 +59,38 @@ public class VendorCheckTests
         result.Problems.Should().Contain(p => p.StartsWith("wgpu v30.0.2: src/lib.rs does not match its recorded checksum") && p.Contains("never edited"));
         result.Problems.Should().Contain(p => p.StartsWith("wgpu v30.0.2: NOTES.txt is not recorded"));
     }
+
+    [Fact]
+    public void GraphicsCrates_passes_for_the_graphics_packages_own_crates_and_names_its_check()
+    {
+        //Arrange
+        using var folder = new TempFolder();
+        folder.WriteCrate("src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/vendor", "gltf", "1.4.1");
+        var set = VendoredSet.FromPackages("own crates", "the Graphics crate set's own", Lock(LockEntry("gltf", "1.4.1")).Packages);
+
+        //Act
+        var result = VendorCheck.GraphicsCrates(new RepositoryLayout(folder.Path), set);
+
+        //Assert
+        result.Passed.Should().BeTrue(result.ToText());
+        result.Name.Should().Be("Vendored crates: the Graphics package's crates are untouched and are exactly the Graphics crate set's own crates");
+    }
+
+    [Fact]
+    public void GraphicsCrates_fails_for_a_missing_and_an_edited_crate_and_points_at_the_gltf_notes()
+    {
+        //Arrange
+        using var folder = new TempFolder();
+        var gltf = folder.WriteCrate("src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/vendor", "gltf", "1.4.1");
+        File.AppendAllText(Path.Combine(gltf, "src", "lib.rs"), "// edited");
+        var set = VendoredSet.FromPackages("own crates", "the Graphics crate set's own", Lock(LockEntry("gltf", "1.4.1"), LockEntry("inflections", "1.1.1")).Packages);
+
+        //Act
+        var result = VendorCheck.GraphicsCrates(new RepositoryLayout(folder.Path), set);
+
+        //Assert
+        result.Problems.Should().HaveCount(2);
+        result.Problems.Should().Contain(p => p.StartsWith("inflections v1.1.1 is in Cargo.lock but not in the vendor folder") && p.EndsWith("re-vendor the Graphics crate set (src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/vendoring/gltf/UPGRADE-README.txt)"));
+        result.Problems.Should().Contain(p => p.StartsWith("gltf v1.4.1: src/lib.rs does not match its recorded checksum") && p.Contains("never edited"));
+    }
 }

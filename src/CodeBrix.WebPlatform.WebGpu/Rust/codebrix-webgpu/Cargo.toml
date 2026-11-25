@@ -5,18 +5,18 @@
 #     codebrix-webgpu = "1.0"
 #
 # EVERY DEPENDENCY IS AN EXACT VERSION that the platform's crates or this package's vendored crates
-# carry (the maintainer tool checks it): dioxus, web-sys and wasm-bindgen are the platform's; wgpu
-# and glam are this package's crate set's. This ties the crate to one platform release (see
-# MAINTAINER-README.txt, THE FIRST-PARTY CRATE).
+# carry (the maintainer tool checks it): dioxus, web-sys and wasm-bindgen are the platform's; wgpu,
+# glam, png and zune-jpeg are this package's crate set's. This ties the crate to one platform
+# release (see MAINTAINER-README.txt, THE FIRST-PARTY CRATE).
 #
 # Change `version` whenever the crate's content changes in a release of the package: cargo treats
 # a name and version from a vendor folder as unchanging.
 [package]
 name = "codebrix-webgpu"
-version = "1.2.0"
+version = "1.3.0"
 edition = "2021"
 publish = false
-description = "The WebGPU context, canvas host, frame loop and maths of CodeBrix.WebPlatform frontends: wgpu and glam for a Dioxus page in the browser, without JavaScript."
+description = "The WebGPU context, canvas host, frame loop, maths and PNG and JPEG decoding of CodeBrix.WebPlatform frontends: wgpu and glam for a Dioxus page in the browser, without JavaScript."
 license = "Apache-2.0"
 repository = "https://github.com/ellisnet/CodeBrix.WebPlatform.WebGpu"
 
@@ -32,6 +32,13 @@ glam = { version = "=0.34.3", features = ["bytemuck"] }
 # frames and device pixel ratio, pointer capture, focus, and the console for surface errors.
 web-sys = { version = "=0.3.107", features = ["console", "CssStyleDeclaration", "Document", "Element", "HtmlCanvasElement", "HtmlElement", "Window"] }
 wasm-bindgen = "=0.2.130"
+# PNG files (decode_png): the crate set's version, its default features (none). Only the decoder is
+# used; the encoder is compiled in only for the crate's own tests (they make their PNG files with
+# it).
+png = "=0.18.1"
+# JPEG files (decode_jpeg): the crate set's version and features (default features off, `std` on:
+# no native SIMD, no logging). zune-core, which it brings, is used through its re-export.
+zune-jpeg = { version = "=0.5.15", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 # Only for the crate's own unit tests (the maths types as bytes); a frontend never resolves it.

@@ -112,7 +112,7 @@ pub fn MoreScene(context: GpuContext) -> Element {
             clock: clock.clone(),
             clear_color: wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
             id: "more-canvas",
-            label: "A ring of cubes and a turning helix of particles under a dusk panorama, with two animated badges in the corner. Drag to orbit, use the wheel to zoom.",
+            label: "A ring of cubes and a turning helix of particles under a dusk panorama, with two animated badges in the corner. Drag to orbit, drag with the right or middle button or with Shift to pan, use the wheel to zoom.",
             class: "aspect-video w-full touch-none select-none rounded-lg ring-1 ring-white/10 focus-visible:outline-2 focus-visible:outline-sky-400",
         }
         div { class: "flex flex-wrap gap-3",

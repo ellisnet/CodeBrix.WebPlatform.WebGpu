@@ -21,7 +21,8 @@
 
   <ItemGroup>
     <!--
-      The model data types and the writer of the model data format (CodeBrix.WebPlatform.WebGpu.Graphics.Models).
+      The model data types and the writer of the model data format (CodeBrix.WebPlatform.WebGpu.Graphics.Models), for
+      the two models built in code (the ground and the morph shape), which are served as model data blobs.
       The package also carries the graphics crates for a frontend build program, and its
       buildTransitive targets would copy them (and, through its dependency, the wgpu crates) into the
       output folder of every project that references it. A backend never builds a frontend, so that
@@ -33,17 +34,22 @@
       "animation" frontend. Like the Graphics package, only the library is used here (no crate copy).
     -->
     <PackageReference Include="CodeBrix.WebPlatform.WebGpu.Animation.ApacheLicenseForever" Version="$(WebGpuPackageVersion)" ExcludeAssets="build;buildTransitive" />
-    <!-- glTF 2.0 reading (the models are converted on the backend, never in the browser). -->
-    <PackageReference Include="CodeBrix.Graphics3D.Gltf2.MitLicenseForever" Version="1.0.290.996" />
-    <!-- Image decoding: the models' PNG textures become RGBA8 pixels. -->
+    <!--
+      Image decoding for PictureLibrary only: the "animation" frontend's picture in the picture-pixels form (the Cube
+      Pets colour map decoded here, shown beside the same PNG file decoded in the browser). The models are NOT decoded or
+      converted here: their files are served unchanged and the graphics crate's glTF loader reads them in the browser.
+    -->
     <PackageReference Include="CodeBrix.Imaging.ApacheLicenseForever" Version="1.0.320.279" />
   </ItemGroup>
 
   <ItemGroup>
     <!--
-      The models, their shared textures and each pack's licence file, embedded in the assembly. The
+      The model files, their shared textures and each pack's licence file, embedded in the assembly. The
       resource name is the path below Models/ (for example "survival-kit/Textures/colormap.png");
-      ModelLibrary reads them by that name. See THIRD-PARTY-NOTICES.txt at the sample's root.
+      ModelLibrary finds them by that name and the backend serves the model files unchanged (the
+      licence files are not served). See THIRD-PARTY-NOTICES.txt at the sample's root. The repository's
+      test-side reference converter (tests/CodeBrix.WebPlatform.WebGpu.Graphics.Tests.GltfReference)
+      LINKS this Models folder: if it moves, change that link.
     -->
     <EmbeddedResource Include="Models\**\*" LogicalName="Models/%(RecursiveDir)%(Filename)%(Extension)" />
     <!--
@@ -55,8 +61,8 @@
     <!--
       The fonts of the "animation" application (TrueType, SIL Open Font License 1.1 - allowed in the sample only,
       never in a package), each pack with its original OFL.txt, embedded the same way: the resource name is the path
-      below the project (for example "Fonts/roboto/Roboto-Regular.ttf"); FontLibrary reads them by that name and the
-      backend serves them unchanged.
+      below the project (for example "Fonts/roboto/Roboto-Regular.ttf"); FontLibrary finds every .ttf and .otf file
+      there and knows it by its file name in lower case ("roboto-regular.ttf"), and the backend serves them unchanged.
     -->
     <EmbeddedResource Include="Fonts\**\*" LogicalName="Fonts/%(RecursiveDir)%(Filename)%(Extension)" />
     <!--

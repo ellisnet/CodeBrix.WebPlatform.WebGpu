@@ -10,6 +10,7 @@ use crate::frames::{DrawOptions, RenderPass};
 use crate::lighting::EnvironmentMap;
 use crate::models::pbr_data::needs_shader_encoding;
 use crate::pipelines::{ColorTargetOptions, DepthOptions, DepthPreset, GpuRenderPipeline};
+use crate::presentation::TargetFormats;
 use crate::resources::{BindingEntry, BindingLayoutEntry, GpuBindGroup, GpuBindGroupLayout, GpuBuffer, GpuSampler, GpuShader, SamplerDescription};
 use crate::shaders::EnvironmentShaders;
 
@@ -64,13 +65,15 @@ impl Default for SkyboxDrawOptions {
 /// into float targets (the HDR path, tone mapped later by [`crate::ToneMapper`]), hardware
 /// encoding into sRGB targets (a canvas frame), shader encoding into 8/10-bit UNORM targets.
 /// Several draws per frame keep their own uniforms. It keeps the bind groups of the last few
-/// environments it drew (and so holds those environments).
+/// environments it drew (and so holds those environments). On a multisampled target it uses its
+/// 4-sample pipeline by itself (pipelines are kept per colour format, depth format and sample
+/// count; Not in C#).
 pub struct SkyboxRenderer {
     context: GraphicsContext,
     shader: GpuShader,
     layout: GpuBindGroupLayout,
     sampler: GpuSampler,
-    pipelines: HashMap<(wgpu::TextureFormat, Option<wgpu::TextureFormat>), GpuRenderPipeline>,
+    pipelines: HashMap<TargetFormats, GpuRenderPipeline>,
     groups: Vec<(EnvironmentMap, GpuBindGroup)>,
     uniforms: GpuBuffer,
     capacity: u64,
@@ -155,7 +158,7 @@ impl SkyboxRenderer {
         let offset = self.slot * SLOT_SIZE;
         self.uniforms.write_value(&data, offset)?;
         self.slot += 1;
-        let pipeline = self.pipeline(target.color_format(), target.depth_format())?;
+        let pipeline = self.pipeline(target.formats())?;
         let group = self.group(environment);
         pass.set_pipeline(&pipeline);
         pass.set_bind_group_with_offsets(0, &group, &[offset as u32]);
@@ -180,16 +183,38 @@ impl SkyboxRenderer {
         group
     }
 
-    fn pipeline(&mut self, color: wgpu::TextureFormat, depth: Option<wgpu::TextureFormat>) -> Result<GpuRenderPipeline, GraphicsException> {
-        if let Some(pipeline) = self.pipelines.get(&(color, depth)) {
+    fn pipeline(&mut self, formats: TargetFormats) -> Result<GpuRenderPipeline, GraphicsException> {
+        if let Some(pipeline) = self.pipelines.get(&formats) {
             return Ok(pipeline.clone());
         }
-        let mut builder = self.context.create_render_pipeline(&self.shader).with_label(&format!("skybox {color:?}")).with_color_target(color, ColorTargetOptions::default()).with_bind_group_layouts(&[&self.layout]);
+        let (color, depth) = (formats.color, formats.depth);
+        let mut builder = self.context.create_render_pipeline(&self.shader).with_label(&format!("skybox {color:?}")).with_color_target(color, ColorTargetOptions::default()).with_bind_group_layouts(&[&self.layout]).with_sample_count(formats.sample_count);
         if let Some(depth) = depth {
             builder = builder.with_depth(depth, DepthOptions { preset: DepthPreset::ReadOnly, ..DepthOptions::default() });
         }
         let pipeline = builder.build()?;
-        self.pipelines.insert((color, depth), pipeline.clone());
+        self.pipelines.insert(formats, pipeline.clone());
         Ok(pipeline)
+    }
+}
+
+#[cfg(test)]
+mod msaa_tests {
+    use std::collections::HashMap;
+
+    use crate::presentation::TargetFormats;
+
+    fn formats(sample_count: u32) -> crate::presentation::TargetFormats {
+        crate::presentation::TargetFormats::new(wgpu::TextureFormat::Bgra8UnormSrgb, Some(wgpu::TextureFormat::Depth32Float), sample_count)
+    }
+
+    #[test]
+    fn the_skybox_pipelines_are_kept_per_sample_count() {
+        let mut pipelines: HashMap<TargetFormats, u32> = HashMap::new();
+        for count in crate::presentation::SAMPLE_COUNTS {
+            pipelines.insert(formats(count), count);
+        }
+        assert_eq!(pipelines.len(), 2);
+        assert_eq!(pipelines[&formats(4)], 4);
     }
 }

@@ -12,7 +12,7 @@ use crate::clock::CanvasClock;
 use crate::context::GpuContext;
 use crate::drag::DragTracker;
 use crate::frame_loop::FrameLoop;
-use crate::input::{is_canvas_key, wheel_in_pixels, CanvasInput};
+use crate::input::{is_canvas_key, modifier_keys, pointer_button, pointer_buttons, pointer_kind, wheel_in_pixels, CanvasInput, PointerButton};
 use crate::layers::{CanvasLayers, LayerState};
 use crate::page_compose::PageCompose;
 use crate::renderer::{CanvasFrame, CanvasTarget, FrameInfo, RendererHandle, SurfaceFailure};
@@ -48,7 +48,11 @@ use crate::sizing::{pixel_ratio, surface_size};
 /// reaches the layers instead of scrolling the page); that is not an inline style attribute, so
 /// a strict Content-Security-Policy allows it. The canvas takes the keyboard focus when it is
 /// pressed, so that key input reaches the layers, and while it has the focus the arrow keys and
-/// the space bar do not scroll the page; nor does the wheel over it.
+/// the space bar do not scroll the page; nor does the wheel over it. Pressing the middle button on
+/// the canvas starts no autoscroll (the press is the layers'), and with `suppress_context_menu`
+/// (the default) a right-click opens no browser menu over it, so that a right-button drag reaches
+/// the layers too. Every pointer event says which buttons are down, the kind of pointer and the
+/// modifier keys held ([`CanvasInput`]).
 ///
 /// `context`, `layers` and `clock` are taken when the canvas is mounted: keep each in the page
 /// (`use_hook`) and change the layers through the [`CanvasLayers`] handle, not by passing another.
@@ -82,6 +86,11 @@ pub fn WebGpuCanvas(
     /// The canvas's accessible name (`aria-label`): say what it shows and how to use it.
     #[props(default)]
     label: String,
+    /// True (the default) when a right-click on the canvas opens no browser context menu, so that
+    /// the secondary button belongs to the layers (a right-button drag); false to keep the
+    /// browser's menu. Not in C#.
+    #[props(default = true)]
+    suppress_context_menu: bool,
 ) -> Element {
     let host = use_hook(|| Rc::new(RefCell::new(Host::default())));
     let clock = use_hook(|| clock.clone().unwrap_or_default());
@@ -117,7 +126,16 @@ pub fn WebGpuCanvas(
                 }
                 host.drag.press(id, point.x, point.y);
             }
-            send(&layers, &CanvasInput::PointerDown { x: point.x, y: point.y, pointer_id: id });
+            let input = CanvasInput::PointerDown {
+                x: point.x,
+                y: point.y,
+                pointer_id: id,
+                button: pointer_button(event.trigger_button()),
+                buttons: pointer_buttons(event.held_buttons()),
+                kind: pointer_kind(&event.pointer_type()),
+                modifiers: modifier_keys(event.modifiers()),
+            };
+            send(&layers, &input);
         }
     };
     let pointer_move = {
@@ -126,9 +144,11 @@ pub fn WebGpuCanvas(
         move |event: PointerEvent| {
             let point = event.element_coordinates();
             let id = event.pointer_id();
-            let pressed = !event.held_buttons().is_empty();
+            let buttons = pointer_buttons(event.held_buttons());
+            let pressed = !buttons.is_empty();
             let (dx, dy) = host.borrow_mut().drag.moved(id, point.x, point.y, pressed);
-            send(&layers, &CanvasInput::PointerMove { x: point.x, y: point.y, dx, dy, pressed, pointer_id: id });
+            let input = CanvasInput::PointerMove { x: point.x, y: point.y, dx, dy, pressed, pointer_id: id, buttons, kind: pointer_kind(&event.pointer_type()), modifiers: modifier_keys(event.modifiers()) };
+            send(&layers, &input);
         }
     };
     let pointer_up = {
@@ -138,10 +158,30 @@ pub fn WebGpuCanvas(
             let point = event.element_coordinates();
             let id = event.pointer_id();
             host.borrow_mut().drag.release(id);
-            send(&layers, &CanvasInput::PointerUp { x: point.x, y: point.y, pointer_id: id });
+            let input = CanvasInput::PointerUp {
+                x: point.x,
+                y: point.y,
+                pointer_id: id,
+                button: pointer_button(event.trigger_button()),
+                buttons: pointer_buttons(event.held_buttons()),
+                kind: pointer_kind(&event.pointer_type()),
+                modifiers: modifier_keys(event.modifiers()),
+            };
+            send(&layers, &input);
         }
     };
     let pointer_cancel = pointer_up.clone();
+    // The middle button's press is the layers': no autoscroll starts over the canvas.
+    let mouse_down = move |event: MouseEvent| {
+        if pointer_button(event.trigger_button()) == PointerButton::Middle {
+            event.prevent_default();
+        }
+    };
+    let context_menu = move |event: MouseEvent| {
+        if suppress_context_menu {
+            event.prevent_default();
+        }
+    };
     let wheel = {
         let layers = layers.clone();
         move |event: WheelEvent| {
@@ -178,6 +218,8 @@ pub fn WebGpuCanvas(
             onpointermove: pointer_move,
             onpointerup: pointer_up,
             onpointercancel: pointer_cancel,
+            onmousedown: mouse_down,
+            oncontextmenu: context_menu,
             onwheel: wheel,
             onkeydown: key_down,
             onkeyup: key_up,

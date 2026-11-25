@@ -17,6 +17,7 @@ use codebrix_webgpu_animation::Color;
 thread_local! {
     static BACKEND_PICTURE: RefCell<Option<ImageSource>> = const { RefCell::new(None) };
     static BACKEND_PNG_PICTURE: RefCell<Option<ImageSource>> = const { RefCell::new(None) };
+    static BACKEND_JPEG_PICTURE: RefCell<Option<ImageSource>> = const { RefCell::new(None) };
 }
 
 /// Reads the picture-pixels form (the Animation package's: "CBPX", versions, width, height, RGBA) into a picture.
@@ -33,6 +34,16 @@ pub fn set_backend_picture(picture: ImageSource) {
 /// Keeps the picture read from the backend's PNG file (the page sets it before the catalogue is made).
 pub fn set_backend_png_picture(picture: ImageSource) {
     BACKEND_PNG_PICTURE.with(|p| *p.borrow_mut() = Some(picture));
+}
+
+/// Keeps the picture read from the backend's JPEG file (the page sets it before the catalogue is made).
+pub fn set_backend_jpeg_picture(picture: ImageSource) {
+    BACKEND_JPEG_PICTURE.with(|p| *p.borrow_mut() = Some(picture));
+}
+
+/// The picture read from the backend's JPEG file (a 1 x 1 grey pixel when none was set).
+pub fn backend_jpeg_picture() -> ImageSource {
+    BACKEND_JPEG_PICTURE.with(|p| p.borrow().clone()).unwrap_or_else(|| ImageSource::from_rgba(&[128, 128, 128, 255], 1, 1).unwrap())
 }
 
 /// The picture read from the backend's PNG file (a 1 x 1 grey pixel when none was set).

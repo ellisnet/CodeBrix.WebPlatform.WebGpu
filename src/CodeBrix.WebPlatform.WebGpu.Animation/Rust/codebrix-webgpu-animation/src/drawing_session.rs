@@ -10,7 +10,10 @@ use peniko::{BlendMode, Brush, Fill};
 
 use crate::captions::{CaptionPresenter, CaptionStyle, CaptionTrack};
 use crate::color::Color;
+use crate::drawing_session_blend::SessionBlendMode;
 use crate::drawing_session_options::DrawingSessionOptions;
+use crate::drawing_session_paint::SessionPaint;
+use crate::rendering::scene_look::SceneLook;
 use crate::effects::effect_sizes::EffectParams;
 use crate::geometry::{PointF, RectangleF};
 use crate::models::bound_track::BoundValue;
@@ -63,13 +66,18 @@ impl SessionReports {
 }
 
 /// How [`DrawingSession::render_with`] draws (C#'s export arguments, for a live canvas): with or
-/// without the background, into the whole canvas or into a part of it.
+/// without the background, into the whole canvas or into a part of it; and (Not in C#) how the
+/// session's picture combines with what was drawn before it - a blend mode and an opacity for
+/// the whole session.
 ///
 /// THE BACKGROUND IS LEFT OUT BY DEFAULT - a deliberate difference from C#, whose
 /// `includeBackground` defaults to true: a session drawn as a LAYER of a canvas floats over what
 /// lies below it (a 3D scene, or the web page itself on a transparent canvas). Ask for the
 /// background with `include_background: true`.
-#[derive(Clone, Copy, Debug, PartialEq)]
+///
+/// The options are read at each render and change nothing in the session, so one session can be
+/// drawn differently from frame to frame (or twice in one frame).
+#[derive(Clone, Debug, PartialEq)]
 pub struct SessionRenderOptions {
     /// True to fill the background colour under the layers (C# `includeBackground: true`, C#'s
     /// default); false (THE DEFAULT HERE) to draw the layers alone, so what is below - lower
@@ -78,11 +86,36 @@ pub struct SessionRenderOptions {
     /// The part of the canvas, in canvas pixels, that the drawing is aspect-fitted into and
     /// clipped to; None (the default) for the whole canvas.
     pub target: Option<RectangleF>,
+    /// How the session's whole picture (the background when drawn, and the layers) combines with
+    /// what was drawn into the scene before it (default [`SessionBlendMode::Normal`]). Not in C#.
+    pub blend: SessionBlendMode,
+    /// The opacity of the session's whole picture, 0..1 (default 1; clamped, NaN counts as 0).
+    /// Unlike [`DrawingSession::set_opacity`] it fades the background too (when drawn); the two
+    /// multiply. The overlays (safe areas, debug) are not faded or blended. Not in C#.
+    pub opacity: f32,
+    /// How the shapes are painted (default [`SessionPaint::AsAuthored`]): as authored, as a line
+    /// drawing in one stroke style ([`SessionPaint::Line`]), or in flat colours
+    /// ([`SessionPaint::Flat`]). The background fill and the overlays are never repainted. Not
+    /// in C#.
+    pub paint: SessionPaint,
+    /// False to draw every element, group and layer WITHOUT its effects (blur, glow, drop
+    /// shadow; an SVG document's blur); default true. A layer's whole-frame operations and its
+    /// layer transition are kept. Not in C#.
+    pub effects: bool,
+    /// The names of layers drawn AS AUTHORED whatever `paint` and `effects` say (empty by
+    /// default): the exceptions to the look. Not in C#.
+    pub authored_layers: Vec<String>,
+    /// The session's whole picture (the background when drawn, and the layers) seen THROUGH WATER
+    /// (default None): one effect group around it - inside the blend's group when the session is
+    /// blended or faded (two levels then, three inside a [`SessionWipe`](crate::SessionWipe)). The water's coordinates
+    /// are calibrated units under the camera (parallax 1). An unusable refraction is not drawn and
+    /// is reported once ([`DrawingSession::take_reports`]). No C# equivalent.
+    pub refraction: Option<crate::water::WaterRefraction>,
 }
 
 impl Default for SessionRenderOptions {
     fn default() -> SessionRenderOptions {
-        SessionRenderOptions { include_background: false, target: None }
+        SessionRenderOptions { include_background: false, target: None, blend: SessionBlendMode::Normal, opacity: 1.0, paint: SessionPaint::AsAuthored, effects: true, authored_layers: Vec::new(), refraction: None }
     }
 }
 
@@ -555,7 +588,7 @@ impl DrawingSession {
     /// Draws the session WITH its background fill under the layers (C#'s `Render` as it is): the
     /// same as [`DrawingSession::render_with`] with `include_background: true`.
     pub fn render_with_background(&self, scene: &mut VectorScene, width: u32, height: u32) {
-        self.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: None });
+        self.render_with(scene, width, height, &SessionRenderOptions { include_background: true, ..SessionRenderOptions::default() });
     }
 
     /// Draws the session with options: without its background (what is below shows through
@@ -577,15 +610,67 @@ impl DrawingSession {
             scene.push_clip_layer(Affine::IDENTITY, &area);
         }
         let background = self.options.background_fill_color;
-        if options.include_background && background.a > 0 {
-            scene.fill(Fill::NonZero, transform, &Brush::Solid(background.to_peniko(1.0)), None, &Rect::new(0.0, 0.0, cw as f64, ch as f64));
+        let draws_background = options.include_background && background.a > 0;
+        // The session's whole picture through one group when it is blended or faded (the render
+        // options' opacity fades the background too); the session's own opacity, which leaves
+        // the background unfaded, is folded into that group when there is no background.
+        let picture_alpha = if options.opacity.is_nan() { 0.0 } else { options.opacity.clamp(0.0, 1.0) };
+        let picture_group = options.blend != SessionBlendMode::Normal || picture_alpha < 1.0;
+        let fold_opacity = picture_group && !draws_background;
+        let layers_alpha = if fold_opacity { 1.0 } else { self.opacity };
+        if picture_alpha > 0.0 {
+            if picture_group {
+                let alpha = if fold_opacity { picture_alpha * self.opacity } else { picture_alpha };
+                scene.push_layer(options.blend.to_peniko(), alpha, Affine::IDENTITY, &area);
+            }
+            // The session seen through water (Not in C#): one effect group around its picture.
+            let water = self.session_water(scene, transform, options);
+            if let Some(w) = water {
+                scene.push_effects(EffectParams { water: Some(w), ..EffectParams::default() }, 1.0);
+            }
+            if draws_background {
+                scene.fill(Fill::NonZero, transform, &Brush::Solid(background.to_peniko(1.0)), None, &Rect::new(0.0, 0.0, cw as f64, ch as f64));
+            }
+            self.render_layers(scene, transform, area, layers_alpha, options);
+            if water.is_some() {
+                scene.pop_layer();
+            }
+            if picture_group {
+                scene.pop_layer();
+            }
         }
+        self.render_overlays(scene, width, height, options, area);
+        if clipped {
+            scene.pop_layer();
+        }
+    }
+
+    /// A session refraction's water for this frame (None without one, or when it is unusable -
+    /// reported once): calibrated units under the camera at parallax 1.
+    fn session_water(&self, scene: &mut VectorScene, transform: Affine, options: &SessionRenderOptions) -> Option<crate::effects::effect_sizes::WaterParams> {
+        let refraction = options.refraction.as_ref()?;
+        if let Err(e) = refraction.validate() {
+            self.reports.borrow_mut().report(format!("The session's refraction is not drawn: {e}"));
+            return None;
+        }
+        let camera = self.camera.as_ref().map_or(Affine::IDENTITY, |c| c.get_matrix(self.options.calibration_size, 1.0));
+        let reports = &self.reports;
+        crate::effects::effect_sizes::record_water(scene, Some(refraction), None, transform * camera, self.time, &mut |m| reports.borrow_mut().report(m))
+    }
+
+    /// The layers (each a group at its alpha, through its effects, mask and transition), all of
+    /// them in one group at `opacity` when it is below 1; each layer's content under the options'
+    /// look (paint and effects) unless the layer is one of the authored exceptions.
+    fn render_layers(&self, scene: &mut VectorScene, transform: Affine, area: Rect, opacity: f32, options: &SessionRenderOptions) {
+        let outer_look = scene.look.take();
+        let has_look = options.paint != SessionPaint::AsAuthored || !options.effects;
+        let (cw, ch) = self.options.calibration_size;
         // The frame as drawn (device pixels): the extent of transitions and vignettes.
         let frame_rect = transform.transform_rect_bbox(Rect::new(0.0, 0.0, cw as f64, ch as f64));
-        if self.opacity > 0.0 {
-            let whole = self.opacity < 1.0;
+        if opacity > 0.0 {
+            let whole = opacity < 1.0;
             if whole {
-                scene.push_layer(BlendMode::default(), self.opacity, Affine::IDENTITY, &area);
+                scene.push_layer(BlendMode::default(), opacity, Affine::IDENTITY, &area);
             }
             for layer in &self.layers {
                 if !layer.is_visible() {
@@ -604,20 +689,33 @@ impl DrawingSession {
                     scene.push_clip_layer(Affine::IDENTITY, &frame_rect);
                 }
                 let c = camera.as_coeffs();
-                let ctx = EncodeContext { time: self.time, area, scene_rotation: c[1].atan2(c[0]), layers: &self.layers, reports: &self.reports };
+                let drawing = shift * transform * camera;
+                let ctx = EncodeContext { time: self.time, area, scene_rotation: c[1].atan2(c[0]), layers: &self.layers, drawing, reports: &self.reports };
+                // The look applies to the layer's group (its effects) and its content.
+                let exempt = options.authored_layers.iter().any(|n| n == layer.name());
+                scene.look = if has_look && !exempt { Some(SceneLook { paint: options.paint.clone(), effects: options.effects, drawing }) } else { None };
                 // A layer is one group at its alpha - or, with effects, one group through its
                 // effects at that alpha (C#'s ApplyToLayer); its mask applies to its content first.
                 let effects = layer.effects().and_then(|e| EffectParams::new(&e, layer_transform, ctx.scene_rotation));
                 // The whole-frame operations and a transition's pass ride on the effects' group.
                 let extent = [frame_rect.x0 as f32, frame_rect.y0 as f32, frame_rect.x1 as f32, frame_rect.y1 as f32];
                 let frame = crate::effects::effect_sizes::frame_params(layer.frame_operations().as_ref(), pass, transform, extent);
-                let effects = match (effects, frame) {
-                    (Some(mut p), f) => {
+                // So does the surface finish (Not in C#) - but not under the line or flat look.
+                let paints_as_authored = scene.look.as_ref().map_or(true, |l| l.paint == SessionPaint::AsAuthored);
+                let finish = layer.surface_finish().filter(|_| paints_as_authored).and_then(|f| crate::effects::surface_finish::finish_params(&f, layer_transform));
+                // And the layer's water (Not in C#): its refraction and reflection, in the layer's
+                // drawing space (under every look and with effects off: they are passes).
+                let reports = &self.reports;
+                let water = crate::effects::effect_sizes::record_water(scene, layer.refraction(), layer.reflection(), drawing, self.time, &mut |m| reports.borrow_mut().report(m));
+                let effects = match (effects, frame, finish, water) {
+                    (None, None, None, None) => None,
+                    (e, f, finish, water) => {
+                        let mut p = e.unwrap_or_default();
                         p.frame = f;
+                        p.finish = finish;
+                        p.water = water;
                         Some(p)
                     }
-                    (None, Some(f)) => Some(EffectParams { frame: Some(f), ..EffectParams::default() }),
-                    (None, None) => None,
                 };
                 match effects {
                     Some(params) => scene.push_effects(params, alpha),
@@ -631,6 +729,7 @@ impl DrawingSession {
                     }
                 });
                 scene.pop_layer();
+                scene.look = None;
                 if moved {
                     scene.pop_layer();
                 }
@@ -639,6 +738,12 @@ impl DrawingSession {
                 scene.pop_layer();
             }
         }
+        scene.look = outer_look;
+    }
+
+    /// The safe-area overlay and the debug overlay, over the session's picture (never blended or
+    /// faded with it).
+    fn render_overlays(&self, scene: &mut VectorScene, width: u32, height: u32, options: &SessionRenderOptions, area: Rect) {
         if let Some(overlay) = &self.safe_area_overlay {
             // In the pixels of the frame as shown (the aspect-fitted drawing rectangle), over the
             // layers, not faded with them; overlapping zones never darken (one group per part).
@@ -665,9 +770,6 @@ impl DrawingSession {
         }
         if let Some(overlay) = &self.debug_overlay {
             overlay.render_at(scene, area, self.time);
-        }
-        if clipped {
-            scene.pop_layer();
         }
     }
 }
@@ -717,10 +819,10 @@ mod tests {
     fn render_with_leaves_the_background_out_or_draws_into_a_part_of_the_canvas() {
         let s = session();
         let mut scene = VectorScene::new();
-        s.render_with(&mut scene, 100, 100, &SessionRenderOptions { include_background: false, target: None });
+        s.render_with(&mut scene, 100, 100, &SessionRenderOptions { include_background: false, target: None, ..SessionRenderOptions::default() });
         assert_eq!(scene.item_kinds(), "LFP");
         scene.reset();
-        s.render_with(&mut scene, 1000, 1000, &SessionRenderOptions { include_background: true, target: Some(RectangleF::new(100.0, 200.0, 400.0, 200.0)) });
+        s.render_with(&mut scene, 1000, 1000, &SessionRenderOptions { include_background: true, target: Some(RectangleF::new(100.0, 200.0, 400.0, 200.0)), ..SessionRenderOptions::default() });
         assert_eq!(scene.item_kinds(), "CFLFPP", "clipped to the part");
     }
 }

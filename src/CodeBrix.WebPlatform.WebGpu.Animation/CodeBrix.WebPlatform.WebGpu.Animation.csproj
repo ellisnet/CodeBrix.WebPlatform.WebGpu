@@ -86,7 +86,7 @@
     other.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.WebPlatform.Core.ApacheLicenseForever" Version="[1.0.327.240]" />
+    <PackageReference Include="CodeBrix.WebPlatform.Core.ApacheLicenseForever" Version="[1.0.329.452]" />
     <ProjectReference Include="..\CodeBrix.WebPlatform.WebGpu\CodeBrix.WebPlatform.WebGpu.csproj" />
   </ItemGroup>
 
@@ -109,7 +109,9 @@
 
   <!--
     THE ANIMATION CRATES. Rust/vendor holds the third-party crates that ONLY this package needs
-    (kurbo, peniko, harfrust, i_overlay, png, usvg, velato and what they bring beyond the platform's and the WebGpu package's crates),
+    (kurbo, peniko, harfrust, i_overlay, usvg, velato and what they bring beyond the platform's and the WebGpu package's crates;
+    the PNG and JPEG decoders behind ImageSource::from_png and from_jpeg - png, zune-jpeg and
+    their trees - are the WebGpu package's),
     exactly as crates.io published them; Rust/codebrix-webgpu-animation is the FIRST-PARTY crate of
     this package. They travel as ONE archive, not inside the assembly and not as loose files,
     written by the SAME task as the WebGpu package's archive

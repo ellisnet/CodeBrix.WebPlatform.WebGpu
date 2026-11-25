@@ -22,16 +22,20 @@ crate bundle to a CodeBrix.WebPlatform frontend:
     PackageId:  CodeBrix.WebPlatform.WebGpu.ApacheLicenseForever
     Project:    src/CodeBrix.WebPlatform.WebGpu/
                 CodeBrix.WebPlatform.WebGpu.csproj
-    Carries:    the vendored crates (wgpu and glam and their resolution) and
-                the first-party crate codebrix-webgpu, in one archive, and
-                the generated notices of the vendored crates;
-                WebGpuCrates.Register() registers them.
+    Carries:    the vendored crates (wgpu, glam, png and zune-jpeg and their
+                resolution) and the first-party crate codebrix-webgpu, in
+                one archive, and the generated notices of the vendored
+                crates; WebGpuCrates.Register() registers them.
 
     PackageId:  CodeBrix.WebPlatform.WebGpu.Graphics.ApacheLicenseForever
     Project:    src/CodeBrix.WebPlatform.WebGpu.Graphics/
                 CodeBrix.WebPlatform.WebGpu.Graphics.csproj
-    Carries:    the first-party crate codebrix-webgpu-graphics (and nothing
-                else) in its own archive, and its hand-written notices;
+    Carries:    the first-party crate codebrix-webgpu-graphics and the
+                third-party crates ONLY it needs (gltf, gltf-json,
+                gltf-derive, lazy_static and inflections: what gltf brings
+                beyond the platform's and the WebGpu package's crates) in
+                its own archive, and their notices (a hand-written header
+                and a generated part);
                 GraphicsCrates.Register() registers the WebGpu package's
                 bundle first, then its own.
 
@@ -40,7 +44,7 @@ crate bundle to a CodeBrix.WebPlatform frontend:
                 CodeBrix.WebPlatform.WebGpu.Animation.csproj
     Carries:    the first-party crate codebrix-webgpu-animation and the
                 third-party crates ONLY it needs (kurbo, peniko, harfrust,
-                i_overlay, png, usvg, velato and what they bring beyond the
+                i_overlay, usvg, velato and what they bring beyond the
                 platform's and the WebGpu package's crates) in its own archive, and their notices (a
                 hand-written header and a generated part);
                 AnimationCrates.Register() registers the WebGpu package's
@@ -57,11 +61,12 @@ Core (exact pin) + WebGpu (exact pin). Animation -> Core (exact pin) + WebGpu
 (exact pin). Never Graphics <-> Animation, in the projects or in the crates
 (the gate's "dependency-rule" group checks both). They do NOT carry the wgpu
 crates: Graphics' and Animation's Register() call WebGpuCrates.Register()
-first and add only their own bundles (codebrix-webgpu-graphics;
-codebrix-webgpu-animation with the third-party crates only it needs - never a
-crate the WebGpu package or the platform carries). Everything both of them need (the context, the canvas
-host, layers, the clock, the maths) is in codebrix-webgpu; only the
-APPLICATION puts their renderers together.
+first and add only their own bundles (codebrix-webgpu-graphics and
+codebrix-webgpu-animation, each with the third-party crates only it needs -
+never a crate the WebGpu package or the platform carries). Everything both
+of them need (the context, the canvas host, layers, the clock, the maths, PNG
+and JPEG decoding) is in codebrix-webgpu; only the APPLICATION puts their
+renderers together.
 
 THE FAMILY RULE (the owner's): the three packages (WebGpu, Graphics,
 Animation) are built and published together from ONE build of the root
@@ -115,7 +120,9 @@ REPOSITORY LAYOUT
 =================
     CodeBrix.WebPlatform.WebGpu.slnx
         The solution: the three libraries, the maintainer tool and, in the
-        Tests folder, the four test projects. Its "Solution Items" are the
+        Tests folder, every test project and the test-side libraries they
+        use (the materialize tests' sample backend, the glTF reference
+        converter). Its "Solution Items" are the
         canonical files: .gitignore, AGENT-README.txt, EXTRAS-README.txt,
         global.json, icon-codebrix-128.png, LICENSE, MAINTAINER-README.txt,
         README-INDEX.txt, README.md, THIRD-PARTY-NOTICES.txt.
@@ -145,19 +152,22 @@ REPOSITORY LAYOUT
         buildTransitive/CodeBrix.WebPlatform.WebGpu.ApacheLicenseForever
         .targets                  copies webgpu-crates/ into a consuming
                                   project's output folder
-        Rust/webgpu-crates/       THE CRATE SET: Cargo.toml (names wgpu and
-                                  its features; never built into anything)
-                                  and Cargo.lock (the pins)
+        Rust/webgpu-crates/       THE CRATE SET: Cargo.toml (names wgpu,
+                                  glam, png and zune-jpeg and their
+                                  features; never built into anything) and
+                                  Cargo.lock (the pins)
         Rust/vendor/              the vendored crates, one name-version
                                   folder per crate, exactly as crates.io
                                   published them
-        Rust/codebrix-webgpu/     THE FIRST-PARTY CRATE (Cargo.toml, src/):
+        Rust/codebrix-webgpu/     THE FIRST-PARTY CRATE (Cargo.toml, src/,
+                                  the JPEG test files under fixtures/):
                                   ours, carried in the archive in vendored
                                   form (see THE FIRST-PARTY CRATE)
         WebGpuCratesArchive.targets
                                   the archive writer (an inline MSBuild task;
                                   never packed)
-        Rust/vendoring/wgpu/, Rust/vendoring/glam/
+        Rust/vendoring/wgpu/, Rust/vendoring/glam/, Rust/vendoring/png/,
+        Rust/vendoring/zune-jpeg/
                                   UPGRADE-README.txt: what is particular to
                                   upgrading each library chosen by name
         Rust/notices/             notices-header-WebGpuCrates.txt (hand-
@@ -174,15 +184,31 @@ REPOSITORY LAYOUT
                                   consuming project's output folder
         Rust/codebrix-webgpu-graphics/
                                   THE GRAPHICS CRATE (Cargo.toml, src/, the
-                                  WGSL under src/shaders/wgsl/); see THE
+                                  WGSL under src/shaders/wgsl/, the test
+                                  fixtures under fixtures/); see THE
                                   GRAPHICS CRATE
-        Rust/notices/THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt
-                                  hand-written: the crate is ours; the three
-                                  tone-mapping sources of its shaders
+        Rust/graphics-crates/     THE GRAPHICS CRATE SET: Cargo.toml (names
+                                  gltf and its features; never built into
+                                  anything) and Cargo.lock (resolved against
+                                  the platform's and the WebGpu set's locks)
+        Rust/vendor/              the third-party crates ONLY this package
+                                  carries (the glTF crates), exactly as
+                                  crates.io published them (see VENDORED
+                                  SNAPSHOTS)
+        Rust/vendoring/gltf/UPGRADE-README.txt
+                                  what is particular to upgrading gltf and
+                                  the set
+        Rust/notices/             notices-header-WebGpuGraphicsCrates.txt
+                                  (hand-written: the crate is ours; the
+                                  three tone-mapping sources of its shaders
+                                  and the .hdr decoder's; the glTF crates'
+                                  part) and THIRD-PARTY-NOTICES-
+                                  WebGpuGraphicsCrates.txt (generated by the
+                                  gate)
         The archive is written by the WebGpu project's
         WebGpuCratesArchive.targets (the ONE place the writer lives; the
-        Graphics project imports it) and holds only
-        codebrix-webgpu-graphics-<version>/.
+        Graphics project imports it) and holds the vendored crates of
+        Rust/vendor and codebrix-webgpu-graphics-<version>/.
     src/CodeBrix.WebPlatform.WebGpu.Animation/
         AnimationCrates.cs        the registration call (WebGpu's first),
                                   the paths, the notices
@@ -194,7 +220,7 @@ REPOSITORY LAYOUT
                                   WGSL under src/rendering/core/); see THE
                                   ANIMATION CRATE
         Rust/animation-crates/    THE ANIMATION CRATE SET: Cargo.toml (names
-                                  kurbo, peniko, harfrust, i_overlay, png, usvg, svgtypes and velato; never built into
+                                  kurbo, peniko, harfrust, i_overlay, usvg, svgtypes and velato; never built into
                                   anything) and Cargo.lock (resolved against
                                   the platform's and the WebGpu set's locks)
         Rust/vendor/              the third-party crates ONLY this package
@@ -207,8 +233,6 @@ REPOSITORY LAYOUT
         Rust/vendoring/i_overlay/UPGRADE-README.txt
                                   what is particular to i_overlay (path
                                   combining)
-        Rust/vendoring/png/UPGRADE-README.txt
-                                  what is particular to png (PNG files)
         Rust/vendoring/usvg/UPGRADE-README.txt
                                   what is particular to usvg (SVG
                                   documents, its text feature)
@@ -226,6 +250,12 @@ REPOSITORY LAYOUT
         The maintainer tool: the licence and vendoring gate. Not packable.
     tests/<project>.Tests/
         One test project per project above.
+    tests/CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend/
+        The fixture backend the materialize tests read (never run).
+    tests/CodeBrix.WebPlatform.WebGpu.Graphics.Tests.GltfReference/
+        THE REFERENCE CONVERTER (never packed): the C# glTF-to-model-data
+        converter the Graphics crate's glTF loader is checked against, and
+        its test model packs under Models/ (TESTING, THE glTF REFERENCE).
     tools/licensing/license-allowlist.json
         The approved licences (the owner's file).
     samples/
@@ -242,11 +272,12 @@ REPOSITORY LAYOUT
         AnimationDemoApp's scene catalogue as far as the animation crate
         reaches, drawn by codebrix-webgpu-animation, and graphics shows the
         desktop model viewer's
-        complete scene (the default) and, on buttons, a scene for each
+        complete scene (the default, its models served as their glTF files
+        and read by the crate's loader) and, on buttons, a scene for each
         further feature of codebrix-webgpu-graphics that the viewer does not
         show (its MAINTAINER-README lists them). It
         has its own MAINTAINER-README.txt (building, running, checking it in
-        a browser, what is git-ignored).
+        a browser, what is build output).
 
 
 BUILDING
@@ -300,13 +331,15 @@ DefaultItemExcludes, and nothing under Rust/ is a project item.
 
 THE GRAPHICS AND ANIMATION ARCHIVES are written the same way, by the same
 task (the Graphics and Animation projects import WebGpuCratesArchive.targets):
-obj/webgpu-graphics-crates/webgpu-graphics-crates.zip holds only
-codebrix-webgpu-graphics-<version>/; obj/webgpu-animation-crates/
-webgpu-animation-crates.zip holds the crates of the Animation library's
-Rust/vendor byte for byte and codebrix-webgpu-animation-<version>/ in
-vendored form. Each is packed with its notices under
-tools/webgpu-graphics-crates/ and tools/webgpu-animation-crates/, and copied
-beside a consuming program by that package's buildTransitive targets.
+obj/webgpu-graphics-crates/webgpu-graphics-crates.zip holds the crates of the
+Graphics library's Rust/vendor byte for byte and
+codebrix-webgpu-graphics-<version>/ in vendored form;
+obj/webgpu-animation-crates/webgpu-animation-crates.zip holds the crates of
+the Animation library's Rust/vendor byte for byte and
+codebrix-webgpu-animation-<version>/ in vendored form. Each is packed with
+its notices under tools/webgpu-graphics-crates/ and
+tools/webgpu-animation-crates/, and copied beside a consuming program by that
+package's buildTransitive targets.
 
 Building the libraries does NOT compile any Rust.
 
@@ -391,9 +424,11 @@ independent of their order.
 
 GRAPHICS.TESTS has the same shape for the Graphics package: the registration
 (both bundles, WebGpu's first, registering again changes nothing), the paths
-and messages, the archive's shape (ONLY codebrix-webgpu-graphics-<version>/,
+and messages, the archive's shape (exactly the Graphics library's Rust/vendor
+byte for byte - the glTF crates - plus codebrix-webgpu-graphics-<version>/,
 its source without build output or lock file, a checksum file listing every
-other file with its sha256 and package null, path order, one time stamp), the
+other file with its sha256 and package null, path order, one time stamp,
+none of the WebGpu archive's crates), the
 dependency rule and the exact pins, and a REAL Materialize (folder
 Materialize/) of a frontend that names codebrix-webgpu-graphics: cargo
 metadata resolves it offline, `cargo check --offline --target
@@ -413,10 +448,44 @@ draw, pass timestamps and the GPU timer, an animated texture drawn by the
 sprite batch, a query resolve and a buffer clear - with the async checks of
 buffer mapping, texture regions, copies and readback, the headless target's
 reads, the awaited compute pipeline and bundle, and the context options with
-optional_features)
+optional_features; and the additions beyond the C# library, each in a block
+of its own, marked with BEGIN / END comments or in the layer it extends:
+the glTF loader's two steps and a second model sharing a set's textures,
+textures from PNG and JPEG bytes put into a loaded model's materials, the
+model facts, the per-instance look and node visibility, culling and its
+statistics, local lights and shadows, the frame timer, the glow layer,
+bloom and particles, multisampling on a canvas frame target and an HDR
+target, level of detail, the wave field and open-water waves, and the water
+surface)
 with no warning from the crate or the frontend, and `cargo test --offline` runs the graphics crate's unit
 tests on the host from the copy in the materialized vendor folder. The same
-skip rule as WebGpu.Tests.
+skip rule as WebGpu.Tests. A new feature of the crate gets its block in
+frontend-main.rs, so that the wasm32 check compiles real use of it.
+THE glTF REFERENCE. The same materialize test writes a reference folder
+first (GltfReferenceFolder.Write of the test-side library
+tests/CodeBrix.WebPlatform.WebGpu.Graphics.Tests.GltfReference: cases.txt,
+the model files of every pack, and one ModelDataWriter blob per case made by
+THE REFERENCE CONVERTER - the C# glTF-to-model-data converter on the
+CodeBrix.Graphics3D.Gltf2 and CodeBrix.Imaging packages, which follows the
+desktop library's loader step for step) and runs the crate's tests with
+CODEBRIX_GRAPHICS_TEST_GLTF_REFERENCE=<folder>: src/gltf/reference_tests.rs
+loads every model with the Rust loader and compares it with the blob, value
+by value - exactly, bit for bit (counts, indices, names, vertices with read
+or generated normals and tangents, skins, morph deltas, node matrices,
+animation keys, materials, samplers, PNG pixels, the warnings word for
+word), with a tolerance only for JPEG pixels (two different decoders).
+Without the variable those tests print SKIPPED and pass. The packs: the
+GraphicsDemo sample's Models/** (LINKED by the library's project file: move
+or rename the sample's model folder and change the link) and the library's
+own Models/<pack>/ - Khronos glTF Sample Assets, CC0-1.0 and CC-BY-4.0
+only, each pack with SOURCE.txt (commit, date, per model its licence and
+attribution), each model with its LICENSE.md and metadata.json, and the
+licence texts under LICENSES/ (Models/README.txt is the rule for adding a
+pack; .gitattributes marks the packs -text). The Draco variants are kept
+to test the refusal. The converter's own tests are in
+tests/CodeBrix.WebPlatform.WebGpu.Graphics.Tests/GltfReference/. To write a
+reference folder by hand:
+    CODEBRIX_GLTF_REFERENCE_FOLDER=<folder> dotnet test --project tests/CodeBrix.WebPlatform.WebGpu.Graphics.Tests/CodeBrix.WebPlatform.WebGpu.Graphics.Tests.csproj --filter-method "CodeBrix.WebPlatform.WebGpu.Graphics.Tests.GltfReference.GltfReferenceFolderTests.Write_to_the_folder_named_by_the_environment_variable"
 GRAPHICS.TESTS ALSO TESTS THE MODEL-DATA WRITER (folder Models/): golden
 bytes of a tiny model, every section, the 16-byte alignment of every section
 and every range, every check of the writer and its message, and a round trip
@@ -435,7 +504,7 @@ read the same files.
 ANIMATION.TESTS has the same shape for the Animation package: the
 registration (both bundles, WebGpu's first, registering again changes
 nothing), the paths and messages (the notices name the vello and Skia
-material, the kurbo and peniko crates, harfrust, i_overlay, png, usvg and velato), the archive's shape (exactly the
+material, the kurbo and peniko crates, harfrust, i_overlay, usvg and velato), the archive's shape (exactly the
 Animation library's Rust/vendor byte for byte plus
 codebrix-webgpu-animation-<version>/ in vendored form, a checksum file
 listing every other file with its sha256 and package null, path order, one
@@ -446,7 +515,7 @@ fixture because the bundle registry is process-wide:
     webgpu-animation, the Animation bundle adds its crate and its own
     third-party crates and shares nothing, the vendor folder holds one
     folder per crate of the three archives, `cargo metadata --offline`
-    resolves codebrix-webgpu-animation with kurbo, peniko, harfrust, i_overlay, png, usvg and velato from the vendor
+    resolves codebrix-webgpu-animation with kurbo, peniko, harfrust, i_overlay, usvg and velato from the vendor
     folder and no Graphics crate, `cargo check --offline --target
     wasm32-unknown-unknown` compiles Materialize/frontend-main.rs (a session
     of every basic shape with a gradient fill and a dashed path, easing,
@@ -456,7 +525,17 @@ fixture because the bundle registry is process-wide:
     width, the debug overlay, and a session drawn without its background
     into part of the canvas - and a second AnimationLayer drawing peniko brushes and kurbo
     shapes into the VectorScene directly - a sweep gradient, a group with a
-    mix mode, a clip) with no warning from the crate or the frontend, and
+    mix mode, a clip - and, in marked blocks, every API added since: from_jpeg,
+    a const CubicBezierEasing, the RenderStats timings and counters,
+    register_font_with_variations / get_variation_axes, fixed-width strokes on
+    a path, a text block's outline and an SVG with vector-effect, the sketch
+    helper boiling, OwnershipShape::with_colors, the render options' paint,
+    effects, authored layers, blend and opacity, wipes by line and iris,
+    stroke sets with tips, anchors, boil and flow, the painting's planning
+    and colour, picked colours from a picture, a picture target listed below
+    its reader and an application texture, the surface finish, checkpoints,
+    a stroke-level transition, the ripple field and caustics, and refraction
+    and reflection with every water source) with no warning from the crate or the frontend, and
     `cargo test --offline` runs the crate's unit tests on the host from the
     copy in the materialized vendor folder;
   - then with GraphicsCrates.Register() as well: the three bundles are
@@ -473,8 +552,17 @@ the whole gate against this repository (they need cargo, offline).
 
 WHAT THE UNIT TESTS OF codebrix-webgpu COVER, AND WHAT CANNOT BE TESTED ON THE
 HOST. The crate's `#[cfg(test)]` tests (run by the materialize test above)
-cover its CPU-only logic: the clock (pause, resume, speed, seek, the same
-tick for every canvas in one animation frame), the named points in time
+cover its CPU-only logic: the clock (pause, resume, speed, seek, a seek
+before the first frame on a running and on a paused clock, the same
+tick for every canvas in one animation frame), the IMAGE DECODERS (PNG: every
+colour type and bit depth, palette and tRNS, 16-bit keeping the high byte,
+an APNG's default image, the size limit; JPEG: baseline, progressive,
+greyscale, 4:2:0 at an odd size, and every refusal - CMYK, YCCK, 12-bit,
+lossless, arithmetic, hierarchical, oversize, cut short in the header and in
+the data; decode_image's sniffing and named refusals - on small JPEG files
+in the crate's fixtures/jpeg/, made for the tests from synthetic pixels as
+the test file's `//!` says, and PNG files the tests encode themselves), the
+pointer events' buttons, button, kind and modifiers, the named points in time
 (reached, since, crossed across pause, speed and seeks), the layer list
 (order, add, move, remove) and when a layer is prepared or resized, the
 surface size from the displayed size and pixel ratio, the drag deltas (each
@@ -511,8 +599,14 @@ C# defaults of its options), the camera (C#'s CameraTests ported: the
 target in the middle, depth 0..1, orthographic sizes; a degenerate camera),
 the orbit camera's clamps, the ORBIT CONTROLLER (auto-orbit from the frame
 time and its stop on a drag, a rightward drag lowering the yaw - the scene
-following the pointer -, the pitch and distance limits, wheel steps, a pinch
-that zooms without orbiting, one finger after a pinch), the mesh primitives
+following the pointer -, the pitch and distance limits, with_limits and
+negative pitch limits, wheel steps, a pinch that zooms without orbiting, one
+finger after a pinch; PANNING by button, Shift, pen and two fingers, the mode
+switching mid-drag, the bounds, the content following the pointer checked
+through world_to_canvas in both projections; frame_box; the orthographic
+zoom - wheel, pinch, limits, the application's own height, pan after zoom,
+perspective unchanged), world_to_canvas and canvas_to_ray round trips and
+the ray-box tests (drawing3d/ray.rs), the mesh primitives
 (C#'s MeshShapesTests ported: counts, bounds, outward winding; transformed,
 combine), the mesh checks, the lit material's defaults, translucency, alpha
 parameter and texture-transform rows, the mesh renderer's CPU half
@@ -536,10 +630,34 @@ the same nodes and clips as data, since the player needs no GPU),
 and the shaders: the PBR source is one constant per feature followed by the
 body, MIRRORED changes nothing, every variant is listed once, no variant
 declares an array of matrices (the C# library's guard), the bakers start with
-their common part, the tone map has its three named curves. What needs a
+their common part, the tone map has its three named curves. And the
+additions beyond the C# library, each beside its code: the GLTF LOADER
+(src/gltf/: the .glb container, data: URIs, percent escapes and address
+joining, .NET's arithmetic in numerics.rs, strips and fans, generated
+normals and tangents, texture format sniffing and reduction, the three
+packagings, every refusal by name, damaged documents with every byte
+changed or cut short - never a panic -, materials and extensions, texture
+and vertex sharing, skins, animation packing, the upload plan of
+GltfModelSet::create_models; and the reference comparison above), the model
+facts, the translucent sort that follows skins and morphs, the per-instance
+look and node visibility, update_to_since_zero and the per-player clip
+limit, CULLING (the bounds grown at load: models/model_bounds_tests.rs; the
+volume test: visibility/), two-pass double-sided parts, LOCAL LIGHTS AND
+SHADOWS (falloff, cone, importance and choice, the light views and their
+volumes, the bias numbers, the shadow passes of each pair), MULTISAMPLING
+(the buffer plans, the pipeline check), LEVEL OF DETAIL (the choice, bands,
+hysteresis and culling: models/lod_tests.rs; the dither arithmetic, checked
+against the WGSL copies in pbr_body.wgsl and shadow_depth.wgsl), the
+EFFECTS (the frame timer's arithmetic, the glow layer's packing, bloom's
+chain and bright pass, the particles' spawning and stepping, mirrored in
+effects/particle_math.rs), and WATER (water/tests.rs and
+water/tests_surface.rs: the wave field's CPU twin, its stability rule,
+drops, wakes, rain, masks and stirring, the open-water waves, the water
+surface's uniform record and its CPU twins). What needs a
 browser - creating anything on a device, compiling, drawing, readback - is
-proved in the GraphicsDemo sample's "Shaders" and "Textured quad" scenes in
-headless Chrome.
+proved in the GraphicsDemo sample's scenes in headless Chrome ("Shaders",
+"Textured quad", the Viewer and the feature demos; its MAINTAINER-README.txt
+says how).
 
 
 THE MAINTAINER TOOL
@@ -551,17 +669,21 @@ finds the repository root by the .slnx and the allowlist. Its check groups:
 
     no-node    nothing of ours uses Node.js
     vendor     Rust/vendor holds exactly the crates the crate set derives,
-               every file as crates.io published it; the Animation library's
-               Rust/vendor holds exactly the Animation crate set's OWN crates
-               (its lock minus what the WebGpu package or the platform
-               carries), every file as published; git ignores no file of the
-               two vendor trees; no GitHub workflow files outside them
+               every file as crates.io published it; the Graphics and the
+               Animation library's Rust/vendor each hold exactly their crate
+               set's OWN crates (its lock minus what the WebGpu package or the
+               platform carries), every file as published; git ignores no
+               file of the three vendor trees; no GitHub workflow files
+               outside them
     platform   THE STRICT RULE against the platform's archive (from the
                FrontendBuilder package at the Core pin's version); and for
-               the Animation crate set: every crate it shares is at the
-               WebGpu package's or the platform's version with the same
-               checksum, and every crate it vendors is a name neither of them
-               carries in any version
+               the Graphics and the Animation crate sets: every crate one
+               shares is at the WebGpu package's or the platform's version
+               with the same checksum, and every crate it vendors is a name
+               neither of them carries in any version; and the two bundles
+               side by side (an application may register both): no crate is
+               vendored by both packages in another version or with other
+               content (the same crate in both is listed as a note)
     platform   ALSO THE FAMILY RULE: Graphics and Animation import the
                exact-pin target and pin the WebGpu project, never a WebGpu
                package
@@ -571,8 +693,8 @@ finds the repository root by the .slnx and the allowlist. Its check groups:
                publish = false, a name no third-party crate has), and every
                dependency is at an EXACT version the vendored or the
                platform's crates carry (the Graphics and Animation crates may
-               also name codebrix-webgpu, at its own version; the Animation
-               crate the crates its own vendor folder holds); they are
+               also name codebrix-webgpu, at its own version, and each the
+               crates its own vendor folder holds); they are
                exempt from the licence audit and absent from the generated
                third-party notices (that is what "ours" means)
     dependency-rule
@@ -582,20 +704,22 @@ finds the repository root by the .slnx and the allowlist. Its check groups:
                reference, no crate name, no Rust name in the sources)
     licenses   every vendored crate, and the crates compiled into a wasm32
                application, against the allowlist; bundled files scanned;
-               the same for the Animation crate set, audited offline in a
-               temporary copy whose vendor folder merges its own crates with
-               the shared ones (cargo cannot resolve it from its own vendor
-               folder alone)
+               the same for the Graphics and the Animation crate sets, each
+               audited offline in a temporary copy whose vendor folder merges
+               its own crates with the shared ones (cargo cannot resolve it
+               from its own vendor folder alone)
     notices    THIRD-PARTY-NOTICES-WebGpuCrates.txt is the header plus what
                the audit produces; `notices --write` regenerates it, and
+               THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt and
                THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt the same way
-               from its own header and the Animation package's OWN crates;
-               that header has the vello and Skia entries (Skia's licence
+               from their own headers and each package's OWN crates. The
+               Graphics header has the crate's own-code statement, its four
+               entries (the three tone-mapping functions, with the MIT text,
+               and the .hdr decoder's source) and the glTF crates' part, and
+               the Graphics project packs the file; the Animation header has
+               the vello and Skia entries (Skia's licence
                text verbatim) and harfrust's Unicode data (the Unicode
-               License V3 text verbatim) and the Animation project packs the file. The
-               Graphics package's hand-written notices file exists, is
-               packed, and has its four entries (the three tone-mapping
-               functions, with the MIT text, and the .hdr decoder's source).
+               License V3 text verbatim) and the Animation project packs the file.
                The GraphicsDemo sample's notices name every model,
                panorama and font pack (Models/, Environments/ and Fonts/ of
                GraphicsDemo.Assets; a font's licence file is its original
@@ -642,7 +766,8 @@ What ships inside each nupkg:
     buildTransitive/CodeBrix.WebPlatform.WebGpu.ApacheLicenseForever.targets
   and, in the Graphics package:
     tools/webgpu-graphics-crates/webgpu-graphics-crates.zip
-                                            (codebrix-webgpu-graphics only)
+                                            (its own vendored crates +
+                                             codebrix-webgpu-graphics)
     tools/webgpu-graphics-crates/THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt
     buildTransitive/CodeBrix.WebPlatform.WebGpu.Graphics.ApacheLicenseForever.targets
   and, in the Animation package:
@@ -692,13 +817,16 @@ carries: this repository is self-contained, and the gate keeps the shared
 ones identical to the platform's. In an application's vendor folder cargo
 keeps one copy of each.
 
-THE CRATES CHOSEN BY NAME: wgpu (its features in the crate set's comment)
-and glam (the maths of codebrix-webgpu; default features plus bytemuck, its
-other optional dependencies off and not vendored). Each has an
-UPGRADE-README.txt under Rust/vendoring/.
+THE CRATES CHOSEN BY NAME: wgpu (its features in the crate set's comment),
+glam (the maths of codebrix-webgpu; default features plus bytemuck, its
+other optional dependencies off and not vendored), png (PNG files for
+codebrix-webgpu's decode_png, with its tree; zlib-rs carried but not
+compiled, the test PDF it carries) and zune-jpeg (JPEG files for
+decode_jpeg; DEFAULT FEATURES OFF, `std` on; it brings zune-core). Each has
+an UPGRADE-README.txt under Rust/vendoring/.
 
 THE SECOND CRATE SET: THE ANIMATION PACKAGE'S. src/CodeBrix.WebPlatform.WebGpu
-.Animation/Rust/animation-crates/Cargo.toml names kurbo, peniko, harfrust, i_overlay, png, usvg,
+.Animation/Rust/animation-crates/Cargo.toml names kurbo, peniko, harfrust, i_overlay, usvg,
 svgtypes and velato
 (exact versions, default features); its Cargo.lock is resolved against the
 platform's lock AND the WebGpu crate set's, so that every crate it shares
@@ -706,7 +834,8 @@ with them is at their exact version. Its vendor folder
 (src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendor) holds ONLY THE CRATES
 THE PACKAGE ADDS - the lock's crates that neither the platform nor the WebGpu
 package carries - because the Graphics and Animation bundles hold only what
-they add (the owner's rule). That is the one difference from the WebGpu set:
+they add (the owner's rule). That is the one difference from the WebGpu set
+(and the Graphics set below is built the same way):
 the folder cannot resolve the set by itself, so the gate builds a merged
 source for cargo (MAINTAINER TOOL, licenses), as an application's vendor
 folder is after Materialize. The same rules otherwise: exactly as crates.io
@@ -716,9 +845,7 @@ Rust/vendoring/kurbo-peniko/UPGRADE-README.txt says how the set is derived
 and re-derived; Rust/vendoring/harfrust/UPGRADE-README.txt what is particular
 to harfrust (its Unicode data, read-fonts' Adobe Glyph List, the .wasm cost);
 Rust/vendoring/i_overlay/UPGRADE-README.txt what is particular to i_overlay
-(two crates without a licence file, libm compiled in, how the crate uses it);
-Rust/vendoring/png/UPGRADE-README.txt what is particular to png (its tree,
-zlib-rs carried but not compiled, the test PDF it carries).
+(two crates without a licence file, libm compiled in, how the crate uses it).
 The set also names usvg (default features off, its `text` feature on) and
 svgtypes at the version usvg brings; Rust/vendoring/usvg/UPGRADE-README.txt
 says what is particular to them (the public-domain test font fontdb carries,
@@ -726,6 +853,61 @@ the ids usvg clears inside <use>d content, how the crate uses usvg). And it
 names velato (DEFAULT FEATURES OFF); Rust/vendoring/velato/UPGRADE-README.txt
 says what is particular to it (default features off, its panics and the
 crate's pass in front of them).
+
+THE THIRD CRATE SET: THE GRAPHICS PACKAGE'S. src/CodeBrix.WebPlatform.WebGpu
+.Graphics/Rust/graphics-crates/Cargo.toml names gltf (approved by the owner
+by name; DEFAULT FEATURES OFF - its `import` feature reads files and decodes
+images through the `image` crate, and is never turned on - with the
+features the crate's glTF loader reads, listed in that file's comment, and
+the same line in the Graphics crate's Cargo.toml). It is resolved and
+vendored exactly as the Animation set: its lock against the platform's and
+the WebGpu set's locks, its vendor folder
+(src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/vendor) holding ONLY the
+crates the package adds (gltf, gltf-json, gltf-derive, lazy_static,
+inflections); everything else gltf uses (serde, serde_json - whose
+`raw_value` feature gltf-json switches on, a feature and not a crate -,
+byteorder, proc-macro2, quote, syn and the rest) is the platform's, at its
+version. gltf-derive is a procedural macro (build time only). inflections
+carries a documentation deploy script of its author: part of the crate as
+published, never run, never deleted. Rust/vendoring/gltf/UPGRADE-README.txt
+says how the set is derived and what is particular to gltf. The Graphics
+and the Animation sets never share a crate at different versions or
+contents (the gate's platform group).
+
+UPGRADING A VENDORED LIBRARY (the generic procedure every UPGRADE-README.txt
+under Rust/vendoring/ points at; each file holds what is particular to its
+library):
+  1. The owner approves a new crate, a new feature or a new crate set
+     first. Only stable releases from crates.io, never the upstream
+     repository; take the latest release when upgrading.
+  2. Read the release notes of every version in between, and the new
+     version's Cargo.toml (its features and dependencies, its minimum Rust
+     version against the host tools' toolchain). Keep the crate set's
+     comment true.
+  3. Change the exact version (`=x.y.z`) in the crate set's Cargo.toml and
+     in every first-party crate that names the library.
+  4. Re-resolve AGAINST THE PLATFORM'S LOCK (Rust/vendoring/wgpu/
+     UPGRADE-README.txt, THE LOCK IS RESOLVED AGAINST THE PLATFORM'S LOCK,
+     has the steps; the Graphics and Animation sets also against the WebGpu
+     set's lock). `LibraryChecker revendor` does it for the WebGpu set from
+     the platform's lock ALONE, which lets cargo move every crate the
+     platform does not carry to its newest compatible version: when one
+     crate is meant to change, seed the scratch resolve with the set's
+     current Cargo.lock instead, and compare the new lock with the old one
+     (only the intended entries may differ).
+  5. `cargo vendor --locked --versioned-dirs` into a fresh folder and
+     replace the package's Rust/vendor (the Graphics and Animation folders:
+     only the crates the package adds) and the set's Cargo.lock. Never edit
+     a vendored file.
+  6. READ THE LICENCE FILES inside every crate new to the lock, not only its
+     declared licence; a licence that is not approved goes to the owner.
+  7. Bump the version of every first-party crate whose dependency moved
+     (THE FIRST-PARTY CRATE, ITS VERSION).
+  8. Run the gate (`LibraryChecker`) and regenerate the notices
+     (`LibraryChecker notices --write`); read the difference. Then the
+     tests of the touched packages (the materialize tests build and test the
+     crates offline from the vendored folders) and the GraphicsDemo sample's
+     scenes that use the library, in a browser.
 
 
 THE FIRST-PARTY CRATE
@@ -735,9 +917,13 @@ context that owns or shares the device (with the device's ONE uncaptured-error
 handler and its subscriptions), ONE canvas host component (frame
 loop, input, layers, the host's clear, the surface configuration and the
 blending convention), the clock with pause, speed, seek and named points in
-time, the "WebGPU is not available" result and message, and glam's maths
-re-exported under its own names. Graphics and Animation build on it. The
-consumer's view of it is in AGENT-README.txt.
+time, the "WebGPU is not available" result and message, glam's maths
+re-exported under its own names, and PNG and JPEG decoding (src/images/:
+decode_png through png, decode_jpeg through zune-jpeg, decode_image picking
+one by the first bytes - separate functions, so that an application carries
+only the decoder it calls; the PNG code moved here unchanged from the
+Animation crate). Graphics and Animation build on it. The consumer's view of
+it is in AGENT-README.txt.
 
   - NOT ON crates.io. It travels only inside webgpu-crates.zip, in vendored
     form (THE CRATES ARCHIVE above), and reaches a frontend through
@@ -748,11 +934,11 @@ consumer's view of it is in AGENT-README.txt.
     first-party group checks the manifest instead).
   - EVERY DEPENDENCY AT AN EXACT VERSION that the vendored or the platform's
     crates carry (the gate checks it): dioxus, web-sys and wasm-bindgen are
-    the PLATFORM's (dioxus is its =0.7.10 line today), wgpu and glam the
-    crate set's. THIS TIES THE CRATE TO ONE PLATFORM RELEASE: every platform
-    republish that moves one of those crates means editing the crate's
-    Cargo.toml to the new versions, building it against them (the
-    materialize tests), and republishing with the new Core pin. Each
+    the PLATFORM's (dioxus is its =0.7.10 line today), wgpu, glam, png and
+    zune-jpeg the crate set's. THIS TIES THE CRATE TO ONE PLATFORM
+    RELEASE: every platform republish that moves one of those crates means
+    editing the crate's Cargo.toml to the new versions, building it against
+    them (the materialize tests), and republishing with the new Core pin. Each
     dependency is on one line of its table (the gate reads it so).
   - ITS VERSION. cargo treats a name and version from a vendor folder as
     unchanging (it does not notice changed content under the same version),
@@ -811,11 +997,14 @@ holds for it too (not on crates.io; ours; exact dependencies; bump `version`
 when its content changes; no backend code; host build for its unit tests; do
 not run cargo in its folder). In addition:
 
-  - DEPENDENCIES: codebrix-webgpu at its own exact version, and wgpu, glam
-    and bytemuck at the WebGpu crate set's exact versions. NEVER anything of
-    the Animation package. No dioxus and no web-sys of its own: the canvas
-    host is codebrix-webgpu's. No procedural macro (bytemuck's derive is not
-    used).
+  - DEPENDENCIES: codebrix-webgpu at its own exact version, wgpu, glam
+    and bytemuck at the WebGpu crate set's exact versions, and gltf at the
+    Graphics crate set's exact version, with the set's features (THE THIRD
+    CRATE SET in VENDORED SNAPSHOTS). NEVER anything of the Animation
+    package. No dioxus and no web-sys of its own: the canvas host is
+    codebrix-webgpu's, and PNG and JPEG are decoded by codebrix-webgpu. The
+    crate itself derives nothing (bytemuck's derive is not used); the one
+    procedural macro in its build is gltf-derive, which gltf-json uses.
   - THE PARITY RULE (the owner's): the same FEATURES and the same SHAPE of
     API as the C# library - type names kept, members in snake_case, the same
     argument order, an options struct (with Default holding the C#
@@ -830,9 +1019,13 @@ not run cargo in its folder). In addition:
     what does the work INSIDE (nothing new is approved: propose a crate to
     the owner by name first).
   - A LAYER, NEVER ALONE: the crate draws into the frame the canvas host
-    hands it (begin_canvas_frame), loads instead of clearing, takes its time
-    from the frame and never reads a clock. No text of its own (text is the
-    Animation crate's, as a layer).
+    hands it (begin_canvas_frame), loads instead of clearing, and takes its
+    time from the frame: NOTHING IT DRAWS READS A CLOCK. The one exception
+    (the owner's) is measurement-only frame timing: FrameTimer reads the
+    page's performance.now() (std::time::Instant on the host;
+    src/queries/cpu_clock.rs) to measure CPU time for a read-out, and only
+    when an application makes one; nothing drawn depends on it. No text of
+    its own (text is the Animation crate's, as a layer).
   - THE ORDER OF ITS FEATURES (the owner's, agreed): 1 context, canvas
     frames, hosting, every built-in shader compiled in the browser; 2
     resources and the pipeline builder; 3 SpriteBatch; 4 the lit-mesh
@@ -868,9 +1061,82 @@ not run cargo in its folder). In addition:
     port of the C# library's Model, ModelInstance, ModelRenderer and
     PbrModelRenderPath (same uniform and storage layouts, same packing of
     instances, node matrices, joint palettes and morph weights, same
-    batching, mirroring and back-to-front blending). The C# GltfModelLoader
-    has no Rust counterpart: its CPU half runs in .NET (the sample's
-    GraphicsDemo.Assets), its upload half is GraphicsContext::create_models.
+    batching, mirroring and back-to-front blending). The C# GltfModelLoader's
+    CPU half is src/gltf/ (below), its upload half
+    GraphicsContext::create_models.
+    ADDED (not in C#), in the same files and beside them: the finishing
+    step in two halves (end_opaque, end_blended; end does both); the
+    translucent sort key moved by the current morph weights and skin (the
+    morph targets' centre shifts are worked out at load); the per-instance
+    tint, alpha and emissive strength and node visibility (instances that
+    use them are planned after the plain ones, so plain instances still
+    batch as before); node world matrices by name; the model facts on Model
+    and ModelData; material_mut and set_material_texture (only on the sole
+    handle of a model); FRUSTUM CULLING with bounds grown at load
+    (models/model_bounds.rs; the volume test in src/visibility/; the one
+    rule in model_draw_plan::is_culled); two-pass drawing of blended
+    double-sided parts; LOCAL LIGHTS and SHADOWS (src/lighting/
+    local_lights.rs and shadows.rs: the CPU half; models/model_shadows.rs:
+    the maps, the depth pipelines and the passes, on an encoder of the
+    renderer's own, submitted at the pair's first finishing call; each pair
+    of a frame its own set of maps); LEVEL OF DETAIL (models/
+    lod_instance.rs: the types and the CPU choice; models/lod_dither.rs: the
+    dither code and the host mirror of the shaders' dither arithmetic,
+    whose WGSL copies in pbr_body.wgsl and shadow_depth.wgsl must stay
+    identical text - a host test checks both); ModelRenderStats. The
+    PbrFeatures SHADER features are the low contiguous bits and the
+    pipeline-only flags sit above them (every_shader_variant maps the low
+    bits straight to variants): a new shader feature goes at the low end
+    and moves the pipeline-only flags up, with from_bits_truncate's mask and
+    the tests that spell the masks. Prefer a shader of its own (as the water
+    and effects have) to a new PBR feature: each one doubles the variants.
+  - THE glTF LOADER (src/gltf/, not in C#): parsing through the gltf crate,
+    and a BUILDER that is a port of the C# GltfModelBuilder (step for step
+    the desktop library's loader: its normal and tangent generation, not
+    MikkTSpace, and its warnings, word for word), producing the crate's
+    ModelData / ModelDataSet, so that create_models and the renderer did not
+    change. numerics.rs reproduces .NET's arithmetic where the result
+    depends on it (normalising by division, the TRS matrix,
+    Matrix4x4.Decompose, Matrix3x2.CreateRotation's snapping). Its own entry
+    points, never inside load_model, so that an application that loads only
+    blobs carries no glTF code. Images through codebrix-webgpu's decoders.
+    Checked against THE REFERENCE CONVERTER on the test side (TESTING, THE
+    glTF REFERENCE): keep the two in step when either changes. Differences
+    from the C# converter, by decision: only PNG and JPEG are decoded; only
+    the textures a material slot uses are decoded; vertex sharing
+    (share_vertex_data; off gives the C# layout); nothing is repaired; an
+    accessor that runs past its buffer view leaves its primitive out;
+    max_texture_size averages pixels itself (alike, not equal to the C#
+    resampler).
+  - ANTI-ALIASING (src/presentation/: canvas_frame_target.rs,
+    multisampling.rs, the sample count in HeadlessRenderTarget and
+    RenderTargetView): 1 or 4 samples per target; every renderer keys its
+    pipelines by TargetFormats (colour, depth, sample count);
+    RenderPass::set_pipeline checks a pipeline against its target. A
+    4-sample canvas layer resolves into a texture of its own and lays it
+    over the canvas when its GraphicsFrame is dropped (WebGPU's resolve
+    would replace the layers below). A multisampled DEPTH texture has
+    TEXTURE_BINDING usage (the water's capture reads it; probed in Chrome).
+    Shadow maps stay at 1 sample (a comparison sampler cannot read a
+    multisampled texture).
+  - THE EFFECTS (src/effects/: glow layer, bloom, particles;
+    src/queries/frame_timer.rs) and WATER (src/water/: the wave field, its
+    CPU twin WaveCore shared by WaveField and the public CpuWaveField,
+    open-water waves, the water surface, its scene capture) are new files
+    with OUR OWN shaders (glow, bloom, particles, wave_field,
+    water_surface, water_capture .wgsl, listed by EffectShaders::all() and
+    WaterShaders::all(), not by BuiltInShaderSource::all): THE WGSL COPY
+    rules below do not apply to them. Each shader has a host-tested twin in
+    Rust that must stay in step with it: particles.wgsl with
+    effects/particle_math.rs, wave_field.wgsl with water/wave_math.rs,
+    water_surface.wgsl with water/water_math.rs and water/gerstner_math.rs
+    (the uniform record's offsets are asserted against the WGSL struct's
+    field order). The wave field damps the VELOCITY, not the height (a
+    damped height acts as a spring that reflects waves at an absorbing
+    edge); it follows the canvas clock's DELTA, at a fixed step rate. Prove
+    every new or changed shader in Chrome, not only in naga: Chrome refuses
+    a texture sample or a derivative inside a branch, and a float literal at
+    f32's limit, that naga accepts.
     The frame bind group binds the chosen environment's irradiance and
     prefiltered cubes and the context's BRDF LUT (AmbientLighting::
     Environment, C#'s SelectEnvironment: the lighting's environment or the
@@ -919,9 +1185,11 @@ not run cargo in its folder). In addition:
     same passes in the same order, same option clamping. Differences: no
     Parallel.For (the CPU halving of over-wide panoramas and the half-float
     conversion run on one thread; the half conversion is our own small
-    round-to-nearest-even function, no crate); no image decoding but the
-    .hdr decoder (CreateEnvironment(path/stream/Image) become
-    create_environment(&FloatImage) and create_environment_from_bytes(.hdr));
+    round-to-nearest-even function, no crate); for environments no image
+    decoding but the .hdr decoder (CreateEnvironment(path/stream/Image) become
+    create_environment(&FloatImage) and create_environment_from_bytes(.hdr);
+    textures from PNG and JPEG files go through codebrix-webgpu's decoders,
+    create_texture_from_png / _jpeg / _image in src/context/);
     EnvironmentMap is an Rc handle holding only wgpu objects, and the
     context's EnvironmentCache (baker pipelines, LUT, default environment)
     and MipmapGenerator hold no context, so nothing forms a reference cycle;
@@ -979,7 +1247,15 @@ not run cargo in its folder). In addition:
     wheel 0.9 / 1.1, auto-orbit 0.7 + 0.18 t, the Android limits pitch
     0.05..1.35 and distance 3..30). THE DRAG CONVENTION (the owner's): the
     content follows the pointer - a rightward drag lowers the yaw, so the
-    scene swings right under the pointer.
+    scene swings right under the pointer; a PAN moves the target so that the
+    content at the target's depth follows the pointer exactly (set_viewport
+    gives it the camera and the canvas height). Also not in C#: with_limits,
+    panning (pan_enabled, pan_bounds), frame_box, and the orthographic zoom
+    (apply sets orthographic_height in proportion to the distance; the
+    ratio lives in a Cell because apply takes &self, so the controller is
+    not Sync). Camera::world_to_canvas / canvas_to_ray / fit_distance /
+    fit_orthographic_height and Ray (drawing3d/ray.rs) are the picking and
+    framing helpers.
 
 THE WGSL COPY. The crate's shaders (src/shaders/wgsl/) are a ONE-WAY copy of
 the WGSL string constants of the C# library: Shaders/BuiltInShaders.cs (Sprite,
@@ -996,7 +1272,14 @@ made, so that the next one is the same:
     as C#'s but for that first newline;
   - PbrShader::source(features) writes, as C#'s Source(PbrFeatures), one
     `const NAME: bool = true|false;` line per shader feature in C#'s order,
-    then a newline and the body: byte for byte C#'s output.
+    then a newline and the body: C#'s output for C#'s features.
+OUR ADDITIONS TO THE COPY. pbr_body.wgsl carries additions of this
+repository that the C# library does not have - the local lights, the
+shadows, the level-of-detail dither, the per-instance tint, alpha and
+emissive strength, emissive times vertex colour - each marked "Not in C#"
+in the file, and PbrFeatures has shader features of ours after C#'s
+(LOCAL_LIGHTS, SHADOWS, DITHER_FADE), so the PBR source is C#'s plus them.
+shadow_depth.wgsl is ours entirely. A re-sync keeps every addition.
 CHANGES FORCED BY THE BROWSER: NONE. Every built-in shader, and every one of
 the PBR shader's feature combinations, compiled in Chrome (on the laptop's
 Intel adapter, through Vulkan) with no error and no warning, unchanged. When a
@@ -1012,9 +1295,9 @@ aces_narkowicz: Narkowicz's post, CC0 elected; pbr_neutral:
 KhronosGroup/ToneMapping, Apache-2.0), and the RADIANCE .hdr DECODER follows
 the logic of stb_image.h's HDR loader (nothings/stb, MIT or public domain at
 the user's choice; public domain elected). All four are listed, with the MIT
-text of BakingLab, in the Graphics package's notices file (the gate requires
-the four entries); keep that file in step if the curves or the decoder
-change.
+text of BakingLab, in the hand-written header of the Graphics package's
+notices (the gate requires the four entries); keep it in step if the curves
+or the decoder change.
 
 
 THE ANIMATION CRATE
@@ -1031,10 +1314,25 @@ above holds for it too (not on crates.io; ours; exact dependencies; bump
 tests; do not run cargo in its folder). In addition:
 
   - DEPENDENCIES: codebrix-webgpu at its own exact version (and through it
-    wgpu, glam, dioxus, web-sys), kurbo, peniko, harfrust, i_overlay, png, usvg, svgtypes and velato at the Animation
-    crate set's exact versions (THE SECOND CRATE SET above), and serde_json at the platform's
-    (velato's JSON reader, which the Lottie module also uses). NEVER anything
-    of the Graphics package. No dioxus and no web-sys of its own.
+    wgpu, glam, dioxus, web-sys, and the PNG and JPEG decoders behind
+    ImageSource::from_png and from_jpeg - decode_png / decode_jpeg; png and
+    zune-jpeg are the WebGpu package's crates, not this crate's), kurbo,
+    peniko, harfrust, i_overlay, usvg, svgtypes and velato at the Animation
+    crate set's exact versions (THE SECOND CRATE SET above), and serde_json
+    at the platform's (velato's JSON reader, which the Lottie module also
+    uses). The `color` crate (the Oklab / Oklch mixing of painting/) is
+    reached through peniko's re-export (peniko::color), not named. NEVER
+    anything of the Graphics package: a 3D scene or a wave field reaches the
+    crate as a plain wgpu::TextureView. No dioxus and no web-sys of its own
+    (the one browser call, performance.now() in rendering/cpu_clock.rs, goes
+    through codebrix_webgpu::wgpu::web_sys::js_sys by reflection).
+  - NEW FIELDS AND THE VERSION (the owner's decision): a public struct that
+    gains fields, or an enum that gains a variant (DrawingNoiseKind::Caustics),
+    is released as a MINOR version, not a major one. AGENT-README tells
+    consumers to write struct literals with `..Default::default()` and lists
+    the types that gained fields (NEW FIELDS COME WITHOUT A MAJOR VERSION):
+    keep that list current, and give every new field a Default that draws
+    exactly what was drawn before.
   - THE PARITY RULE (the owner's, as for Graphics): C# type names kept,
     members in snake_case, the same argument order, option structs with
     Default for C# default arguments, Result or Option with a message that
@@ -1042,11 +1340,36 @@ tests; do not run cargo in its folder). In addition:
     for Dispose. Existing licence-compatible Rust code is preferred over
     porting C# for what does the work inside (kurbo flattens and strokes;
     vello's code is taken where it fits).
-  - THE RULE OF THE CRATE: nothing reads a clock. Every time comes from the
-    frame (the host's one clock: pause, speed, seeks, named points).
+  - THE RULE OF THE CRATE: nothing it DRAWS depends on a clock. Every time
+    comes from the frame (the host's one clock: pause, speed, seeks, named
+    points), and every value drawn is a function of the time and of what is
+    passed in (seeds included: no randomness from anywhere else), so a seek
+    shows exactly what playing shows - the ripple field, the rain, the boil,
+    the sketch helper, the painting timeline and the checkpoint cache all
+    keep it. THE ONE EXCEPTION (the owner's amendment): measurement-only
+    frame timing - RenderStats' record_ms / build_ms / encode_ms, read
+    through the internal rendering/cpu_clock.rs (performance.now() in a
+    browser, std::time::Instant on the host). Nothing drawn may ever read
+    it. The one place the rule cannot hold is an application's texture fed
+    by a simulation or a video (WaterSource::Texture, a texture colour
+    source): the rustdoc says plainly that such a scene cannot be rewound.
   - HOW A FEATURE IS PROVED: every feature ends visible in a scene of the
     GraphicsDemo "animation" application, and the owner judges the look
     himself: no programmatic image comparison with the C# library, ever.
+    A default he chooses by eye is stated plainly in the rustdoc and in
+    AGENT-README ("default 2.0"); a change of it changes both. The crate
+    ships NO artwork and NO brush styles; demo pictures and tips are made in
+    code in the sample.
+  - EVERY SHADER CHANGE IS PROVED IN A BROWSER, NOT ONLY VALIDATED. The WGSL
+    validator used on the host (naga, in a scratch checker outside the
+    repository - it is not a dependency) ACCEPTS two things Chrome's WGSL
+    compiler REJECTS, both found this way: a texture sample with implicit
+    derivatives (textureSample) inside a branch - keep every such sample and
+    derivative outside branches and pick coordinates with select(); and a
+    float literal at the limit of f32 (3.4028235e38) - use a large ordinary
+    value (1.0e9) instead. So a WGSL change is done only when a page that
+    uses it has run in Chrome with no WebGPU validation error (subscribe to
+    the device's errors and read them every frame).
     The areas with notes of their own: PIXEL PLANES, THE GPU HALVES AND THE
     PAINTERLY PLAYBACK; the SVG DOCUMENTS bullet below; LOTTIE IN THE
     ANIMATION CRATE.
@@ -1054,18 +1377,43 @@ tests; do not run cargo in its folder). In addition:
     src/color.rs and src/geometry.rs (Color as straight sRGB bytes, PointF,
     RectangleF), src/animation/ (Easing, EasingKind, StepPosition,
     CubicBezierEasing, ColorRamp, AnimationTimeline, TimelineCue,
-    PlaybackController, and their tests), src/fills/, src/paths/,
-    src/shapes/ (TextShape and TextBlockShape among them), src/text/
-    (FontRegistry, TextAlign, MissingCharacterMode, MissingCharacter,
+    PlaybackController, and their tests), src/fills/, src/paths/ (with
+    stroke_width_mode.rs - fixed-width strokes, tests_fixed_width.rs - and
+    path_sketch.rs - the sketch helper, tests_sketch.rs),
+    src/shapes/ (TextShape and TextBlockShape among them, and
+    brush_strokes_shape.rs: BrushStrokesShape), src/text/
+    (FontRegistry, FontVariation and FontVariationAxis, TextAlign,
+    MissingCharacterMode, MissingCharacter,
     ShapedCluster, the layout engine TextLayoutEngine and its results;
     INTERNAL: the font face with its caches, the shaping step, and the text
     and layout tests), src/captions/ (CaptionTrack and its SRT / WebVTT
     parser, CaptionStyle, CaptionPresenter, CaptionPlacement, PlacedCaption),
     src/formations/, src/planes/ (DrawingPlane, DrawingPlaneImage, the
-    filters, blends, transitions, DrawingRandom, DrawingNoise, particles and
-    motion blur), src/painting/ (the painterly playback), src/images/
-    (ImageSource, SpriteSheet, the PNG reader and the picture-pixels form),
-    src/effects/ (DrawingMask, DrawingEffects, DrawingFrameOperations),
+    filters, blends, transitions, DrawingRandom, DrawingNoise - with
+    drawing_caustics.rs, the caustics kind, the CPU mirror of noise.wgsl's
+    caustics_once -, particles and motion blur), src/painting/ (the
+    painterly playback, and the painting's planning and colour:
+    direction_field.rs, direction_guide.rs, detail.rs, stroke_layout.rs,
+    painting_timeline.rs, color_mix.rs, color_rules.rs - with the CPU
+    mirrors of the stroke shader's colour arithmetic -, tests_fields.rs,
+    tests_timeline.rs, tests_color.rs), src/strokes/ (the stroke sets: the
+    records and sets, BrushTips, StrokeAnchor, StrokeBoil and boil_epoch,
+    StrokeFlow, the colour sources of stroke_color.rs, StrokeCheckpoints and
+    the cache's CPU half, BrushStrokeMorph; INTERNAL: stroke_gpu.rs and
+    stroke_color_gpu.rs - the 64-byte record and the draw block, their
+    layouts in the header comments, CPU mirrors of the shader -; tests.rs,
+    tests_gpu.rs, tests_color_gpu.rs, tests_checkpoints.rs, tests_morph.rs),
+    src/water/ (RippleField, RippleDrop, RippleOptions, RippleRain,
+    RippleSwell, SwellWave, WaterSource, WaterRefraction, WaterGlints,
+    CausticLight, WaterReflection; INTERNAL: ripple_math.rs - the GPU records
+    and the per-point evaluation in f32, the reference the composite
+    shader's ripple loop transcribes -; tests.rs, tests_water_gpu.rs),
+    src/images/ (ImageSource, SpriteSheet, from_png and from_jpeg -
+    image_source_png.rs and image_source_jpeg.rs, thin calls to
+    codebrix-webgpu's decode_png / decode_jpeg - and the picture-pixels form),
+    src/effects/ (DrawingMask, DrawingEffects, DrawingFrameOperations, and
+    surface_finish.rs: SurfaceFinish, CanvasWeave, the finish's pass data
+    and CPU mirrors of the weave and the shading),
     src/svg/ and src/lottie/ (below), src/mask_meaning.rs, src/safe_areas/,
     src/models/ (DrawingLayer, ElementId, DrawingTransform, DrawingCamera,
     AnimatedProperty, BindingTarget, BoundTrack, AnimationBinding,
@@ -1075,11 +1423,18 @@ tests; do not run cargo in its folder). In addition:
     PathTravelOptions, PathTrain, StaggerOrder / StaggerOptions /
     StaggerTracks, and the model tests), src/layout/ (DrawingLayout, LayoutAnchor,
     LayoutPosition, LayoutReference), src/drawing_session*.rs (with
-    SessionRenderOptions, the painting exports and the layer transitions),
+    SessionRenderOptions, the painting exports and the layer transitions;
+    drawing_session_blend.rs - SessionBlendMode -, drawing_session_paint.rs -
+    SessionPaint, LinePaint -, drawing_session_wipe.rs - SessionWipe,
+    WipeEdge -, and their tests drawing_session_looks_tests.rs),
     and src/rendering/ (CanvasCalibration;
     VectorScene, the low-level door the session records into; AnimationLayer
-    with its control handle and RenderStats; DebugOverlay) with the INTERNAL
-    renderer core in src/rendering/core/.
+    with its control handle and RenderStats; picture_target.rs -
+    PictureTarget, the canvas frame number every AnimationLayer publishes and
+    the late-read rule; DebugOverlay; INTERNAL: scene_look.rs - where the
+    looks are applied as the session records -, cpu_clock.rs - the one
+    measuring clock) with the INTERNAL renderer core in src/rendering/core/
+    (texture_ledger.rs among it: what is uploaded and the residency sweep).
 
 TEXT BLOCKS, PATH QUERIES, COMBINED BINDINGS, FORMATIONS AND SAFE AREAS HAVE
 TWO HALVES: their CALCULATION (the layout engine, reveals, staggers, captions,
@@ -1233,8 +1588,15 @@ Keyframe, TrackValue, TrackLoopMode), src/models, src/layout, src/paths.
 
 THE RENDERER, IN A PAGE. src/rendering/core: build.rs (the CPU half),
 paint.rs (paints, gradient ramps, the radial set-up), gpu.rs (pipelines,
-targets, encoding, the testing readback), common.wgsl + paint.wgsl (the
-stencil and cover module) and composite.wgsl (the compositing module).
+targets, encoding, the testing readback), texture_ledger.rs (what the GPU half
+uploads and keeps), and the WGSL modules gpu.rs assembles from pieces:
+common.wgsl + noise.wgsl + paint.wgsl (the stencil and cover module),
+common.wgsl + noise.wgsl + strokes.wgsl (the stroke sets), common.wgsl +
+composite.wgsl (the compositing module) and effects.wgsl (the effect passes,
+split by its `//@part` markers; the COMPOSITE part is built with noise.wgsl
+too, for the caustic light). noise.wgsl holds the noise functions every
+module shares (the 32-bit hash, the value and gradient noise, caustics_once):
+one copy, so the paint, the strokes and the water draw the same noise.
   - STENCIL-THEN-COVER WITH 4x MSAA. kurbo flattens fills and expands strokes
     (caps, joins, miter limit, dashes) into a triangle fan; the fan's winding
     goes into the stencil's low 5 bits (wrapping), then a cover draw (the
@@ -1248,7 +1610,11 @@ stencil and cover module) and composite.wgsl (the compositing module).
     shape that moves, turns or scales a little reuses its fan. A draw that
     misses two frames running (a morph, a trim) is no longer stored. A cached
     fan unused for 90 frames is evicted, or at once when the cache holds
-    three times one frame's use.
+    three times one frame's use. A FIXED-WIDTH stroke
+    (VectorScene::stroke_fixed_width) is expanded in the reference space (the
+    session's calibration x camera), so its fan is keyed by the shape AS
+    TRANSFORMED: a still element reuses it, a moving one is stroked every
+    frame (and the two-frames rule then stops storing it).
   - BATCHING. Consecutive fills whose device boxes do not overlap share one
     stencil draw and one cover draw.
   - GROUPS (push_layer). Normal blending at full alpha is only a clip (no
@@ -1267,7 +1633,11 @@ stencil and cover module) and composite.wgsl (the compositing module).
   - PAINTS. Solid colours; gradients through a 512-sample ramp in a storage
     buffer (vello's make_ramp; straight interpolation for the session's
     gradient fills, as NoSkia; peniko's own choice, premultiplied by
-    default, for peniko gradients), at most 256 distinct ramps a frame, the
+    default, for peniko gradients; a fill's opt-in interpolation -
+    with_interpolation - arrives as peniko's interpolation_cs, LinearSrgb /
+    Oklab / Oklch, which make_ramp mixes premultiplied through the same
+    function as painting::ColorMix, and the ramp cache's key includes it),
+    at most 256 distinct ramps a frame, the
     two-point radial set-up from vello's draw_leaf.wgsl and the sweep from
     its fine.wgsl; images as Rgba8Unorm textures (sRGB bytes decoded in the
     shader, straight or premultiplied, BGRA swapped once), nearest or linear
@@ -1281,6 +1651,95 @@ stencil and cover module) and composite.wgsl (the compositing module).
     (paint flag 4: four factors multiplying the straight sRGB values, alpha
     included, before premultiplying). A picture's texture is keyed by its
     pixels' blob, so clones share one upload.
+  - THE RESIDENCY SWEEP (texture_ledger.rs, RESIDENCY; the decision is the
+    host-tested sweep_choice). Pictures (ownership maps included), stroke
+    sets' record buffers (and transitions'), and brush tips are swept EVERY
+    frame by one policy: anything not drawn for more than 120 frames goes,
+    and while what is held but not drawn this frame weighs more than 16 MiB
+    (per kind), the least recently drawn of the entries not drawn in the
+    last two frames go first. So a scene that makes a new 1 MiB picture
+    every frame holds about 17 textures, not the 120 to 180 the old rule
+    (unused over 120 frames, swept every 60) kept; a picture drawn every
+    frame or every other frame is never dropped. Stroke CHECKPOINTS follow
+    the same rule with their own budget (CHECKPOINT_RESIDENCY: 120 frames,
+    128 MiB). The ledger also decides an ownership map's uploads (below).
+  - LOOKS (scene_look.rs, set by DrawingSession::render_with): the paint
+    override, the effects switch and the authored layers are applied while
+    the session records into the VectorScene - at its fill, stroke, glyph,
+    picture, noise, ownership, particle and stroke-set calls - so the scene
+    itself never changes, and cleared after the render. Anything drawn
+    inside a group composited destination-in / -out / -atop, source-in /
+    -out / -atop, xor or clear keeps its colours (coverage, not paint). A
+    picture's average colour (FLAT) is computed once per pixel blob and kept
+    by the VectorScene (at most 512). A session's blend and opacity are one
+    push_layer around the background and the layers; a soft wipe is the
+    first render clipped plus one isolated group for the second, kept
+    destination-in by a 9-stop smoothstep gradient (drawing_session_wipe.rs).
+  - STROKE SETS (Op::Strokes, their own pipeline; strokes/stroke_gpu.rs's
+    header comment holds the record and draw-block layouts - change the Rust
+    and the WGSL structs together). One instanced draw per set: a triangle
+    strip of 8 vertices per instance (the stroke's hull), instances 0..k
+    where k is one past the last started record (a binary search on the
+    CPU), stencil compared with the clip depth, premultiplied blending, 4
+    samples, the empty hull fragments discarded. The records are uploaded
+    once per set id (64 bytes each); per frame only a 256-byte-aligned draw
+    block (the element's device matrix, the time, opacity, flags, boil, flow,
+    the picked colour's parameters and the anchors' transforms) at a
+    dynamic offset; its binding size follows from the header and the anchor
+    limit and must stay within WebGPU's default uniform binding limit. The
+    bind groups: 0 the frame's (view, paints, ramps); 1 the draw's textures
+    (the tips array with its trilinear sampler, the colour source with its
+    clamp-to-edge sampler; a 1 x 1 blank where none), made per (tips,
+    source) pair and dropped after two unused frames; 2 the records (and a
+    transition's target records); 3 the draw block. The picked colour and
+    the colour rules run in the VERTEX shader, once per stroke vertex. A
+    stroke's progress is exactly 1 from its end on (by a comparison, not the
+    division), which is what lets the CPU know which strokes the GPU draws
+    whole - the checkpoint cache depends on it.
+  - THE CHECKPOINT CACHE (strokes/stroke_checkpoints.rs plans each frame,
+    host-tested; gpu.rs splits the stroke draw): a checkpoint is a copy of
+    the draw's own MULTISAMPLED target (all 4 samples; the targets have
+    COPY_DST for it) at the point of the stroke draw, holding a prefix of
+    the set whose every stroke has ended; restoring it and drawing the
+    strokes after it repeats exactly the blends of the whole draw. The KEY,
+    worked out after the build, covers the set, tips, colour source, the
+    block apart from the time, the target level, the canvas size and
+    everything encoded before the set in the frame (a picture target's or
+    an application texture's water makes it unique to the frame). The rule
+    (pixel for pixel the same frame) was proved in Chrome at top level, in
+    a faded group and on a finished layer: change nothing here without
+    proving it again the same way (two layers drawing the same session,
+    with and without the cache, their pixels compared through the testing
+    readback over a schedule of plays, holds and seeks).
+  - PICTURE TARGETS (rendering/picture_target.rs; gpu.rs's picture final
+    pass): a to_picture layer has its OWN renderer and buffers (two scenes
+    in one frame must not share write_buffer'd buffers), clears its picture
+    and draws into it at the picture's size; the picture is an Rgba8Unorm
+    texture of premultiplied sRGB-encoded colour made on first use and
+    shared by every reader. All canvas layers share one encoder, so a
+    picture layer below its readers gives them the same frame's picture;
+    every AnimationLayer publishes the canvas frame number so that a late
+    read is detected and reported once.
+  - THE SURFACE FINISH, THE WATER AND THE EFFECT GROUP: a finished or
+    watery layer is drawn through its effect group (the group its effects,
+    frame operations and transition ride on). Just before a finished
+    layer's composite, ONE height pass per finished layer (single-sampled,
+    no stencil, additive, into a canvas-size R16Float record) draws its
+    stroke sets again (strokes.wgsl fs_stroke_height); the composite
+    (effects.wgsl fs_composite) then applies, in order, the refraction's
+    read offset, the finish, the water's light (shading, caustics, glints),
+    the reflection, the frame operations, bloom, glow, shadow, transition
+    and alpha. The group's region grows by the refraction's reach and by
+    the reflection's mirrored part. The ripple fields of a frame go into ONE
+    storage buffer written once a frame (each field's live drops and swell
+    waves), each group's header into its pass data; the shader's
+    ripple_ring / ripple_water are a line-for-line transcription of
+    water/ripple_math.rs `evaluate`, and the host test runs a CPU mirror of
+    the WGSL over the frame's real records - keep the three in step. The
+    pass-data layout (FxPassData in build.rs and FxPass in effects.wgsl) and
+    the composite's bindings grow with each part (frame operations, finish,
+    water): their layout is stated beside the structs; change both sides
+    together.
   - MASKS are made by the session's encoding, not by the renderer: "inside a
     path" is a stencil clip; "outside a path" and a layer matte are the
     content in a group followed by a nested group composited destination-out
@@ -1418,10 +1877,22 @@ outlines with each cap and join and NoSkia's chord counts, dashes, dots,
 inflate and deflate, the grid, the messages); and THE DRAWING HALF
 (shapes/tests_text_block.rs: what a block, a reveal, an outline, merged
 overlaps, captions and the overlay record, and the reveal, stagger and
-text-along-a-path bindings). THE TEST FONTS are not in the crate (OFL fonts may never
+text-along-a-path bindings); and, beyond NoSkia (no C# reference: values
+from the design's formulas, the counts and layouts the GPU half is handed,
+and CPU mirrors of the shaders' arithmetic), the const easing curves,
+RenderStats' timings, variable fonts with the real variable Roboto (its
+axes, advances and outlines per weight, the refusals), fixed-width strokes
+and the SVG reader's vector-effect, the session's blend and opacity, the
+looks, the effects switch, the exceptions and the coverage rule, wipes,
+ownership uploads through the texture ledger, the sketch helper, and the
+painterly and water areas listed under PIXEL PLANES, THE GPU HALVES AND THE
+PAINTERLY PLAYBACK below. THE TEST FONTS are not in the crate (OFL fonts may never
 be in a package or a crate): they are
-tests/CodeBrix.WebPlatform.WebGpu.Animation.Tests/Fonts/ (Roboto and Open
-Sans, each with its OFL.txt), copied beside the test assembly; Animation.Tests
+tests/CodeBrix.WebPlatform.WebGpu.Animation.Tests/Fonts/ (Roboto - the
+static Roboto-Regular.ttf and the variable Roboto.ttf, which the
+variable-font tests use, beside the one Roboto OFL.txt - and Open Sans with
+its OFL.txt; both families unchanged from the owner's
+CodeBrix.Platform.Fonts.* repositories), copied beside the test assembly; Animation.Tests
 passes their folder to `cargo test` in the environment variable
 CODEBRIX_ANIMATION_TEST_FONTS and checks that the text tests ran. Without the
 variable the tests look for that folder from the crate's place in the
@@ -1437,7 +1908,12 @@ pass. What needs a GPU -
 pipelines, drawing, the readback - is proved by the sample's "animation"
 application in headless Chrome (each scene drawn, moving and still while the
 clock is paused, and the "shapes" scene's sample points through the testing
-readback; its MAINTAINER-README.txt says how).
+readback; its MAINTAINER-README.txt says how) - and so, for this round's
+GPU work, are the stroke sets, the colour pickup, the finish's height pass,
+the checkpoint copies (pixel equality with the cache on and off) and the
+water, each first run in headless Chrome with the device's WebGPU errors
+read every frame (THE ANIMATION CRATE: every shader change is proved in a
+browser).
 
 
 PIXEL PLANES, THE GPU HALVES AND THE PAINTERLY PLAYBACK
@@ -1452,7 +1928,9 @@ PIXEL PLANES, THE GPU HALVES AND THE PAINTERLY PLAYBACK
   (effect_sizes::gaussian_kernel forwards to plane_kernels::gaussian_kernel).
   THE GPU HALVES (rendering/core), each a small addition to the existing renderer:
     - FRAME OPERATIONS AND TRANSITIONS ride on the EFFECT GROUP of a layer: EffectParams gained a
-      `frame` part (FrameParams) and FxPassData five more vectors (v5-v9, u1); the effect composite
+      `frame` part (FrameParams) and FxPassData vectors of its own (as later the surface finish's
+      `finish` part and the water's `water` part did; the layout is stated beside FxPassData in
+      build.rs and FxPass in effects.wgsl); the effect composite
       (effects.wgsl fs_composite) applies the tone curve, gamma and vignette to the straight sRGB
       colour, adds a bloom (a blur of the content planned into the glow's texture - so a layer with
       a glow draws no bloom), and weighs the result by the transition (dissolve, wipe, fade through
@@ -1461,7 +1939,13 @@ PIXEL PLANES, THE GPU HALVES AND THE PAINTERLY PLAYBACK
       pixels inside a clip of the frame (drawing_session_transitions.rs).
     - NOISE is a paint kind (KIND_NOISE, paint.wgsl noise_value): evaluated per fragment in the
       shape's calibrated space, mapped through a gradient ramp slot. 32-bit hashing, so NOT the CPU
-      pattern; the planes' parameters and octave rule.
+      pattern for the value and gradient kinds; the planes' parameters and octave rule. THE CAUSTICS
+      KIND (DrawingNoiseKind::Caustics, paint mode bit 4, noise.wgsl caustics_once /
+      caustics_cell_point) has no C# original, so its CPU code (planes/drawing_caustics.rs) IS the
+      GPU arithmetic - f32, the shared 32-bit hash painting::color_rules::noise_hash, the seed's LOW
+      32 bits (NoiseShape passes `seed as u32` for this kind; the other kinds keep their xor fold) -
+      and both draw the same pattern. Its constants are shared between the two files: change them
+      together.
     - PARTICLES are one operation (Op::Particles) drawn by their own pipeline: instance data
       (centre, the disc's two device axes, colour, softness; 48 bytes), a quad per instance from
       the vertex index, the stencil compared with the clip depth as every composite is, the fade
@@ -1469,8 +1953,14 @@ PIXEL PLANES, THE GPU HALVES AND THE PAINTERLY PLAYBACK
     - OWNERSHIP MAPS are a paint kind (KIND_OWNERS) over an ordinary picture: the map's owner
       numbers (index + 1 in R G B, 0 = nobody) and, in the rows below, the colours; the shader
       looks the colour up with textureLoad and softens the boundary over 3 x 3 (weights of a
-      sigma-0.8 Gaussian cut at radius 1). The picture is uploaded like any other (a new shape =
-      a new upload).
+      sigma-0.8 Gaussian cut at radius 1). OwnershipShape::new makes a new picture (a whole
+      upload); OwnershipShape::with_colors shares the picture of owner numbers and sends ONLY ITS
+      COLOUR TABLE (the map's width x ceil(elements / width) rows x 4 bytes, written into the
+      existing texture at row = map height). The rules are decided by the CPU-side ledger
+      (texture_ledger.rs) that gpu.rs follows; two colourings of one map in one frame need two
+      textures (all of a frame's uploads land before its draws). Measured before the change: every
+      colours-only change of the sample's 560 x 420 map uploaded 943,040 bytes, where its colour
+      table is 2,240.
     - Plane masks are a picture (white, alpha = the plane's bytes) composited destination-in (or
       -out) over the masked content, the same place as a layer matte.
   THE REPORTS: an unknown matte layer name goes into the session's report list once
@@ -1481,9 +1971,38 @@ PIXEL PLANES, THE GPU HALVES AND THE PAINTERLY PLAYBACK
   WHAT THE TESTS COVER: rendering/core/tests_gpu_half.rs (noise paint, the particles operation,
   frame parameters, transitions' recorded items, brushstrokes painting on, the ownership
   picture's layout), effects/tests_step9.rs (plane masks, the matte report), images/tests_png.rs
-  (PNG files of every colour type and bit depth made with the png crate's own encoder; the
-  picture-pixels form). WGSL changes are validated in the browser (and, in a scratch checker, by
-  naga): the host tests cannot run a GPU.
+  (one small PNG constant through from_png, and the picture-pixels form - the PNG rules
+  themselves are tested in codebrix-webgpu, whose decoder from_png calls), images/tests_jpeg.rs
+  (from_jpeg on a 336-byte greyscale JPEG constant, codebrix-webgpu's fixture made from
+  synthetic pixels), rendering/core/tests_ownership_upload.rs (a colours-only change uploads the
+  colour table and nothing else, through the session and the renderer's CPU half over several
+  frames; the ledger keeps and evicts), rendering/core/tests_strokes.rs and strokes/tests_gpu.rs
+  (the stroke operation, the record and draw-block packing, CPU mirrors of the shader's outline,
+  tip, boil and flow arithmetic, the sweep policy), strokes/tests.rs (records and sets),
+  strokes/tests_color_gpu.rs (CPU mirrors of the stroke shader's pickup and colour rules against
+  ColorRules::apply_float and the Oklab mixing, within float rounding), strokes/tests_checkpoints.rs
+  and rendering/core/tests_checkpoints.rs (the plan of each frame, the refusals, the keys),
+  strokes/tests_morph.rs (pairing, slots, the interpolation, the two orders),
+  painting/tests_fields.rs, tests_timeline.rs and tests_color.rs (direction fields - a stroke's
+  two tips and middle on one circle on a circular field -, guides, detail maps, layouts, the
+  timeline's schedule and cues, colour mixing and the rules), effects/tests_surface_finish.rs (the
+  finish's checks, pass data and CPU mirrors of the weave and shading), water/tests.rs (the ripple
+  field: the front, trough and crest each at its true place, rain windows, walls, the cap, the
+  exact Laplacian, the same water however a time is reached), planes/drawing_caustics.rs's own
+  tests (the range, no seams, 3 x 3 cells against 5 x 5, the seed's low 32 bits, the shader's
+  values), water/tests_water_gpu.rs (a CPU
+  mirror of effects.wgsl's water code over the frame's real records, EQUAL to
+  RippleField::height_at / slope_at / focus_at; region growth, nesting, the reflection),
+  paths/tests_fixed_width.rs and paths/tests_sketch.rs, drawing_session_looks_tests.rs (blend and
+  opacity, the looks, the effects switch, the coverage rule, wipes and their nesting cost).
+  WHAT ONLY A BROWSER PROVES: everything the GPU does - every pipeline and shader actually
+  compiling in a browser, the drawn pixels, the colour-table write into an existing texture, the
+  stroke draw, the height pass, the checkpoint copies and their pixel equality, the water's per
+  pixel evaluation, a picture target read the same frame, an application's texture bound as a
+  source. The host tests prove the decisions, the counts, the layouts and the arithmetic (through
+  the CPU mirrors); they cannot run a GPU. So every WGSL change is run in Chrome as well as
+  validated by naga (in a scratch checker): naga accepts things Chrome rejects (THE ANIMATION
+  CRATE above).
   CPU TIMINGS (a native release build, one thread, 1280 x 720; a browser is
   slower): plane arithmetic 0.2-0.7 ms; an image blur 22-30 ms; an image bloom 14-26 ms; noise
   fills 15 ms (2D, one octave) to 107 ms (3D, four octaves); transitions of images 1-4 ms; an
@@ -1535,13 +2054,16 @@ NOTICES
 =======
 THE ROOT THIRD-PARTY-NOTICES.txt is packed into every package, so it is short
 and written by hand: what the LICENSE covers, an entry for each set of
-vendored crates a package carries (wgpu and glam in the WebGpu package;
-kurbo and peniko, harfrust, i_overlay, png, usvg and velato in the Animation
-package) with a pointer to the GENERATED notices that travel with them, an
+vendored crates a package carries (wgpu, glam, png and zune-jpeg in the
+WebGpu package; the gltf crates in the Graphics package; kurbo and peniko,
+harfrust, i_overlay, usvg and velato in the Animation package) with a
+pointer to the GENERATED notices that travel with them, an
 entry for each outside source of a first-party crate (vello and Skia in the
 Animation crate's renderer; the tone-mapping curves and the .hdr decoder in
-the Graphics crate), and the fonts of the tests and the sample. Never paste
-generated text into it.
+the Graphics crate), the fonts of the tests and the sample, and the glTF
+sample models of the reference converter's tests. Never paste generated
+text into it. Test material that is never packed (fonts, models) is listed
+there too, with its licence.
 
 THE GENERATED FILE Rust/notices/THIRD-PARTY-NOTICES-WebGpuCrates.txt is the
 hand-written header notices-header-WebGpuCrates.txt plus what the gate's
@@ -1554,7 +2076,10 @@ Realtime Math and GLM, each under the MIT License. The notices generator does
 not read ATTRIBUTION.md, so those three notices are carried, verbatim, in the
 hand-written header; keep them there while glam is vendored, and re-read the
 file when glam is upgraded. codebrix-webgpu is named in the header as
-first-party and is not listed.
+first-party and is not listed. The same header carries the paragraphs PNG
+FILES (png and its tree, png's public-domain Paeth predictor, zlib-rs carried
+but not compiled and the test PDF it carries) and JPEG FILES (zune-jpeg and
+zune-core, and the stb_image material zune-jpeg names).
 
 THE ANIMATION PACKAGE'S NOTICES,
 src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/notices/
@@ -1566,11 +2091,10 @@ Skia's BSD-3-Clause text verbatim; a credit for kurbo's cu2qu port; credits
 for HarfBuzz and the note on read-fonts' Adobe Glyph List, compiled only with
 a feature kept off; part D, the Unicode License V3 text verbatim for the
 Unicode data in harfrust's tables - the gate demands both licence texts; and
-parts E to H on path combining (i_overlay and its crates, the licence texts
-of the two that publish no licence file, libm's source notices), PNG files
-(png and its tree, png's public-domain Paeth predictor, zlib-rs's carried
-test PDF), SVG documents (usvg and its tree) and Lottie documents (velato
-and serde_repr)) plus
+parts E to G on path combining (i_overlay and its crates, the licence texts
+of the two that publish no licence file, libm's source notices), SVG
+documents (usvg and its tree) and Lottie documents (velato and serde_repr))
+plus
 the licence audit of the package's OWN third-party crates (`LibraryChecker
 notices --write`); the crates it shares are listed in the WebGpu package's
 or the platform's notices, not here. Edit only the header. It is handed to
@@ -1578,13 +2102,17 @@ applications by AnimationCrates.ReadNotices.
 
 THE GRAPHICS PACKAGE'S NOTICES,
 src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/notices/
-THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt, are HAND-WRITTEN (the package
-has no vendored crate, so nothing is generated): the crate is this
-repository's own, its dependencies' notices come with the WebGpu package, and
-the three tone-mapping sources and the .hdr decoder's source are listed with
-their licences (the BakingLab MIT text verbatim, as that repository's LICENSE
-has it). It is
-packed beside the archive and handed to applications by
+THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt, are GENERATED like the
+Animation package's: the hand-written header
+notices-header-WebGpuGraphicsCrates.txt (the crate is this repository's
+own; its dependencies' notices come with the WebGpu package and the
+platform; the three tone-mapping sources and the .hdr decoder's source with
+their licences - the BakingLab MIT text verbatim, as that repository's
+LICENSE has it; and part 5 on the glTF crates: gltf, gltf-json and
+gltf-derive, gltf-derive's validator_derive notice, lazy_static, inflections
+and its carried script) plus the licence audit of the package's OWN
+third-party crates (`LibraryChecker notices --write`). Edit only the
+header. It is packed beside the archive and handed to applications by
 GraphicsCrates.ReadNotices. Nothing taken from another CodeBrix repository
 gets an entry (the owner's rule), only what that repository took from
 outside.
@@ -1599,22 +2127,33 @@ Two things would silently break a clone, so the repository guards against
 both:
   - LINE ENDINGS. .gitattributes keeps text files LF everywhere (so a
     Windows clone is no problem), declares the binary types, and marks the
-    two vendor trees (src/CodeBrix.WebPlatform.WebGpu/Rust/vendor and
+    three vendor trees (src/CodeBrix.WebPlatform.WebGpu/Rust/vendor,
+    src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/vendor and
     src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendor) `-text`, so git
     never touches a byte in them (some upstream files have Windows line
-    endings, and their checksums cover the exact bytes).
-  - IGNORED FILES. The last two lines of the root .gitignore un-ignore
-    everything inside the two vendor trees, because a general ignore rule
-    (bin/, debug/, *.log ...) would otherwise hide a file a vendored crate
-    needs. The gate asks git and fails if any such file is ignored. Check by
-    hand with `git status --ignored --porcelain`: nothing inside a vendor
-    tree may be listed. Keep those lines LAST.
+    endings, and their checksums cover the exact bytes), and the reference
+    converter's test model packs
+    (tests/CodeBrix.WebPlatform.WebGpu.Graphics.Tests.GltfReference/Models)
+    the same way (model files kept exactly as obtained).
+  - IGNORED FILES. The last lines of the root .gitignore un-ignore
+    everything inside the three vendor trees, one line each, because a
+    general ignore rule (bin/, debug/, *.log ...) would otherwise hide a
+    file a vendored crate needs. The gate asks git and fails if any such
+    file is ignored. Check by hand with `git status --ignored --porcelain`:
+    nothing inside a vendor tree may be listed. Keep those lines LAST (a new
+    vendor tree adds its line there).
 
-Never commit: any `target` folder (the two crate sets', codebrix-webgpu's,
+Never commit: any `target` folder (the three crate sets', codebrix-webgpu's,
 codebrix-webgpu-graphics' and codebrix-webgpu-animation's), the three
-first-party crates' Cargo.lock, bin/ and obj/, and what
-the GraphicsDemo sample's builds write (its own MAINTAINER-README.txt lists
-it). The .gitignore at the repository root covers them.
+first-party crates' Cargo.lock, bin/ and obj/; the .gitignore at the
+repository root covers them. What the GraphicsDemo sample's builds write
+needs no rule there: every folder the platform's build writes into a
+frontend (platform/vendor, platform/codebrix-webplatform, src/generated,
+.cargo, assets/generated, target) and the backend's frontend-built/ holds a
+.gitignore of its own that ignores the folder (a `cargo clean` removes
+target/'s, and the next materialize writes it back); the root .gitignore has
+no GraphicsDemo lines (the sample's MAINTAINER-README.txt says what is
+build output).
 
 
 THE PLATFORM'S PACKAGES
@@ -1663,8 +2202,9 @@ build then fails on what the new code added (or, worse, runs the old code).
 Bump the crate's version when its compiled content changes; otherwise
 delete that crate's build output - for the Animation crate
 samples/GraphicsDemo/frontends/animation/target/
-wasm32-unknown-unknown/wasm-release/build/codebrix-webgpu-animation (git
-ignores target/) - and build again.
+wasm32-unknown-unknown/wasm-release/build/codebrix-webgpu-animation (the
+frontend's target/ ignores itself in git; a `cargo clean` removes its
+.gitignore and the next materialize writes it back) - and build again.
 
 
 PROVENANCE AND VENDORED SOURCES
@@ -1672,16 +2212,22 @@ PROVENANCE AND VENDORED SOURCES
 The assemblies contain no third-party source. The repository CARRIES
 third-party code outside the assemblies: the vendored crates in
 src/CodeBrix.WebPlatform.WebGpu/Rust/vendor, shipped in the WebGpu package
-as an archive, and in src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendor,
-shipped in the Animation package's archive, each recorded in its package's
-generated notices (NOTICES above). codebrix-webgpu-animation, shipped in the
+as an archive, in src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/vendor,
+shipped in the Graphics package's archive, and in
+src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendor, shipped in the
+Animation package's archive, each recorded in its package's generated
+notices (NOTICES above). The test material that is never packed - the
+fonts of the Animation tests and the glTF sample models of the reference
+converter, each with its licence file - is listed in the root
+THIRD-PARTY-NOTICES.txt. codebrix-webgpu-animation, shipped in the
 Animation archive, is first-party; the code its renderer takes from vello
 (and the few lines of it that vello took from Skia) is listed in the
 Animation package's notices header.
 codebrix-webgpu, shipped in the same archive, is first-party, and so is
 codebrix-webgpu-graphics (shipped in the Graphics package's archive), whose
-WGSL is copied from the owner's own C# library (THE WGSL COPY) and whose three
-tone-mapping curves are listed in the Graphics package's notices.
+WGSL is copied from the owner's own C# library (THE WGSL COPY) with our own
+additions and shaders, and whose three tone-mapping curves and .hdr decoder
+are listed in the Graphics package's notices.
 
 
 CODING CONVENTIONS

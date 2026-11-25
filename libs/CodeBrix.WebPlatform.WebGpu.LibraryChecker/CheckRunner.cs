@@ -11,8 +11,9 @@ namespace CodeBrix.WebPlatform.WebGpu.LibraryChecker;
 
 /// <summary>
 /// Runs the checks that guard what the repository holds outside <c>samples/</c>: the vendored
-/// third-party crates (the WebGpu package's and the Animation package's), their agreement with the
-/// platform's crates (and the Animation set's with the WebGpu set's), the first-party crates, the
+/// third-party crates (the WebGpu package's, the Graphics package's and the Animation package's),
+/// their agreement with the platform's crates (and the Graphics and Animation sets' with the WebGpu
+/// set's, and with each other's for an application that registers both), the first-party crates, the
 /// dependency rule between the Graphics and Animation packages, the licences, the notices, the
 /// no-Node rule and the no-workflow rule. Used by the LibraryChecker command line and its tests.
 /// </summary>
@@ -48,7 +49,10 @@ public static class CheckRunner
         }
 
         VendoredSet set = null;
-        AnimationCrateSet animation = null;
+        BundleCrateSet graphics = null;
+        BundleCrateSet animation = null;
+        CrateSnapshot webGpuCrates = null;
+        CrateSnapshot platformCrates = null;
         if (Wanted("vendor"))
         {
             set = VendoredSet.Derive(layout);
@@ -60,18 +64,24 @@ public static class CheckRunner
 
         if (Wanted("vendor") || Wanted("platform") || Wanted("licenses") || Wanted("notices"))
         {
-            animation = AnimationCrateSet.Derive(layout, CrateSnapshot.FromDirectory(layout.Vendor), PlatformRelease.LoadCrates());
+            webGpuCrates = CrateSnapshot.FromDirectory(layout.Vendor);
+            platformCrates = PlatformRelease.LoadCrates();
+            graphics = GraphicsCrateSet.Derive(layout, webGpuCrates, platformCrates);
+            animation = AnimationCrateSet.Derive(layout, webGpuCrates, platformCrates);
         }
 
         if (Wanted("vendor"))
         {
+            results.Add(VendorCheck.GraphicsCrates(layout, graphics.Vendored));
             results.Add(VendorCheck.AnimationCrates(layout, animation.Vendored));
         }
 
         if (Wanted("platform"))
         {
             results.Add(PlatformCheck.StrictRule(layout));
-            results.Add(AnimationCrateSet.StrictRule(animation, CrateSnapshot.FromDirectory(layout.AnimationVendor), CrateSnapshot.FromDirectory(layout.Vendor), PlatformRelease.LoadCrates(), PlatformRelease.Version));
+            results.Add(GraphicsCrateSet.StrictRule(graphics, CrateSnapshot.FromDirectory(layout.GraphicsVendor), webGpuCrates, platformCrates, PlatformRelease.Version));
+            results.Add(AnimationCrateSet.StrictRule(animation, CrateSnapshot.FromDirectory(layout.AnimationVendor), webGpuCrates, platformCrates, PlatformRelease.Version));
+            results.Add(BundleCrateSet.BothBundles(graphics, animation));
             results.Add(PlatformCheck.CorePin(layout));
             results.Add(FamilyPinCheck.Run(layout));
         }
@@ -108,39 +118,41 @@ public static class CheckRunner
                     results.Add(NoticesCheck.Check(layout, audits));
                 }
 
-                results.Add(GraphicsNoticesCheck.Run(layout));
                 results.Add(SampleNoticesCheck.Run(layout));
             }
 
-            var merged = AnimationCrateSet.CreateMergedSource(layout, animation, PlatformRelease.ArchivePath);
-            try
+            foreach (var bundle in new[] { graphics, animation })
             {
-                var (animationResults, animationAudits) = await LicenseCheck.RunAnimationAsync(layout, allowlist, merged, cancellationToken).ConfigureAwait(false);
-                if (Wanted("licenses"))
+                var merged = BundleCrateSet.CreateMergedSource(layout, bundle, PlatformRelease.ArchivePath);
+                try
                 {
-                    results.AddRange(animationResults);
-                }
-
-                if (Wanted("notices"))
-                {
-                    if (writeNotices)
+                    var (bundleResults, bundleAudits) = await LicenseCheck.RunBundleAsync(layout, bundle.Package, allowlist, merged, cancellationToken).ConfigureAwait(false);
+                    if (Wanted("licenses"))
                     {
-                        var changed = NoticesCheck.WriteAnimation(layout, animation, animationAudits);
-                        results.Add(new CheckResult("Notices: THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt written", Array.Empty<string>(), new[] { changed ? "the file changed" : "the file was already up to date" }));
-                    }
-                    else
-                    {
-                        results.Add(NoticesCheck.CheckAnimation(layout, animation, animationAudits));
+                        results.AddRange(bundleResults);
                     }
 
-                    results.Add(AnimationNoticesCheck.Run(layout));
+                    if (Wanted("notices"))
+                    {
+                        if (writeNotices)
+                        {
+                            var changed = NoticesCheck.WriteBundle(layout, bundle, bundleAudits);
+                            results.Add(new CheckResult($"Notices: {bundle.Package.NoticesFileName} written", Array.Empty<string>(), new[] { changed ? "the file changed" : "the file was already up to date" }));
+                        }
+                        else
+                        {
+                            results.Add(NoticesCheck.CheckBundle(layout, bundle, bundleAudits));
+                        }
+
+                        results.Add(ReferenceEquals(bundle.Package, BundlePackage.Graphics) ? GraphicsNoticesCheck.Run(layout) : AnimationNoticesCheck.Run(layout));
+                    }
                 }
-            }
-            finally
-            {
-                if (Directory.Exists(merged.Folder))
+                finally
                 {
-                    Directory.Delete(merged.Folder, recursive: true);
+                    if (Directory.Exists(merged.Folder))
+                    {
+                        Directory.Delete(merged.Folder, recursive: true);
+                    }
                 }
             }
         }

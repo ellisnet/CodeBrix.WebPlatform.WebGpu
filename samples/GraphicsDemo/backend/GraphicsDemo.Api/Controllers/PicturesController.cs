@@ -45,6 +45,17 @@ public sealed class PicturesController : ControllerBase
         return File(png.Bytes, PictureLibrary.PngContentType, null, new EntityTagHeaderValue(png.ETag));
     }
 
+    /// <summary>The same colour map as a JPEG FILE made from it on the backend (CC0), which the frontend's crate decodes (ImageSource::from_jpeg).</summary>
+    /// <returns>The JPEG file (image/jpeg), or 304 when the caller's copy is current.</returns>
+    [HttpGet("cube-pets-colormap.jpg")]
+    [WireFile]
+    public IActionResult CubePetsColormapJpeg()
+    {
+        Response.Headers.CacheControl = ModelsController.BlobCacheControl;
+        JpegFile jpeg = library.CubePetsColormapJpeg;
+        return File(jpeg.Bytes, PictureLibrary.JpegContentType, null, new EntityTagHeaderValue(jpeg.ETag));
+    }
+
     /// <summary>The badge of the Lottie image layer, MADE IN CODE on the backend, as pixels in the picture-pixels form.</summary>
     /// <returns>The pixels (application/octet-stream), or 304 when the caller's copy is current.</returns>
     [HttpGet("lottie-badge.rgba")]

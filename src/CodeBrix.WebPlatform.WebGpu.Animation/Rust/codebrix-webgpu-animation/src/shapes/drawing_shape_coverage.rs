@@ -39,7 +39,9 @@ impl DrawingShape {
     /// area through the child's transform (time windows and opacities ignored - the mask and
     /// the map apply them child by child); an animated shape its current shape's. Paint plays no
     /// part. `tolerance` is how closely curves are followed when a thickness is turned into
-    /// polygons, calibrated units (positive). The error says what to do.
+    /// polygons, calibrated units (positive). The error says what to do. A stroke set (Not in C#)
+    /// reports every stroke WHOLE here; masks and ownership maps take its strokes as painted at the
+    /// session's time.
     ///
     /// An outline's thickness is NoSkia's stroker's band (see the path-booleans step's
     /// `to_stroke_outline`).
@@ -84,6 +86,8 @@ impl DrawingShape {
             }
             ShapeKind::Text(t) => Ok(vec![t.get_outline()]),
             ShapeKind::BrushStroke(b) => Ok(b.get_coverage_areas(tolerance)),
+            // Without a time: every stroke whole (see coverage_areas_at for the session's time).
+            ShapeKind::BrushStrokes(b) => Ok(b.coverage_areas_at(f64::INFINITY)),
             ShapeKind::Image(i) => Ok(vec![PathGeometry::rectangle(i.destination())]),
             ShapeKind::Noise(n) => Ok(vec![PathGeometry::rectangle(n.area())]),
             ShapeKind::Ownership(m) => Ok(vec![PathGeometry::rectangle(m.destination())]),
@@ -119,6 +123,21 @@ impl DrawingShape {
                 Some(current) => current.transformed_coverage_areas(tolerance),
                 None => Ok(Vec::new()),
             },
+        }
+    }
+
+    /// The areas at a session time (what masks and ownership maps use): a stroke set's painted
+    /// strokes at that time ([`BrushStrokesShape::coverage_areas_at`](crate::shapes::BrushStrokesShape::coverage_areas_at)),
+    /// every other shape's [`get_coverage_areas`](DrawingShape::get_coverage_areas). Not in C#.
+    pub(crate) fn coverage_areas_at(&self, tolerance: f32, seconds: f64) -> Result<Vec<PathGeometry>, String> {
+        match self.kind() {
+            ShapeKind::BrushStrokes(b) => {
+                if !tolerance.is_finite() || tolerance <= 0.0 {
+                    return Err("The coverage tolerance must be a positive, finite distance.".to_string());
+                }
+                Ok(b.coverage_areas_at(seconds))
+            }
+            _ => self.get_coverage_areas(tolerance),
         }
     }
 

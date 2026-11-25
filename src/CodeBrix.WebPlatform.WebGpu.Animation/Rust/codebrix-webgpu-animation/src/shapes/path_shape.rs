@@ -212,8 +212,9 @@ impl PathShape {
         }
     }
 
-    /// Records the fill, then the stroke.
-    pub(crate) fn encode(&self, scene: &mut VectorScene, transform: Affine, inherited: Color, opacity: f32) {
+    /// Records the fill, then the stroke; `drawing` is the session's drawing-units-to-canvas
+    /// transform, the space a fixed-width stroke is expanded in.
+    pub(crate) fn encode(&self, scene: &mut VectorScene, transform: Affine, drawing: Affine, inherited: Color, opacity: f32) {
         let drawn = if self.is_trimmed() { Some(self.get_drawn_geometry()) } else { None };
         let geometry = drawn.as_ref().unwrap_or(&self.geometry);
         if geometry.is_empty() {
@@ -228,7 +229,7 @@ impl PathShape {
             scene.fill(geometry.fill_rule().to_peniko(), transform, &brush, None, path);
         }
         if let Some(style) = &self.stroke_style {
-            scene.stroke(&style.to_kurbo(), transform, &Brush::Solid(self.stroke_color.unwrap_or(inherited).to_peniko(opacity)), None, path);
+            scene.stroke_with_style(style, transform, drawing, &Brush::Solid(self.stroke_color.unwrap_or(inherited).to_peniko(opacity)), None, path);
         }
     }
 }

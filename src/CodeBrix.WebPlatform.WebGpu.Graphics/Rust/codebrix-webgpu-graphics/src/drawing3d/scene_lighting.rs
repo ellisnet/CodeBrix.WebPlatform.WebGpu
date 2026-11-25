@@ -1,10 +1,11 @@
 //! [`SceneLighting`], [`DirectionalLight`] and [`AmbientLighting`]: the lighting the mesh
-//! renderer, the model renderer and the skybox apply (C#: `SceneLighting`).
+//! renderer, the model renderer and the skybox apply (C#: `SceneLighting`), with the model
+//! renderer's local lights and shadows (Not in C#).
 
 use glam::Vec3;
 
 use crate::common::Color4;
-use crate::lighting::EnvironmentMap;
+use crate::lighting::{EnvironmentMap, LocalLight, SpotShadowSettings, SunShadowSettings};
 
 /// Where the model renderer's ambient (indirect) light comes from (C#: `AmbientLighting`). The
 /// mesh renderer always uses [`SceneLighting::ambient_color`].
@@ -42,6 +43,13 @@ impl DirectionalLight {
 /// same defaults): a key directional light, more directional lights (the model renderer's; the
 /// mesh renderer uses the key light only), an ambient term and an exposure. Everything is linear.
 ///
+/// Not in C# (the model renderer's; the mesh renderer and the skybox ignore them): LOCAL LIGHTS
+/// ([`SceneLighting::local_lights`], point lights and spotlights, at most
+/// [`SceneLighting::MAX_LOCAL_LIGHTS`] shaded per frame) and SHADOWS - the key light's
+/// ([`SceneLighting::sun_shadows`], off by default) and those of the spotlights that cast them
+/// ([`SceneLighting::spot_shadows`]). A lighting with no local lights and the sun's shadow off
+/// lights exactly as before, and costs nothing more.
+///
 /// `environment` is a shared handle ([`EnvironmentMap`] clones are the same environment), so
 /// cloning the lighting is cheap and both clones light with the same environment.
 #[derive(Clone, Debug, PartialEq)]
@@ -76,12 +84,31 @@ pub struct SceneLighting {
     pub environment_intensity: f32,
     /// Turns the environment about +Y, in radians (C#: `EnvironmentRotation`, default 0).
     pub environment_rotation: f32,
+    /// Point lights and spotlights at places in the scene, for the model renderer (Not in C#;
+    /// default empty). At most [`SceneLighting::MAX_LOCAL_LIGHTS`] are shaded in a frame: over
+    /// that, the renderer uses those that matter most to the view
+    /// ([`LocalLight::importance`]: brightness over the squared distance from the camera, among
+    /// the lights whose reach gets into the view) and skips the rest for that frame. Read at
+    /// every `begin`, so they can move from frame to frame. A lighting without them costs nothing.
+    pub local_lights: Vec<LocalLight>,
+    /// The shadow of the key light (the sun) in the model renderer (Not in C#; default OFF).
+    pub sun_shadows: SunShadowSettings,
+    /// The settings of the spotlights' shadows in the model renderer (Not in C#); a spotlight
+    /// casts only with [`crate::SpotLight::casts_shadows`].
+    pub spot_shadows: SpotShadowSettings,
 }
 
 impl SceneLighting {
     /// The most directional lights the model renderer shades: the key light and seven more (C#:
     /// `MaxDirectionalLights`).
     pub const MAX_DIRECTIONAL_LIGHTS: usize = 8;
+
+    /// The most local lights (point lights and spotlights together) the model renderer shades in a
+    /// frame: a fixed ceiling, not a setting (Not in C#).
+    pub const MAX_LOCAL_LIGHTS: usize = 16;
+
+    /// The most spotlights that cast shadows in a frame, besides the sun (Not in C#).
+    pub const MAX_SHADOWED_SPOTLIGHTS: usize = 4;
 
     /// Lighting with the C# defaults (C#: `new SceneLighting()`).
     pub fn new() -> SceneLighting {
@@ -104,6 +131,9 @@ impl Default for SceneLighting {
             environment: None,
             environment_intensity: 1.0,
             environment_rotation: 0.0,
+            local_lights: Vec::new(),
+            sun_shadows: SunShadowSettings::default(),
+            spot_shadows: SpotShadowSettings::default(),
         }
     }
 }
@@ -123,5 +153,9 @@ mod tests {
         assert_eq!(lighting.ambient, AmbientLighting::Environment);
         assert!(lighting.environment.is_none());
         assert_eq!(SceneLighting::MAX_DIRECTIONAL_LIGHTS, 8);
+        // Not in C#: no local lights, no shadows; the ceilings.
+        assert!(lighting.local_lights.is_empty());
+        assert!(!lighting.sun_shadows.enabled);
+        assert_eq!((SceneLighting::MAX_LOCAL_LIGHTS, SceneLighting::MAX_SHADOWED_SPOTLIGHTS), (16, 4));
     }
 }

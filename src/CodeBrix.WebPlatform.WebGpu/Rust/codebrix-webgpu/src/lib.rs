@@ -26,6 +26,11 @@
 //!   ([`CanvasInput`]). The surface's format, alpha mode and colour encoding are decided by the
 //!   host alone ([`CanvasTarget`], which also states the blending convention).
 //! - [`math`] is the `glam` crate under its own names (`Vec3`, `Mat4`, `Quat`, ...).
+//! - [`decode_png`], [`decode_jpeg`] and [`decode_image`] turn the bytes of a PNG or JPEG file
+//!   into a [`DecodedImage`]: tightly packed 8-bit RGBA, red first, straight alpha, rows top to
+//!   bottom, the values as stored (the caller says sRGB colour or linear data) - the one pixel
+//!   form the Graphics and Animation crates take. They are separate functions so that an
+//!   application carries only the decoders it calls.
 //!
 //! LOW-LEVEL `wgpu` STAYS AVAILABLE: the context hands out the device and queue, every frame
 //! hands the renderer the surface and its texture, and the crate re-exports [`wgpu`] and
@@ -79,6 +84,7 @@ mod context;
 mod drag;
 mod errors;
 mod frame_loop;
+mod images;
 mod input;
 mod layers;
 pub mod math;
@@ -94,7 +100,8 @@ pub use clock::CanvasClock;
 pub use context::{GpuContext, GpuUnavailable};
 pub use errors::{GpuError, GpuErrorKind, GpuErrorSubscription};
 pub use frame_loop::FrameLoop;
-pub use input::CanvasInput;
+pub use images::{decode_image, decode_jpeg, decode_png, DecodedImage, MAX_IMAGE_DIMENSION};
+pub use input::{CanvasInput, ModifierKeys, PointerButton, PointerButtons, PointerKind};
 pub use layers::CanvasLayers;
 pub use renderer::{CanvasFrame, CanvasRenderer, CanvasTarget, FrameInfo, RendererHandle, SurfaceFailure};
 pub use time_points::TimePoints;

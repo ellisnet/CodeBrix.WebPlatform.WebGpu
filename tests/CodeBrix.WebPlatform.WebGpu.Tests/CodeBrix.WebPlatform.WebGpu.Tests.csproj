@@ -29,7 +29,7 @@
     set does.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.327.240" />
+    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.329.452" />
     <ProjectReference Include="..\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend.csproj" />
   </ItemGroup>
 

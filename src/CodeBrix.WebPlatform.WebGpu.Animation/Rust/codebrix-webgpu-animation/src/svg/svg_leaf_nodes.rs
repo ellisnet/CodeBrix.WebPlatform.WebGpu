@@ -22,6 +22,10 @@ pub struct SvgPathNode {
     pub visible: bool,
     /// False for `shape-rendering="crispEdges"` / `optimizeSpeed` (no anti-aliasing asked).
     pub anti_alias: bool,
+    /// True for `vector-effect="non-scaling-stroke"` (an attribute, the style attribute or a
+    /// rule of the document's style sheet): the stroke's width is fixed in the drawing's units
+    /// (Not in C#).
+    pub non_scaling_stroke: bool,
 }
 
 /// Where the pixels of an image come from. The crate decodes NOTHING: an application that

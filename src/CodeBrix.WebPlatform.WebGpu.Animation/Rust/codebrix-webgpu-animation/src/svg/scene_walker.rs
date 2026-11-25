@@ -263,13 +263,14 @@ impl<'a> Walker<'a> {
                 f
             }),
         };
-        let base_stroke = || SvgStroke { paint: SvgPaint::Solid(Color::BLACK), opacity: 1.0, width: 1.0, cap: SvgLineCap::Butt, join: SvgLineJoin::Miter, miter_limit: 4.0, dash_array: None, dash_offset: 0.0 };
+        let base_stroke = || SvgStroke { paint: SvgPaint::Solid(Color::BLACK), opacity: 1.0, width: 1.0, cap: SvgLineCap::Butt, join: SvgLineJoin::Miter, miter_limit: 4.0, dash_array: None, dash_offset: 0.0, non_scaling: false };
         let stroke = match style.stroke {
             Some(None) => None,
             Some(Some(c)) => Some(SvgStroke { paint: SvgPaint::Solid(c), ..p.stroke.clone().unwrap_or_else(base_stroke) }),
             None => p.stroke.clone(),
         }
         .map(|mut s| {
+            s.non_scaling = p.non_scaling_stroke;
             if let Some(o) = style.stroke_opacity {
                 s.opacity = o;
             }

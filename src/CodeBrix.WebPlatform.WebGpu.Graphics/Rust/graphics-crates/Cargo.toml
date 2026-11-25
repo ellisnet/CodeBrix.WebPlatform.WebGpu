@@ -1,0 +1,50 @@
+# THE GRAPHICS CRATE SET. This manifest is never built into anything: it names the third-party
+# crates that the first-party crate codebrix-webgpu-graphics needs and that neither the platform
+# nor the WebGpu package carries, so that cargo resolves and locks them. Its Cargo.lock beside it
+# fixes every version. The lock is resolved against the CodeBrix.WebPlatform platform's own
+# Cargo.lock AND the WebGpu package's crate set's Cargo.lock, so that every crate either of them
+# also carries is at its exact version (the platform's strict rule for crate bundles);
+# ../vendoring/gltf/UPGRADE-README.txt says how.
+#
+# THE VENDORED SET of this package (../vendor) is the lock's crates MINUS those the platform or the
+# WebGpu package already carries: the Graphics package's bundle holds only what it adds (the
+# owner's rule for the Graphics and Animation packages). So this folder resolves offline only
+# against a merged source (this package's vendor folder, the WebGpu package's and the platform's
+# crates), which is what an application's vendor folder is and what the licence gate builds.
+#
+# Repository-only (not in the package). The target is wasm32-unknown-unknown: a browser build.
+[package]
+name = "codebrix-webplatform-webgpu-graphics-crates"
+version = "1.0.0"
+edition = "2021"
+publish = false
+description = "The crate set of the CodeBrix.WebPlatform.WebGpu.Graphics package: the third-party crates its Graphics crate needs beyond the platform's and the WebGpu package's."
+license = "Apache-2.0"
+
+[dependencies]
+# glTF 2.0 documents: the JSON and the binary (.glb) container parsed and validated, and the
+# accessor readers (every component type, normalised integers, byte strides, sparse accessors,
+# animation samplers) behind the Graphics crate's glTF loader (src/gltf/). Approved by the owner by
+# name at 1.4.1, WITH DEFAULT FEATURES OFF: its default `import` feature reads the file system and
+# decodes images through the `image` crate - never turn it on (nor `image`, `base64`,
+# `urlencoding`, `guess_mime_type`, which belong to it); the Graphics crate is handed every byte
+# and decodes PNG and JPEG through codebrix-webgpu. ON:
+#   utils                          the accessor and animation readers
+#   names                          the names of nodes, meshes, materials, animations, images
+#   extensions                     the JSON of the extensions the crate has no type for (clearcoat,
+#                                  sheen, volume, iridescence, anisotropy, diffuse transmission, the
+#                                  texture and compression extensions the loader names)
+#   KHR_materials_emissive_strength, KHR_materials_ior, KHR_materials_specular,
+#   KHR_materials_transmission, KHR_materials_unlit, KHR_materials_pbrSpecularGlossiness,
+#   KHR_texture_transform          the extensions the loader reads through the crate's own types
+#   allow_empty_texture            a texture without a core `source` (one that names only a KTX2 or
+#                                  WebP image through an extension) parses, so that the loader can
+#                                  leave it out with a message that names the format
+# OFF and not needed: extras, KHR_lights_punctual, KHR_materials_variants, KHR_materials_volume
+# (the loader only notes that the extension is there), EXT_texture_webp.
+# It brings gltf-json and gltf-derive (a procedural macro, build time only; same project, same
+# version), lazy_static (used by gltf itself, so compiled into an application) and inflections
+# (used by gltf-derive, build time only), and uses byteorder, serde, serde_derive, serde_json (with
+# serde_json's `raw_value` feature, which needs no further crate), proc-macro2, quote and syn at
+# the versions the platform carries.
+gltf = { version = "=1.4.1", default-features = false, features = ["utils", "names", "extensions", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_materials_ior", "KHR_materials_pbrSpecularGlossiness", "KHR_materials_specular", "KHR_materials_transmission", "KHR_materials_unlit", "allow_empty_texture"] }

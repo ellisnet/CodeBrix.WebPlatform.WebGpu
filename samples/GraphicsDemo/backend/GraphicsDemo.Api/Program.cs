@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace GraphicsDemo.Api;
 
-/// <summary>The one backend of the GraphicsDemo sample: the host of its two frontend applications and of the developer's own page at the site root, the models and environments API (api/models, api/environments) of the "graphics" application, and the fonts (api/fonts) and pictures (api/pictures) of the "animation" application.</summary>
+/// <summary>The one backend of the GraphicsDemo sample: the host of its two frontend applications (built into frontend-built/) and of the developer's own page at the site root (wwwroot/), the models and environments API (api/models, api/environments) of the "graphics" application, and the fonts (api/fonts) and pictures (api/pictures) of the "animation" application.</summary>
 public partial class Program
 {
     /// <summary>
@@ -24,8 +24,9 @@ public partial class Program
     {
         var builder = WebApplication.CreateBuilder(args);
         builder.Services.AddControllers();
-        // The models (GraphicsDemo.Assets): one library for the backend, which converts each
-        // model data blob on first use and keeps it.
+        // The models (GraphicsDemo.Assets): one library for the backend, which serves the model
+        // files unchanged (the browser's glTF loader reads them) and writes the blobs of the two
+        // models built in code on first use; each is read or written once and kept.
         builder.Services.AddSingleton<ModelLibrary>();
         // The environment panoramas (Radiance .hdr files, served unchanged).
         builder.Services.AddSingleton<EnvironmentLibrary>();
@@ -41,8 +42,9 @@ public partial class Program
         builder.Services.AddSingleton<LottieLibrary>();
         // The platform's backend library, first call: the standard error bodies for requests
         // that cannot be read, and the options of everything the second call sets up.
-        // CompressResponses: the model data, the panoramas, the fonts, the pictures and the caption files ([WireFile] actions) are public
-        // assets that hold no user's data, so they are compressed as they are sent.
+        // CompressResponses: the model files and blobs, the panoramas, the fonts, the pictures and the caption files ([WireFile] actions) are public
+        // assets that hold no user's data, so they are compressed as they are sent (the kinds in
+        // PlatformBackendOptions.CompressedFileTypes, glTF and .glb among them; PNG and JPEG are not).
         builder.Services.AddPlatformBackend(options =>
         {
             options.ContentSecurityPolicy = ContentSecurityPolicy;
@@ -51,14 +53,16 @@ public partial class Program
         var app = builder.Build();
 
         // Second call: the security headers, the request-marker check, and the frontend
-        // applications. It reads the manifest the frontend build wrote into wwwroot and serves
-        // what was built: "graphics" below /graphics and "animation" below /animation. Every
-        // application has a name, so "/" answers the developer's own wwwroot/index.html. This
-        // backend lists no application anywhere. The backend's own API goes after this call.
+        // applications. It reads the manifest the frontend build wrote into frontend-built/ (in
+        // this project's folder, the content root) and serves what was built: "graphics" below
+        // /graphics and "animation" below /animation, and the site's notices files the build
+        // program writes beside them. Every application has a name, so "/" answers the
+        // developer's own wwwroot/index.html (wwwroot/ holds only the developer's own files).
+        // This backend lists no application anywhere. The backend's own API goes after this call.
         app.UsePlatformBackend();
 
-        // The controllers: ModelsController (api/models), the scene description and the model
-        // data blobs of the "graphics" application's Viewer scene; EnvironmentsController
+        // The controllers: ModelsController (api/models), the scene description, the model files
+        // and the two blobs of the "graphics" application; EnvironmentsController
         // (api/environments), the scene's HDR panorama; FontsController (api/fonts), the fonts of
         // the "animation" application; PicturesController (api/pictures), its decoded pictures.
         app.UseRouting();

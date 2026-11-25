@@ -1,0 +1,192 @@
+================================================================================
+THIRD-PARTY NOTICES: the crates that the CodeBrix.WebPlatform.WebGpu.Graphics
+package brings to an application's WebAssembly file
+================================================================================
+
+This file travels with the CodeBrix.WebPlatform.WebGpu.Graphics.ApacheLicenseForever
+package (tools/webgpu-graphics-crates/THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt;
+a build program finds it beside itself as
+webgpu-graphics-crates/THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt and reads it
+with GraphicsCrates.ReadNotices). It covers the package's crate bundle: the
+archive webgpu-graphics-crates.zip, which the platform's frontend build writes
+into the application's frontend beside the platform's own crates and the WebGpu
+package's.
+
+The archive holds codebrix-webgpu-graphics, the first-party crate of the
+CodeBrix.WebPlatform.WebGpu repository, and the third-party crates that ONLY
+that crate needs: `gltf`, `gltf-json` and `gltf-derive` (its glTF loader) and
+the crates their resolution adds beyond those the platform and the WebGpu
+package already carry, `lazy_static` and `inflections` (part 5 below). The
+crates it builds on (wgpu, glam, bytemuck, codebrix-webgpu and every crate
+their resolution names) and the crates it shares with them (serde, serde_json,
+byteorder, syn, ...) are carried by the CodeBrix.WebPlatform.WebGpu package
+and the platform, and their notices come with those
+(THIRD-PARTY-NOTICES-WebGpuCrates.txt, read with WebGpuCrates.ReadNotices, and
+PlatformCrates.ReadNotices). Part 1 at the end of this file lists the
+third-party crates of this archive that are compiled into an application's
+WebAssembly file when its frontend uses codebrix-webgpu-graphics; Part 2 those
+that are carried but not compiled in.
+
+Each third-party component stays under its own license; none is relicensed.
+Where a crate offers a choice of licenses ("MIT OR Apache-2.0"), the entry
+says which one is used.
+
+codebrix-webgpu-graphics is covered by the repository's own LICENSE
+(Apache-2.0) and is not third-party, so it is not listed in the parts at the
+end of this file.
+
+The crate's WGSL shaders are compiled into the application's WebAssembly file.
+Three tone-mapping functions in them follow published outside sources; the
+same three curves are written once more in Rust, in the crate's ToneMapper::map
+(the curves on the CPU). Its Radiance .hdr decoder follows the logic of a
+fourth outside source. Each stays under its own license; none is relicensed.
+They are listed below.
+
+
+--------------------------------------------------------------------------------
+1. aces_fitted - the fit of the ACES RRT and ODT by Stephen Hill
+--------------------------------------------------------------------------------
+
+Source:  ACES.hlsl in the BakingLab repository of MJP (TheRealMJP),
+         https://github.com/TheRealMJP/BakingLab (BakingLab/ACES.hlsl), whose
+         header says "All code licensed under the MIT license" and that the code
+         "was originally written by Stephen Hill (@self_shadow)".
+Used:    the two matrices (ACESInputMat, ACESOutputMat) and the constants of the
+         RRT and ODT fit (RRTAndODTFit), in the WGSL function aces_fitted.
+License: MIT. The repository's LICENSE file:
+
+MIT License
+
+Copyright (c) 2016 MJP
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+--------------------------------------------------------------------------------
+2. aces_narkowicz - Krzysztof Narkowicz's ACES approximation
+--------------------------------------------------------------------------------
+
+Source:  Krzysztof Narkowicz, "ACES Filmic Tone Mapping Curve" (2016),
+         https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/
+Used:    the curve's five constants, in the WGSL function aces_narkowicz.
+License: the post offers the code as "free to use under public domain CC0 or
+         MIT license". It is used here under CC0 (public domain dedication),
+         which asks for no notice; this credit is given as a courtesy.
+
+
+--------------------------------------------------------------------------------
+3. pbr_neutral - the Khronos PBR Neutral tone mapper
+--------------------------------------------------------------------------------
+
+Source:  pbrNeutral.glsl in the KhronosGroup/ToneMapping repository,
+         https://github.com/KhronosGroup/ToneMapping (PBR_Neutral/pbrNeutral.glsl),
+         the Khronos 3D Commerce reference for PBR Neutral tone mapping.
+Used:    the operator's constants and steps, in the WGSL function pbr_neutral.
+License: Apache-2.0 (the license of the KhronosGroup/ToneMapping repository,
+         stated in its LICENSE.md). The text of the Apache License, Version 2.0
+         is the LICENSE file at the root of the CodeBrix.WebPlatform.WebGpu
+         repository (https://github.com/ellisnet/CodeBrix.WebPlatform.WebGpu),
+         the license of this package too.
+
+
+--------------------------------------------------------------------------------
+4. RadianceHdrDecoder - the HDR loader of stb_image
+--------------------------------------------------------------------------------
+
+Source:  stb_image.h by Sean Barrett, https://github.com/nothings/stb
+         (stb_image.h, its HDR loader: stbi__hdr_load and stbi__hdr_convert).
+Used:    the decoding logic, rewritten (no code copied): the header handling,
+         the flat, old-style and new-style run-length encoded scanlines, and
+         the shared-exponent RGBE to float conversion, in the crate's
+         RadianceHdrDecoder (src/lighting/radiance_hdr_decoder.rs).
+License: the file is "available under 2 licenses -- choose whichever you
+         prefer": ALTERNATIVE A, the MIT License (Copyright (c) 2017 Sean
+         Barrett), and ALTERNATIVE B, Public Domain (www.unlicense.org). It is
+         used here under ALTERNATIVE B, the public domain dedication, which
+         asks for no notice; this credit is given as a courtesy.
+
+
+--------------------------------------------------------------------------------
+5. glTF documents: gltf, gltf-json and gltf-derive; lazy_static and inflections
+--------------------------------------------------------------------------------
+
+gltf 1.4.1, gltf-json 1.4.1 and gltf-derive 1.4.1 (the gltf-rs project,
+https://github.com/gltf-rs/gltf; "MIT OR Apache-2.0", USED UNDER Apache-2.0)
+are the glTF loader's parsing layer: gltf and gltf-json are compiled into an
+application's WebAssembly file when it uses this crate's glTF loading. gltf is
+used WITH ITS DEFAULT FEATURES OFF (its `import` feature, which reads files
+and decodes images, is not in the bundle). Their LICENSE-MIT carries the
+copyright line "Copyright (c) 2017 The gltf Library Developers"; their
+LICENSE-APACHE is the Apache License 2.0 reproduced in the parts at the end of
+this file for the crates used under it. gltf-json carries two glTF test files
+of its own tests (tests/*.gltf), and gltf its tests and examples; they are
+part of the crates as published, never compiled into an application.
+
+gltf-derive is a procedural macro that gltf-json uses: it runs while the
+application is BUILT and generates the validation code of gltf-json's types;
+no code of it is in an application's WebAssembly file. Its source says it is
+"Adapted from `validator_derive` (https://github.com/Keats/validator)", and its
+LICENSE-MIT holds that project's notice and license, reproduced here:
+
+`gltf_derive` was adapted from `validator_derive` (https://github.com/Keats/validator)
+which has the following license:
+
+The MIT License (MIT)
+
+Copyright (c) 2016 Vincent Prouillet
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+lazy_static 1.5.1 (its Cargo.toml names its author, Marvin Löbel; "MIT OR
+Apache-2.0", USED UNDER Apache-2.0) is the macro gltf declares two default
+values with (its default material and its default sampler); it is compiled
+into an application's WebAssembly file with gltf. Its LICENSE-MIT holds the MIT text without a copyright line; its
+LICENSE-APACHE is the Apache License 2.0 reproduced in the parts at the end of
+this file. It carries tests, compile-failure test expectations (tests/
+compile_fail) and an example; they are part of the crate as published, never
+compiled into an application.
+
+inflections 1.1.1 (MIT, "Copyright (c) 2016 Caleb Meredith"; its LICENSE text
+is in the parts at the end of this file) is used by gltf-derive to name what
+it generates: it runs only while the application is built, and no code of it
+is in an application's WebAssembly file. It carries a documentation deploy
+script of its author (scripts/deploy-docs.sh) and an editor settings file
+(.editorconfig) of its own project; they are part of the crate as published,
+never compiled and never run.
+
+gltf and gltf-json also use serde, serde_derive, serde_json, byteorder and the
+crates they bring, and gltf-derive proc-macro2, quote and syn; those are
+carried by the platform (and some of them by the WebGpu package as well), at
+the same versions, and their notices come with those.

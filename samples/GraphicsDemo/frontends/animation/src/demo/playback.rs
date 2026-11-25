@@ -141,6 +141,6 @@ impl DemoScene for PlaybackScene {
         self.frame.render_with_background(scene, width, height);
         self.clip.set_time(playback.time());
         let target = part(&self.frame, 48.0, 145.0, CLIP_WIDTH, CLIP_HEIGHT, width, height);
-        self.clip.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(target) });
+        self.clip.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(target), ..Default::default() });
     }
 }

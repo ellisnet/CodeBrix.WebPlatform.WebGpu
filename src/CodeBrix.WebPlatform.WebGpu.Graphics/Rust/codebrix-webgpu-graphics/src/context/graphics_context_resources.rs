@@ -24,8 +24,8 @@ impl Default for Texture2DOptions {
     }
 }
 
-/// The defaulted arguments of [`GraphicsContext::create_texture_from_rgba`] (C#: `mipmaps =
-/// false`, `srgb = false`, `label = null`).
+/// The defaulted arguments of [`GraphicsContext::create_texture_from_rgba`] and of its PNG, JPEG
+/// and image forms (C#: `mipmaps = false`, `srgb = false`, `label = null`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RgbaTextureOptions {
     /// True for a full mip chain, made on the CPU with a 2 x 2 box filter.
@@ -206,6 +206,38 @@ impl GraphicsContext {
         let texture = self.create_texture_2d(width, height, format, usage, Texture2DOptions { mip_level_count, label: options.label })?;
         texture.write_rgba(rgba)?;
         Ok(texture)
+    }
+
+    /// Creates a sampled RGBA8 texture from the bytes of a PNG FILE, decoded by
+    /// [`codebrix_webgpu::decode_png`] (every colour type and bit depth to straight-alpha RGBA8;
+    /// no gamma or ICC applied; the default image of an APNG), with the options of
+    /// [`GraphicsContext::create_texture_from_rgba`]: the decoder does not know the colour space,
+    /// so say it - `srgb: true` for colour images (base colour, emissive, sprites), false for data
+    /// (normal, metallic-roughness, occlusion maps). An error says what is wrong with the file.
+    /// Not in C#.
+    pub fn create_texture_from_png(&self, png: &[u8], options: RgbaTextureOptions) -> Result<GpuTexture, GraphicsException> {
+        let image = codebrix_webgpu::decode_png(png).map_err(|message| GraphicsException::new(format!("create_texture_from_png: {message}")))?;
+        self.create_texture_from_rgba(image.width, image.height, &image.rgba, options)
+    }
+
+    /// Creates a sampled RGBA8 texture from the bytes of a JPEG FILE, decoded by
+    /// [`codebrix_webgpu::decode_jpeg`] (baseline and progressive; greyscale to equal RGB, alpha
+    /// 255; no EXIF rotation, no ICC; CMYK, 12-bit and lossless files refused), with the options
+    /// of [`GraphicsContext::create_texture_from_rgba`] (`srgb: true` for colour images). An error
+    /// says what is wrong with the file. Not in C#.
+    pub fn create_texture_from_jpeg(&self, jpeg: &[u8], options: RgbaTextureOptions) -> Result<GpuTexture, GraphicsException> {
+        let image = codebrix_webgpu::decode_jpeg(jpeg).map_err(|message| GraphicsException::new(format!("create_texture_from_jpeg: {message}")))?;
+        self.create_texture_from_rgba(image.width, image.height, &image.rgba, options)
+    }
+
+    /// Creates a sampled RGBA8 texture from the bytes of a PNG or JPEG file, told apart by their
+    /// first bytes ([`codebrix_webgpu::decode_image`]), with the options of
+    /// [`GraphicsContext::create_texture_from_rgba`]. It carries both decoders: an application
+    /// that only reads PNG files calls [`GraphicsContext::create_texture_from_png`] instead. Not
+    /// in C#.
+    pub fn create_texture_from_image(&self, bytes: &[u8], options: RgbaTextureOptions) -> Result<GpuTexture, GraphicsException> {
+        let image = codebrix_webgpu::decode_image(bytes).map_err(|message| GraphicsException::new(format!("create_texture_from_image: {message}")))?;
+        self.create_texture_from_rgba(image.width, image.height, &image.rgba, options)
     }
 
     /// Creates a colour texture to render into (render attachment, sampled, copyable) (C#:

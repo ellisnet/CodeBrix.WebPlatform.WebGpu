@@ -23,6 +23,11 @@ pub enum BoundTrack {
     FloatFn(Rc<dyn Fn(f64) -> f32>),
     /// A point function of the time (C# `Func<double, PointF> valueAt`).
     PointFn(Rc<dyn Fn(f64) -> PointF>),
+    /// A colour function of the time (no C# equivalent): binds wherever a colour track binds -
+    /// a layer's colour, a group's content colour, a picture's or sprite's tint, a glow's or
+    /// shadow's colour - without a keyframe track (for example `ColorMix::mix(a, b, ease(t),
+    /// ColorInterpolation::Oklab)`).
+    ColorFn(Rc<dyn Fn(f64) -> Color>),
 }
 
 /// A binding's value at one time.
@@ -45,12 +50,18 @@ impl BoundTrack {
         BoundTrack::PointFn(Rc::new(value_at))
     }
 
+    /// A colour function of the time (no C# equivalent; it must not read a clock: the time is
+    /// given) - see [`BoundTrack::ColorFn`].
+    pub fn color_fn(value_at: impl Fn(f64) -> Color + 'static) -> BoundTrack {
+        BoundTrack::ColorFn(Rc::new(value_at))
+    }
+
     /// "float", "point", "color" or "bool" (for messages).
     pub(crate) fn kind_name(&self) -> &'static str {
         match self {
             BoundTrack::Float(_) | BoundTrack::FloatFn(_) => "float",
             BoundTrack::Point(_) | BoundTrack::PointFn(_) => "point",
-            BoundTrack::Color(_) => "color",
+            BoundTrack::Color(_) | BoundTrack::ColorFn(_) => "color",
             BoundTrack::Bool(_) => "bool",
         }
     }
@@ -64,6 +75,7 @@ impl BoundTrack {
             BoundTrack::Bool(t) => t.evaluate(seconds).map(BoundValue::Bool),
             BoundTrack::FloatFn(f) => Some(BoundValue::Float(f(seconds))),
             BoundTrack::PointFn(f) => Some(BoundValue::Point(f(seconds))),
+            BoundTrack::ColorFn(f) => Some(BoundValue::Color(f(seconds))),
         }
     }
 }
@@ -101,6 +113,7 @@ impl fmt::Debug for BoundTrack {
             BoundTrack::Bool(t) => f.debug_tuple("Bool").field(t).finish(),
             BoundTrack::FloatFn(_) => f.write_str("FloatFn"),
             BoundTrack::PointFn(_) => f.write_str("PointFn"),
+            BoundTrack::ColorFn(_) => f.write_str("ColorFn"),
         }
     }
 }

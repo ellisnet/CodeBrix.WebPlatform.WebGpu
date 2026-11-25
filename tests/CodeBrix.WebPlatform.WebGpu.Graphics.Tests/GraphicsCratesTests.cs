@@ -153,6 +153,8 @@ public class GraphicsCratesTests : IDisposable
         //Assert
         text.Should().Contain("codebrix-webgpu-graphics");
         text.Should().Contain("aces_fitted").And.Contain("aces_narkowicz").And.Contain("pbr_neutral");
+        text.Should().Contain("validator_derive", "the header credits the code gltf-derive adapted");
+        text.Should().Contain("gltf 1.4.1").And.Contain("lazy_static 1.5.1").And.Contain("inflections 1.1.1", "the generated parts list the package's own crates");
     }
 
     [Fact]

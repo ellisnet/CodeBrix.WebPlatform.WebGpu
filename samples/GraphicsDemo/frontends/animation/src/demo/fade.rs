@@ -114,8 +114,8 @@ impl DemoScene for FadeScene {
             RectangleF::new(a.x as f32, a.y as f32, (b.x - a.x) as f32, (b.y - a.y) as f32)
         };
         self.composition.set_time(seconds);
-        self.composition.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(part(LEFT_X)) });
-        self.composition.render_with(scene, width, height, &SessionRenderOptions { include_background: false, target: Some(part(RIGHT_X)) });
+        self.composition.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(part(LEFT_X)), ..Default::default() });
+        self.composition.render_with(scene, width, height, &SessionRenderOptions { include_background: false, target: Some(part(RIGHT_X)), ..Default::default() });
     }
 }
 

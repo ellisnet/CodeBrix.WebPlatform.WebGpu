@@ -5,19 +5,20 @@ for WebGPU in the browser to the frontends of CodeBrix.WebPlatform
 applications: the CodeBrix.WebPlatform.WebGpu,
 CodeBrix.WebPlatform.WebGpu.Graphics and CodeBrix.WebPlatform.WebGpu.Animation
 assemblies and their NuGet packages. The assemblies do not incorporate any
-third-party source code. Two packages CARRY third-party software, listed
-below with where their generated notices are: the CodeBrix.WebPlatform.WebGpu
-package carries the wgpu crates and the glam crate (beside codebrix-webgpu,
-a crate of this repository, which is covered by its LICENSE), and the
+third-party source code. The three packages CARRY third-party software,
+listed below with where their generated notices are: the
+CodeBrix.WebPlatform.WebGpu package carries the wgpu crates, the glam crate,
+the png crate and the zune-jpeg crate (beside codebrix-webgpu, a crate of
+this repository, which is covered by its LICENSE); the
+CodeBrix.WebPlatform.WebGpu.Graphics package carries the gltf crates (beside
+the crate codebrix-webgpu-graphics, also this repository's own; three
+tone-mapping functions in it and the logic of its Radiance .hdr decoder
+follow outside sources, listed below); and the
 CodeBrix.WebPlatform.WebGpu.Animation package carries the kurbo, peniko,
-harfrust, i_overlay, png, usvg and velato crates and the crates they bring
+harfrust, i_overlay, usvg and velato crates and the crates they bring
 (beside codebrix-webgpu-animation, also this repository's own; its renderer
 contains code taken from vello, and inside it a few lines that vello took
-from Skia, listed below). The
-CodeBrix.WebPlatform.WebGpu.Graphics package carries the crate
-codebrix-webgpu-graphics, also this repository's own; three tone-mapping
-functions in it and the logic of its Radiance .hdr decoder follow outside
-sources, listed below.
+from Skia, listed below).
 
 Each package depends on CodeBrix.WebPlatform.Core, which is distributed
 separately under its own license and is not part of it; the Graphics and
@@ -90,6 +91,81 @@ The glam crate - carried by CodeBrix.WebPlatform.WebGpu
 
 ================================================================================
 
+The png crate - carried by CodeBrix.WebPlatform.WebGpu
+
+  Where:    in the same archive as the wgpu crates
+            (tools/webgpu-crates/webgpu-crates.zip). In this repository:
+            src/CodeBrix.WebPlatform.WebGpu/Rust/vendor.
+  What:     png (reading PNG files, the image-rs project) with fdeflate,
+            flate2, miniz_oxide (two versions), crc32fast, adler2 and
+            simd-adler32, each EXACTLY as crates.io published it, and zlib-rs
+            (carried, not compiled). codebrix-webgpu's decode_png uses it; the
+            Graphics and Animation crates decode PNG files through it.
+  Licenses: png, fdeflate, flate2 and crc32fast offer "MIT OR Apache-2.0",
+            miniz_oxide "MIT OR Zlib OR Apache-2.0", adler2 "0BSD OR MIT OR
+            Apache-2.0" (all used under Apache-2.0); simd-adler32 is MIT;
+            zlib-rs is Zlib. Their licence files are in the generated
+            THIRD-PARTY-NOTICES-WebGpuCrates.txt (above), whose hand-written
+            header (its paragraph "PNG FILES") also names png's public-domain
+            Paeth predictor and zlib-rs's carried test PDF.
+
+================================================================================
+
+The zune-jpeg crate - carried by CodeBrix.WebPlatform.WebGpu
+
+  Where:    in the same archive as the wgpu crates
+            (tools/webgpu-crates/webgpu-crates.zip). In this repository:
+            src/CodeBrix.WebPlatform.WebGpu/Rust/vendor.
+  What:     zune-jpeg (reading JPEG files, the zune-image project) with
+            zune-core, each EXACTLY as crates.io published it, with its
+            default features off and `std` on. codebrix-webgpu's decode_jpeg
+            uses it; the Graphics and Animation crates decode JPEG files
+            through it.
+  Licenses: both offer "MIT OR Apache-2.0 OR Zlib" (used under Apache-2.0).
+            Their licence files are in the generated
+            THIRD-PARTY-NOTICES-WebGpuCrates.txt (above), whose hand-written
+            header (its paragraph "JPEG FILES") also credits the parts of
+            zune-jpeg that it says are borrowed from or derived from Sean
+            Barrett's stb_image (public domain or MIT).
+
+================================================================================
+
+The gltf crates - carried by CodeBrix.WebPlatform.WebGpu.Graphics
+
+  Where:    in the package, tools/webgpu-graphics-crates/
+            webgpu-graphics-crates.zip (one archive; a consuming build gets
+            it beside the build program as webgpu-graphics-crates/, and the
+            platform's frontend build writes the crates into the
+            application's frontend). In this repository:
+            src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/vendor.
+  What:     gltf, gltf-json and gltf-derive (glTF 2.0 documents; the gltf-rs
+            project, https://github.com/gltf-rs/gltf), WITH gltf's DEFAULT
+            FEATURES OFF (it reads no files and decodes no images), and
+            lazy_static and inflections, which they bring - each EXACTLY as
+            crates.io published it, unmodified, with its own license files.
+            gltf-derive and inflections run only while an application is
+            built; gltf, gltf-json and lazy_static are compiled into it when
+            it uses the Graphics crate's glTF loader. The crates they share
+            with the platform and the WebGpu package (serde, serde_json and
+            others) come from those, at the same versions and with the same
+            content.
+  Licenses: gltf, gltf-json, gltf-derive and lazy_static offer "MIT OR
+            Apache-2.0" (used under Apache-2.0); inflections is MIT
+            ("Copyright (c) 2016 Caleb Meredith"). gltf-derive's source says
+            it was adapted from validator_derive (Copyright (c) 2016 Vincent
+            Prouillet, MIT), whose notice its LICENSE-MIT carries. Every
+            crate, with its declared license, the license it is used under,
+            its origin, its checksum and the text of its license files, is
+            listed in the GENERATED file
+            THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt, which travels with
+            the package (tools/webgpu-graphics-crates/; beside the build
+            program as webgpu-graphics-crates/), its hand-written header
+            (part 5) with the details. An application serves it with its own
+            notices, the platform's and the WebGpu package's. In this
+            repository: src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/notices.
+
+================================================================================
+
 Three tone-mapping functions - in codebrix-webgpu-graphics, carried by
 CodeBrix.WebPlatform.WebGpu.Graphics
 
@@ -110,7 +186,8 @@ CodeBrix.WebPlatform.WebGpu.Graphics
   Licenses: aces_fitted MIT (Copyright (c) 2016 MJP); aces_narkowicz offered
             as public domain CC0 or MIT, used under CC0; pbr_neutral
             Apache-2.0. The entries, with the MIT license text in full, are in
-            the hand-written file THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt,
+            the hand-written header of the generated file
+            THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt (above),
             which travels with the package (tools/webgpu-graphics-crates/;
             beside the build program as webgpu-graphics-crates/). In this
             repository: src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/notices.
@@ -203,25 +280,6 @@ The i_overlay crate - carried by CodeBrix.WebPlatform.WebGpu.Animation
 
 ================================================================================
 
-The png crate - carried by CodeBrix.WebPlatform.WebGpu.Animation
-
-  Where:    in the same archive as kurbo and peniko (above). In this
-            repository: src/CodeBrix.WebPlatform.WebGpu.Animation/Rust/vendor.
-  What:     png (reading PNG files, the image-rs project) with fdeflate,
-            flate2, miniz_oxide (0.8.9 and 0.9.1), crc32fast, adler2 and
-            simd-adler32, each EXACTLY as crates.io published it, and zlib-rs
-            (carried, not compiled). bitflags and cfg-if are carried by the
-            CodeBrix.WebPlatform.WebGpu package.
-  Licenses: png, fdeflate, flate2 and crc32fast offer "MIT OR Apache-2.0",
-            miniz_oxide "MIT OR Zlib OR Apache-2.0", adler2 "0BSD OR MIT OR
-            Apache-2.0" (all used under Apache-2.0); simd-adler32 is MIT;
-            zlib-rs is Zlib. Their licence files are in the generated
-            THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt (above), whose
-            hand-written header (part F) also names png's public-domain Paeth
-            predictor and zlib-rs's carried test PDF.
-
-================================================================================
-
 The usvg crate - carried by CodeBrix.WebPlatform.WebGpu.Animation
 
   Where:    in the same archive as kurbo and peniko (above). In this
@@ -239,7 +297,7 @@ The usvg crate - carried by CodeBrix.WebPlatform.WebGpu.Animation
             MIT. fontdb carries a public-domain test font (tests/fonts/
             Tuffy.ttf) that is never compiled. The generated
             THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt (above) has every
-            entry and text, and its header's part G the details.
+            entry and text, and its header's part F the details.
 
 ================================================================================
 
@@ -256,7 +314,7 @@ The velato crate - carried by CodeBrix.WebPlatform.WebGpu.Animation
   Licenses: velato and serde_repr offer "Apache-2.0 OR MIT" / "MIT OR
             Apache-2.0" (both used under Apache-2.0); the generated
             THIRD-PARTY-NOTICES-WebGpuAnimationCrates.txt (above) carries the
-            texts, and velato's AUTHORS list in its hand-written header (part H).
+            texts, and velato's AUTHORS list in its hand-written header (part G).
 
 ================================================================================
 
@@ -302,13 +360,39 @@ Fonts in the tests and the sample - not in any package
             samples/GraphicsDemo/backend/GraphicsDemo.Assets/Fonts/ (the
             GraphicsDemo sample, whose own THIRD-PARTY-NOTICES.txt records
             them).
-  What:     Roboto Regular (Copyright 2011 The Roboto Project Authors) and
-            Open Sans Regular (Copyright 2020 The Open Sans Project Authors,
-            Reserved Font Name "Open Sans"), unchanged, each beside its
-            original OFL.txt.
+  What:     Roboto Regular, and in the tests also the variable Roboto
+            (Roboto.ttf, its weight and width axes; both Copyright 2011 The
+            Roboto Project Authors, beside the one Roboto OFL.txt), and Open
+            Sans Regular (Copyright 2020 The Open Sans Project Authors,
+            Reserved Font Name "Open Sans"), unchanged, each family beside
+            its original OFL.txt.
   License:  SIL Open Font License, Version 1.1 (the text is in each OFL.txt).
             OFL fonts are allowed in this repository's tests and samples
             only; no package and no crate carries them.
+
+================================================================================
+
+glTF sample models in the tests - not in any package
+
+  Where:    tests/CodeBrix.WebPlatform.WebGpu.Graphics.Tests.GltfReference/
+            Models/ (the packs khronos-sample-assets and
+            khronos-sample-assets-draco), the test models of the glTF
+            reference converter, which the Graphics crate's glTF loader is
+            checked against.
+  What:     models of the Khronos Group's glTF Sample Assets repository
+            (https://github.com/KhronosGroup/glTF-Sample-Assets), exactly as
+            that repository holds them, unchanged, each model folder with
+            its own LICENSE.md and metadata.json. Each pack's SOURCE.txt
+            names the commit they were taken from and, for every model, its
+            licence and the attribution its metadata records (year, owner,
+            artist).
+  License:  only models whose metadata names CC0-1.0 or CC-BY-4.0 for every
+            part were taken (Models/README.txt states the rule); the licence
+            texts are the source repository's own, in each pack's LICENSES/
+            folder (CC0-1.0.txt and CC-BY-4.0.txt, as its models need). They
+            are test material of a
+            test-side library that is never packed; no package and no crate
+            carries them.
 
 ================================================================================
 

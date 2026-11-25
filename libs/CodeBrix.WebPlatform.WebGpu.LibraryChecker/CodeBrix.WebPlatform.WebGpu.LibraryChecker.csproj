@@ -23,7 +23,7 @@
       frontend-crates/platform-crates.zip, and its assembly embeds the platform's Cargo.lock. Its
       version must be the platform version the packages of this repository pin Core to.
     -->
-    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.327.240" />
+    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.329.452" />
   </ItemGroup>
 
 </Project>

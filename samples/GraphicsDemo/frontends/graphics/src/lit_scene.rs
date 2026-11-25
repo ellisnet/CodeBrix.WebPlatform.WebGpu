@@ -36,14 +36,15 @@ pub fn LitScene(context: GpuContext) -> Element {
                 clock: clock.clone(),
                 clear_color: wgpu::Color { r: 0.05, g: 0.07, b: 0.12, a: 1.0 },
                 id: "lit-canvas",
-                label: "Lit shapes on a ground plane. Drag to orbit, use the wheel to zoom; on a touch screen, one finger orbits and two fingers pinch to zoom.",
+                label: "Lit shapes on a ground plane. Drag to orbit, drag with the right or middle button or with Shift to pan, use the wheel to zoom; on a touch screen, one finger orbits and two fingers pan and pinch to zoom.",
                 class: "aspect-video w-full touch-none select-none rounded-lg ring-1 ring-white/10 focus-visible:outline-2 focus-visible:outline-sky-400",
             }
             div { id: "lit-legend", class: "pointer-events-none absolute left-3 top-3 rounded-md bg-slate-950/70 px-3 py-2 text-xs text-slate-200 ring-1 ring-white/10",
                 p { class: "font-semibold text-white", "Controls" }
                 p { "Drag: orbit (the scene follows the pointer)" }
-                p { "Wheel: zoom" }
-                p { "Touch: one finger orbits, two fingers pinch to zoom" }
+                p { "Right or middle drag, or Shift + drag: pan" }
+                p { "Wheel: zoom (also orthographic)" }
+                p { "Touch: one finger orbits, two fingers pan and pinch to zoom" }
                 p { "It turns by itself until you drag." }
             }
         }

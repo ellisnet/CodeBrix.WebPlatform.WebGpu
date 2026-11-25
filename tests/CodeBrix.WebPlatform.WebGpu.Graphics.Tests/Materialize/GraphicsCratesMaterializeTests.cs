@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using CodeBrix.WebPlatform.Core.Crates;
 using CodeBrix.WebPlatform.FrontendBuilder.Crates;
+using CodeBrix.WebPlatform.WebGpu.Graphics.Tests.GltfReference;
 using SilverAssertions;
 using Xunit;
 
@@ -28,7 +30,7 @@ public class GraphicsCratesMaterializeTests
         Assert.SkipWhen(frontend.NoCratesReason != null, frontend.NoCratesReason ?? string.Empty);
     }
 
-    private string Vendor => _frontend.Options.ResolvedVendorDirectory;
+    private string Vendor => _frontend.Options.VendorDirectory;
 
     private CrateBundleOutcome GraphicsOutcome => _frontend.First.CrateBundles.Single(b => b.Name == GraphicsCrates.BundleName);
 
@@ -43,15 +45,19 @@ public class GraphicsCratesMaterializeTests
         => GraphicsOutcome.Origin.Should().Be(GraphicsCrates.PackageId + " " + GraphicsCrates.PackageVersion);
 
     [Fact]
-    public void the_webgpu_graphics_bundle_adds_codebrix_webgpu_graphics_and_nothing_else()
+    public void the_webgpu_graphics_bundle_adds_its_crate_and_its_own_third_party_crates_and_shares_nothing()
     {
+        //Arrange
+        var expected = CrateFolders.InArchive(GraphicsCrates.GetArchivePath());
+
         //Act
         var added = GraphicsOutcome.AddedCrates;
         var shared = GraphicsOutcome.SharedCrates;
 
         //Assert
-        added.Should().Equal(GraphicsCrate);
-        shared.Should().BeEmpty();
+        added.OrderBy(c => c, StringComparer.Ordinal).Should().Equal(expected);
+        added.Should().Contain(new[] { GraphicsCrate, "gltf 1.4.1", "gltf-json 1.4.1", "gltf-derive 1.4.1" });
+        shared.Should().BeEmpty("the Graphics bundle carries only what neither the platform nor the WebGpu package carries");
     }
 
     [Fact]
@@ -119,6 +125,7 @@ public class GraphicsCratesMaterializeTests
             .ToList();
         registryPackages.Should().Contain(GraphicsCrate);
         registryPackages.Should().Contain("codebrix-webgpu " + _frontend.WebGpuCrateVersion);
+        registryPackages.Should().Contain(new[] { "gltf 1.4.1", "gltf-json 1.4.1", "gltf-derive 1.4.1" }, "the glTF loader's crates resolve from the Graphics bundle");
         registryPackages.Should().OnlyContain(p => vendored.Contains(p), "cargo takes every crate from the vendor folder");
         registryPackages.Should().NotContain(p => p.StartsWith("codebrix-webgpu-animation ", StringComparison.Ordinal), "the Graphics crate never depends on the Animation crate");
     }
@@ -165,14 +172,26 @@ public class GraphicsCratesMaterializeTests
         File.WriteAllText(Path.Combine(crate, ".cargo", "config.toml"),
             "[source.crates-io]\nreplace-with = \"vendored\"\n\n[source.vendored]\ndirectory = \"" + Vendor.Replace('\\', '/') + "\"\n\n[net]\noffline = true\n");
 
+        // THE PROOF OF THE glTF LOADER: the reference converter (the C# converter the loader is a port of) writes
+        // its model data for every model file of the reference packs, and the crate's own tests
+        // (src/gltf/reference_tests.rs) load the same files and compare, value by value. The folder is named to
+        // them by an environment variable, since the crate does not carry the models.
+        var reference = Path.Combine(_frontend.Folder, "gltf-reference");
+        var cases = GltfReferenceFolder.Write(reference, TestContext.Current.CancellationToken);
+        var environment = new Dictionary<string, string> { ["CODEBRIX_GRAPHICS_TEST_GLTF_REFERENCE"] = reference };
+
         //Act
         var run = await Cargo.RunAsync(crate, Path.Combine(_frontend.Folder, "cargo-target-host"),
-            new[] { "test", "--offline" }, TestContext.Current.CancellationToken);
+            new[] { "test", "--offline", "--", "--nocapture" }, environment, TestContext.Current.CancellationToken);
 
         //Assert
         run.ExitCode.Should().Be(0, run.Output + run.Errors);
         run.Output.Should().Contain("test result: ok.");
         run.Output.Should().NotContain("FAILED");
         run.Errors.Should().NotContain("warning: `codebrix-webgpu-graphics`", "the Graphics crate's tests compile without a warning");
+        cases.Should().NotBeEmpty();
+        run.Errors.Should().NotContain("SKIPPED: no glTF reference folder", "the comparison with the reference converter ran");
+        run.Output.Should().Contain(" case(s) compared, ", "the comparison with the reference converter ran");
+        run.Output.Should().Contain(" of them still read as a model, none panicked", "the damaged-file run of the glTF loader ran");
     }
 }

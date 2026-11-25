@@ -12,7 +12,7 @@ public sealed class ScenePlacement
     /// <summary>The model's name.</summary>
     public string Model { get; set; }
 
-    /// <summary>The model's index in the scene's model data blob.</summary>
+    /// <summary>The model's index in the scene's list of models (<see cref="ViewerScene.Models" />).</summary>
     public int ModelIndex { get; set; }
 
     /// <summary>The translation.</summary>

@@ -324,7 +324,7 @@ impl TextShape {
             let local = self.glyph_transform(glyph);
             // A gradient is in calibrated units: placed back from the glyph's own space.
             let brush_transform = if is_gradient { Some(local.inverse()) } else { None };
-            scene.fill_cached(Fill::NonZero, transform * local, &brush, brush_transform, &outline.elements, glyph_key(self.face.id, glyph.key));
+            scene.fill_cached(Fill::NonZero, transform, local, &brush, brush_transform, &outline.elements, glyph_key(self.face.id, glyph.key));
         }
     }
 }

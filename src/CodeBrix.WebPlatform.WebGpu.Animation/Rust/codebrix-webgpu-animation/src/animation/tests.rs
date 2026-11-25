@@ -105,6 +105,26 @@ fn css_keyword_curves_match_noskia_solver() {
     assert_eq!(Easing::cubic_bezier(0.5, 0.42, 0.0, 0.58, 1.0), Some(0.5));
 }
 
+/// A curve of the application's own, declared as a constant (checked when the tests compile).
+const SNAP: CubicBezierEasing = CubicBezierEasing::new(0.2, 0.0, 0.0, 1.0).unwrap();
+
+#[test]
+fn a_curve_can_be_a_constant_and_new_keeps_its_rule_in_a_const_context() {
+    //Arrange
+    const REFUSED: Option<CubicBezierEasing> = CubicBezierEasing::new(-0.1, 0.0, 0.5, 1.0);
+    const NOT_A_NUMBER: Option<CubicBezierEasing> = CubicBezierEasing::new(0.5, 0.0, f64::NAN, 1.0);
+    const X2: f64 = SNAP.x2();
+    //Act
+    let runtime = CubicBezierEasing::new(0.2, 0.0, 0.0, 1.0).unwrap();
+    //Assert
+    assert_eq!(SNAP, runtime);
+    assert_eq!(X2, 0.0);
+    assert!(REFUSED.is_none());
+    assert!(NOT_A_NUMBER.is_none());
+    assert_eq!(SNAP.evaluate(0.5), runtime.evaluate(0.5));
+    assert!(SNAP.evaluate(0.5) > 0.5, "an ease-out curve is ahead of linear half way");
+}
+
 #[test]
 fn lerp_is_unclamped() {
     assert_eq!(Easing::lerp(10.0, 20.0, 1.5), 25.0);

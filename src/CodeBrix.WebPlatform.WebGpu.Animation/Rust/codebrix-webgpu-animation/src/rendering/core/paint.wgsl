@@ -114,63 +114,13 @@ fn gradient_t(p: Paint, local_xy: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(extend_mode_normalized(phi, extend), 1.0);
 }
 
-// ---- noise drawn on the GPU: the planes' value and gradient noise (lattice corners hashed with
-// the seed, quintic fade, fractal octaves with the seed advanced per octave, the sum divided by
-// the amplitudes and clamped to -1..1) - the same parameters and character as the CPU's
-// DrawingNoise, NOT its exact pattern (32-bit hashing and floats here, 64-bit there).
-fn noise_hash(seed: u32, x: i32, y: i32, z: i32) -> u32 {
-    var h = seed ^ 0x9E3779B9u;
-    h = (h ^ u32(x)) * 0x85EBCA6Bu;
-    h = (h ^ (h >> 13u) ^ u32(y)) * 0xC2B2AE35u;
-    h = (h ^ (h >> 16u) ^ u32(z)) * 0x27D4EB2Fu;
-    h = h ^ (h >> 15u);
-    h = h * 0x2C1B3C6Du;
-    return h ^ (h >> 12u);
-}
-
-fn noise_fade(t: vec3<f32>) -> vec3<f32> {
-    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
-}
-
-// The corner's contribution: a value in -1..1, or a gradient (one of 12 directions in 3D, 8 in
-// 2D) dotted with the offset.
-fn noise_corner(seed: u32, c: vec3<i32>, d: vec3<f32>, gradient: bool, three: bool) -> f32 {
-    let h = noise_hash(seed, c.x, c.y, c.z);
-    if (!gradient) {
-        return f32(h & 0xFFFFu) / 32767.5 - 1.0;
-    }
-    if (!three) {
-        let a = f32(h & 7u) * 0.78539816;
-        return (cos(a) * d.x + sin(a) * d.y) * 1.41421356;
-    }
-    let g = h % 12u;
-    let u = select(d.y, d.x, g < 8u);
-    let v = select(select(d.z, d.x, g == 12u || g == 14u), d.y, g < 4u);
-    return (select(-u, u, (g & 1u) == 0u) + select(-v, v, (g & 2u) == 0u));
-}
-
-fn noise_once(seed: u32, q: vec3<f32>, gradient: bool, three: bool) -> f32 {
-    let i = vec3<i32>(floor(q));
-    let f = q - floor(q);
-    let u = noise_fade(f);
-    var corners: array<f32, 8>;
-    for (var k = 0u; k < 8u; k++) {
-        let o = vec3<i32>(i32(k & 1u), i32((k >> 1u) & 1u), i32((k >> 2u) & 1u));
-        corners[k] = noise_corner(seed, i + o, f - vec3<f32>(o), gradient, three);
-    }
-    let x00 = mix(corners[0], corners[1], u.x);
-    let x10 = mix(corners[2], corners[3], u.x);
-    let x01 = mix(corners[4], corners[5], u.x);
-    let x11 = mix(corners[6], corners[7], u.x);
-    let y0 = mix(x00, x10, u.y);
-    let y1 = mix(x01, x11, u.y);
-    return clamp(select(y0, mix(y0, y1, u.z), three), -1.0, 1.0);
-}
-
+// ---- noise drawn on the GPU: noise_value maps a paint's parameters onto noise_once (noise.wgsl,
+// the piece this module shares with the stroke shader).
 fn noise_value(p: Paint, local_xy: vec2<f32>) -> f32 {
     let mode = p.info.y;
     let gradient = (mode & 1u) != 0u;
     let three = (mode & 2u) != 0u;
+    let caustics = (mode & 4u) != 0u;
     let octaves = max((mode >> 8u) & 63u, 1u);
     let frequency = p.color.x;
     var q = vec3<f32>((local_xy + p.m1.zw) * frequency, select(0.0, p.color.y, three));
@@ -181,7 +131,14 @@ fn noise_value(p: Paint, local_xy: vec2<f32>) -> f32 {
     for (var o = 0u; o < octaves; o++) {
         // 2D noise samples one plane of the lattice (z = 0); 3D also scales z per octave.
         let qo = vec3<f32>(q.xy * scale, q.z * select(0.0, scale, three));
-        total += amplitude * noise_once(p.info.w + o, qo, gradient, three);
+        // The caustics kind (mode bit 4, noise.wgsl caustics_once): z is its time-like coordinate.
+        var v = 0.0;
+        if (caustics) {
+            v = caustics_once(p.info.w + o, qo.xy, qo.z);
+        } else {
+            v = noise_once(p.info.w + o, qo, gradient, three);
+        }
+        total += amplitude * v;
         norm += amplitude;
         amplitude *= p.color.w;
         scale *= p.color.z;

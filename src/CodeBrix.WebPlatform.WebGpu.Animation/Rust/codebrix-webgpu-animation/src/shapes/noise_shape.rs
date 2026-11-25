@@ -25,14 +25,15 @@ impl Default for NoiseShapeOptions {
 }
 
 /// A rectangle filled with seeded coherent noise COMPUTED ON THE GPU per pixel: grain, clouds,
-/// dissolve patterns, textured fills. The planes' parameters - kind (value or gradient), seed,
-/// frequency (per calibrated unit), z, octaves, lacunarity, gain, offset - and the planes' rules
-/// (the pixel centre sampled, fractal octaves with the seed advanced per octave, the sum divided
-/// by the amplitudes and clamped to -1..1) with THE SAME CHARACTER, but NOT the same pattern as
-/// the CPU's for a seed: the GPU hashes the lattice with 32-bit integers and works in 32-bit
-/// floats, where the CPU's [`DrawingNoise`](crate::planes::DrawingNoise) is NoSkia's exact 64-bit
-/// arithmetic. Use the CPU noise where a value is READ (positions, jitter) and this where noise
-/// is SEEN. The value maps through the colour stops (premultiplied colours interpolated
+/// dissolve patterns, textured fills, pool light. The planes' parameters - kind (value, gradient
+/// or caustics), seed, frequency (per calibrated unit), z, octaves, lacunarity, gain, offset - and
+/// the planes' rules (the pixel centre sampled, fractal octaves with the seed advanced per octave,
+/// the sum divided by the amplitudes and clamped to -1..1) with THE SAME CHARACTER, but NOT the
+/// same pattern as the CPU's for a seed: the GPU hashes the lattice with 32-bit integers and works
+/// in 32-bit floats, where the CPU's [`DrawingNoise`](crate::planes::DrawingNoise) is NoSkia's
+/// exact 64-bit arithmetic - except the caustics kind (no C# original), which is the same pattern
+/// on both (within float rounding). Use the CPU noise where a value is READ (positions, jitter)
+/// and this where noise is SEEN. The value maps through the colour stops (premultiplied colours interpolated
 /// straight, as the gradient fills). Masks and effects apply as to any shape; bind its z to the
 /// time through an [`AnimatedShape`](crate::shapes::AnimatedShape) for noise that evolves.
 #[derive(Clone, Debug, PartialEq)]
@@ -114,9 +115,13 @@ impl NoiseShape {
     /// The parameters the GPU's noise paint takes.
     pub(crate) fn gpu_params(&self) -> NoisePaintParams {
         let f = &self.options.fill;
-        // The 64-bit seed folded to the 32 bits the GPU hashes with.
-        let seed = (self.seed as u64 ^ ((self.seed as u64) >> 32)) as u32;
-        NoisePaintParams { gradient: self.kind == DrawingNoiseKind::Gradient, seed, frequency: self.frequency, z: f.z.map(|z| z as f32), octaves: f.octaves, lacunarity: f.lacunarity as f32, gain: f.gain as f32, offset: [f.offset_x as f32, f.offset_y as f32] }
+        // The 64-bit seed folded to the 32 bits the GPU hashes with. The caustics kind takes the
+        // low 32 bits instead, as its CPU twin does, so each octave's `seed + o` is the CPU's too.
+        let seed = match self.kind {
+            DrawingNoiseKind::Caustics => self.seed as u32,
+            _ => (self.seed as u64 ^ ((self.seed as u64) >> 32)) as u32,
+        };
+        NoisePaintParams { gradient: self.kind == DrawingNoiseKind::Gradient, caustics: self.kind == DrawingNoiseKind::Caustics, seed, frequency: self.frequency, z: f.z.map(|z| z as f32), octaves: f.octaves, lacunarity: f.lacunarity as f32, gain: f.gain as f32, offset: [f.offset_x as f32, f.offset_y as f32] }
     }
 }
 
@@ -124,6 +129,8 @@ impl NoiseShape {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NoisePaintParams {
     pub(crate) gradient: bool,
+    /// The caustics kind (mode bit 4).
+    pub(crate) caustics: bool,
     pub(crate) seed: u32,
     pub(crate) frequency: f32,
     pub(crate) z: Option<f32>,

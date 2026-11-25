@@ -6,6 +6,7 @@ use std::fmt;
 use std::rc::Rc;
 
 use crate::text::font_face::FontFace;
+use crate::text::font_variation::{FontVariation, FontVariationAxis};
 use crate::text::missing_character::MissingCharacter;
 use crate::text::text_shaping;
 
@@ -45,6 +46,10 @@ struct Entry {
 /// FAMILY NAMES: a font is known by its own family name (from its name table) or by the
 /// override given when it was registered; names match without regard to case; `None` means the
 /// FIRST registered font.
+///
+/// VARIABLE FONTS (Not in C#): [`FontRegistry::register_font_with_variations`] registers a
+/// variable font at chosen axis values (a weight, a width, ...); `register_font` registers its
+/// default instance.
 #[derive(Clone, Default)]
 pub struct FontRegistry {
     entries: Rc<RefCell<Vec<Entry>>>,
@@ -79,7 +84,27 @@ impl FontRegistry {
     /// is given (trimmed), else the font's own family name. The error (C# ArgumentException)
     /// says what to do.
     pub fn register_font(&self, data: Vec<u8>, family_name_override: Option<&str>) -> Result<String, String> {
-        let face = FontFace::from_bytes(data)?;
+        self.register_font_with_variations(data, family_name_override, &[])
+    }
+
+    /// Registers a VARIABLE font at the instance the axis values choose (a weight of 700, a
+    /// width of 87.5, ...) and returns the family name it is known by, as
+    /// [`FontRegistry::register_font`] does (Not in C#). Every axis not named keeps its default;
+    /// no values at all register the font's default instance, exactly as `register_font`. All
+    /// text drawn or measured in that family - shaping, advances, metrics, outlines - uses that
+    /// one instance.
+    ///
+    /// ONE INSTANCE PER REGISTRATION: to use several weights of one variable font, register its
+    /// bytes once per weight, each with its own `family_name_override` ("Body", "Body Bold");
+    /// without an override every instance answers to the font's own family name and the first
+    /// registered one wins.
+    ///
+    /// REFUSED, with an error that names the font's axes and their ranges: an axis the font does
+    /// not have (any axis value, for a font that is not variable), a value outside its axis's
+    /// range or not finite, the same axis twice; and what [`FontRegistry::register_font`]
+    /// refuses.
+    pub fn register_font_with_variations(&self, data: Vec<u8>, family_name_override: Option<&str>, variations: &[FontVariation]) -> Result<String, String> {
+        let face = FontFace::from_bytes_with_variations(data, variations)?;
         let name = match family_name_override.map(str::trim).filter(|s| !s.is_empty()) {
             Some(name) => name.to_string(),
             None => face.family_name.clone(),
@@ -91,6 +116,14 @@ impl FontRegistry {
     /// The family names the fonts are known by, in the order they were registered.
     pub fn get_registered_family_names(&self) -> Vec<String> {
         self.entries.borrow().iter().map(|e| e.name.clone()).collect()
+    }
+
+    /// The variation axes of the font a family name resolves to (None: the first registered
+    /// font), in the font's order, with their ranges and defaults; empty for a font that is not
+    /// variable. Not in C#.
+    pub fn get_variation_axes(&self, family_name: Option<&str>) -> Result<Vec<FontVariationAxis>, String> {
+        let (_, face) = self.resolve(family_name)?;
+        Ok(face.variation_axes())
     }
 
     /// True when a font answers to the family name (None: when any font is registered).

@@ -91,7 +91,7 @@ pub(crate) fn collect(element: &DrawingShape, parent: &HardEdgeMatrix, time: f64
             if !(tolerance > 0.0) {
                 return Ok(());
             }
-            for geometry in element.get_coverage_areas(tolerance)? {
+            for geometry in element.coverage_areas_at(tolerance, time)? {
                 if !geometry.is_empty() {
                     areas.push(Area { geometry, matrix, tolerance });
                 }

@@ -2,7 +2,7 @@
 
 use std::cell::{Ref, RefCell};
 
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 
 use crate::animation::{AnimationPlayer, PlayerData, PoseSource, PoseTarget};
 use crate::models::{Model, ModelPoseEdit, NodeTransform};
@@ -29,8 +29,37 @@ pub struct ModelInstance {
     model: Model,
     /// The model-to-world matrix; default identity (C#: `World`).
     pub world: Mat4,
-    /// False to skip the instance when drawing; default true (C#: `Visible`).
+    /// False to skip the instance when drawing; default true (C#: `Visible`). Hide single nodes
+    /// with [`ModelInstance::set_node_visible`].
     pub visible: bool,
+    /// Multiplies the base colour of every part (linear RGB); default white, no change. Not in C#.
+    pub tint: Vec3,
+    /// Multiplies the opacity of every part, 0 to 1; default 1. Below 1 EVERY part of the instance
+    /// is drawn with blending among the blended parts (by
+    /// [`ModelRenderer::end_blended`](crate::ModelRenderer::end_blended), sorted back to front,
+    /// depth read but not written), so the instance can fade out; 0 or less skips the instance.
+    /// Not in C#.
+    pub alpha: f32,
+    /// Multiplies the emissive of every part (on top of the material's emissive strength); default
+    /// 1. A part brightens or dims without a second material or model. Not in C#.
+    pub emissive_strength: f32,
+    /// True to draw the instance even when it is outside the view: the renderer's culling skips
+    /// it ([`ModelRenderer::set_frustum_culling`](crate::ModelRenderer::set_frustum_culling)
+    /// turns culling off for all). Default false. For an instance posed by hand further than its
+    /// model's clips reach ([`Model::culling_bounds`] hold the clips' poses only), or one whose
+    /// vertices a shader of the application moves. Not in C#.
+    pub never_cull: bool,
+    /// True (default) when the instance casts shadows - from the sun and from the spotlights that
+    /// cast them ([`SceneLighting::sun_shadows`](crate::SceneLighting::sun_shadows),
+    /// [`SpotLight::casts_shadows`](crate::SpotLight::casts_shadows)). Only its opaque and
+    /// alpha-tested parts cast (an alpha-tested part with its cutout); blended parts never do, nor
+    /// does the whole instance while its [`ModelInstance::alpha`] is below 1. A skinned or
+    /// morphing instance casts in its current pose. Not in C#.
+    pub casts_shadows: bool,
+    /// True (default) when shadows fall on the instance. Not in C#.
+    pub receives_shadows: bool,
+    /// Per node: true when hidden by [`ModelInstance::set_node_visible`]; empty while none is.
+    hidden_nodes: Vec<bool>,
     locals: Vec<NodeTransform>,
     morph_weights: Vec<f32>,
     posed: RefCell<Posed>,
@@ -45,6 +74,13 @@ impl ModelInstance {
         let mut instance = ModelInstance {
             world: Mat4::IDENTITY,
             visible: true,
+            tint: Vec3::ONE,
+            alpha: 1.0,
+            emissive_strength: 1.0,
+            never_cull: false,
+            casts_shadows: true,
+            receives_shadows: true,
+            hidden_nodes: Vec::new(),
             locals: vec![NodeTransform::IDENTITY; nodes],
             morph_weights: vec![0.0; layout.morph_weight_count],
             posed: RefCell::new(Posed { valid: false, node_matrices: vec![Mat4::IDENTITY; nodes], palette: vec![Mat4::IDENTITY; layout.palette_size] }),
@@ -135,9 +171,76 @@ impl ModelInstance {
         Ref::map(self.posed.borrow(), |p| p.node_matrices.as_slice())
     }
 
-    /// A node's matrix in world space (C#: `GetNodeWorldMatrix`).
+    /// A node's matrix in world space, its CURRENT place after the last pose change (C#:
+    /// `GetNodeWorldMatrix`); panics for a node index out of range. By name:
+    /// [`ModelInstance::get_node_world_matrix_named`].
     pub fn get_node_world_matrix(&self, node: usize) -> Mat4 {
         self.world * self.node_matrices()[node]
+    }
+
+    /// A node's matrix in world space by the node's NAME (the first node of that name), None for
+    /// no such node (Not in C#). Read it after the frame's animation update to ride on an animated
+    /// node (a camera, a glow, an emitter): it is the node's CURRENT place, computed from the
+    /// current pose. [`Model::animated_nodes`] lists the nodes the clips move.
+    pub fn get_node_world_matrix_named(&self, name: &str) -> Option<Mat4> {
+        self.model.find_node(name).map(|node| self.get_node_world_matrix(node))
+    }
+
+    /// Shows or hides one node of this instance (Not in C#): a hidden node's parts are not drawn,
+    /// nor those of its descendants; other instances of the model are not affected. Its pose is
+    /// still computed (its children's and its joints' matrices stay valid). Out-of-range nodes are
+    /// ignored. The instance's other parts stay batched with the other instances: only the hidden
+    /// parts leave the shared draw.
+    pub fn set_node_visible(&mut self, node: usize, visible: bool) {
+        if node >= self.locals.len() || (visible && self.hidden_nodes.is_empty()) {
+            return;
+        }
+        if self.hidden_nodes.is_empty() {
+            self.hidden_nodes = vec![false; self.locals.len()];
+        }
+        self.hidden_nodes[node] = !visible;
+        if self.hidden_nodes.iter().all(|h| !h) {
+            self.hidden_nodes.clear();
+        }
+    }
+
+    /// Shows or hides a node by name (the first node of that name); false when the model has no
+    /// such node (Not in C#).
+    pub fn set_node_visible_named(&mut self, name: &str, visible: bool) -> bool {
+        match self.model.find_node(name) {
+            Some(node) => {
+                self.set_node_visible(node, visible);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// False when the node itself was hidden with [`ModelInstance::set_node_visible`] (a shown
+    /// node under a hidden one is still not drawn) (Not in C#).
+    pub fn is_node_visible(&self, node: usize) -> bool {
+        !self.hidden_nodes.get(node).copied().unwrap_or(false)
+    }
+
+    /// Shows every node again (Not in C#).
+    pub fn show_all_nodes(&mut self) {
+        self.hidden_nodes.clear();
+    }
+
+    /// Per node, true when it is not drawn: hidden itself or under a hidden node; None while every
+    /// node shows.
+    pub(crate) fn hidden_node_mask(&self) -> Option<Box<[bool]>> {
+        if self.hidden_nodes.is_empty() {
+            return None;
+        }
+        let nodes = self.model.nodes();
+        let mut hidden = self.hidden_nodes.clone();
+        for &index in &self.model.layout().node_order {
+            if let Some(parent) = nodes[index].parent {
+                hidden[index] |= hidden[parent];
+            }
+        }
+        Some(hidden.into_boxed_slice())
     }
 
     /// A node's current morph weights, empty when its mesh has none (C#: `GetMorphWeights`).

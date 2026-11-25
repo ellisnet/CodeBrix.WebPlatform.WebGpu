@@ -127,7 +127,7 @@ impl DemoScene for LightScene {
             }
             self.panels[i].set_time(seconds);
             let target = part(&self.frame, *x, *y, PW as f32, PH as f32, width, height);
-            self.panels[i].render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(target) });
+            self.panels[i].render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(target), ..Default::default() });
         }
     }
 }

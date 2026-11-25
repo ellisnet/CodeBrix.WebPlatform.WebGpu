@@ -13,6 +13,7 @@ use crate::drawing2d::SpriteVertex;
 use crate::frames::{BufferRange, DrawIndexedOptions, RenderPass};
 use crate::images::AnimatedTexture;
 use crate::pipelines::{BlendPreset, ColorTargetOptions, DepthOptions, DepthPreset, GpuRenderPipeline, VertexLayoutOptions};
+use crate::presentation::TargetFormats;
 use crate::resources::{BindingEntry, BindingLayoutEntry, GpuBindGroup, GpuBindGroupLayout, GpuBuffer, GpuSampler, GpuShader, GpuTexture, SamplerDescription};
 use crate::shaders::BuiltInShaders;
 
@@ -103,7 +104,8 @@ pub struct SpriteBatch {
     texture_layout: GpuBindGroupLayout,
     linear_sampler: GpuSampler,
     nearest_sampler: GpuSampler,
-    pipelines: HashMap<(wgpu::TextureFormat, Option<wgpu::TextureFormat>, BlendPreset), GpuRenderPipeline>,
+    /// The pipelines by target (colour, depth, sample count) and blend preset.
+    pipelines: HashMap<(TargetFormats, BlendPreset), GpuRenderPipeline>,
     texture_groups: HashMap<(wgpu::TextureView, bool), GpuBindGroup>,
     uniforms: GpuBuffer,
     uniform_group: GpuBindGroup,
@@ -412,7 +414,7 @@ impl SpriteBatch {
         self.vertex_buffer.write(self.builder.vertices(), self.vertex_cursor)?;
 
         let target = pass.target().clone();
-        let pipeline = self.pipeline(target.color_format(), target.depth_format(), drawing.blend)?;
+        let pipeline = self.pipeline(target.formats(), drawing.blend)?;
         pass.set_pipeline(&pipeline);
         pass.set_bind_group_with_offsets(0, &self.uniform_group, &[uniform_offset as u32]);
         pass.set_vertex_buffer(0, &self.vertex_buffer, BufferRange { offset: self.vertex_cursor, size: Some(bytes) });
@@ -430,23 +432,26 @@ impl SpriteBatch {
         Ok(())
     }
 
-    /// The pipeline for a target's formats and a blend preset (built on first use).
-    fn pipeline(&mut self, color: wgpu::TextureFormat, depth: Option<wgpu::TextureFormat>, blend: BlendPreset) -> Result<GpuRenderPipeline, GraphicsException> {
-        if let Some(pipeline) = self.pipelines.get(&(color, depth, blend)) {
+    /// The pipeline for a target's formats and sample count and a blend preset (built on first
+    /// use; a multisampled target gets its own).
+    fn pipeline(&mut self, formats: TargetFormats, blend: BlendPreset) -> Result<GpuRenderPipeline, GraphicsException> {
+        if let Some(pipeline) = self.pipelines.get(&(formats, blend)) {
             return Ok(pipeline.clone());
         }
+        let (color, depth) = (formats.color, formats.depth);
         let mut builder = self
             .context
             .create_render_pipeline(&self.shader)
             .with_label(&format!("sprite batch {color:?} {blend:?}"))
             .with_vertex_buffer_of::<SpriteVertex>(VertexLayoutOptions::default())
             .with_color_target(color, ColorTargetOptions::blended(blend))
-            .with_bind_group_layouts(&[&self.globals_layout, &self.texture_layout]);
+            .with_bind_group_layouts(&[&self.globals_layout, &self.texture_layout])
+            .with_sample_count(formats.sample_count);
         if let Some(depth) = depth {
             builder = builder.with_depth(depth, DepthOptions { preset: DepthPreset::None, ..DepthOptions::default() });
         }
         let pipeline = builder.build()?;
-        self.pipelines.insert((color, depth, blend), pipeline.clone());
+        self.pipelines.insert((formats, blend), pipeline.clone());
         Ok(pipeline)
     }
 
@@ -542,5 +547,16 @@ mod tests {
     fn the_messages_say_what_to_do() {
         assert_eq!(ignored_message("No", 0), "No.");
         assert!(ignored_message("No", 3).contains("3 drawing call(s) arrived outside begin/end"));
+    }
+
+    #[test]
+    fn the_sprite_pipelines_are_kept_per_sample_count_and_blend() {
+        let formats = |count| crate::presentation::TargetFormats::new(wgpu::TextureFormat::Bgra8UnormSrgb, None, count);
+        let mut keys: std::collections::HashSet<(crate::presentation::TargetFormats, BlendPreset)> = std::collections::HashSet::new();
+        for count in crate::presentation::SAMPLE_COUNTS {
+            keys.insert((formats(count), BlendPreset::PremultipliedAlpha));
+            keys.insert((formats(count), BlendPreset::Additive));
+        }
+        assert_eq!(keys.len(), 4);
     }
 }

@@ -1,11 +1,12 @@
-//! `ImageShape`: a picture drawn into a destination rectangle (C# `ImageShape`).
+//! `ImageShape`: a picture drawn into a destination rectangle (C# `ImageShape`) - or (Not in C#)
+//! a [`PictureTarget`] another layer draws this frame.
 
 use kurbo::{Affine, Rect};
 
 use crate::color::Color;
 use crate::geometry::{Rectangle, RectangleF};
 use crate::images::{ImageSampling, ImageSource};
-use crate::rendering::VectorScene;
+use crate::rendering::{PictureTarget, VectorScene};
 
 /// The optional arguments of [`ImageShape::new`] (C#'s defaults: all of the picture, bilinear,
 /// no tint).
@@ -34,6 +35,8 @@ pub struct ImageShape {
     source_rectangle: Option<Rectangle>,
     sampling: ImageSampling,
     tint: Option<Color>,
+    /// The picture target shown instead of `source` (Not in C#).
+    picture: Option<PictureTarget>,
 }
 
 pub(crate) fn check_destination(destination: RectangleF) -> Result<(), String> {
@@ -48,14 +51,20 @@ pub(crate) fn check_destination(destination: RectangleF) -> Result<(), String> {
 /// as its paint, the picture's pixels mapped onto it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_picture(scene: &mut VectorScene, transform: Affine, source: &ImageSource, destination: RectangleF, part: Option<Rectangle>, sampling: ImageSampling, tint: Option<Color>, opacity: f32) {
+    encode_image_data(scene, transform, source.image_data(), destination, part, sampling, tint, opacity);
+}
+
+/// The same for the picture's data (an `ImageSource`'s, or a picture target's stand-in).
+#[allow(clippy::too_many_arguments)]
+fn encode_image_data(scene: &mut VectorScene, transform: Affine, image: &peniko::ImageData, destination: RectangleF, part: Option<Rectangle>, sampling: ImageSampling, tint: Option<Color>, opacity: f32) {
     if destination.width == 0.0 || destination.height == 0.0 {
         return;
     }
-    let r = part.unwrap_or(Rectangle::new(0, 0, source.width() as i32, source.height() as i32));
+    let r = part.unwrap_or(Rectangle::new(0, 0, image.width as i32, image.height as i32));
     let dest = Rect::new(destination.x as f64, destination.y as f64, destination.right() as f64, destination.bottom() as f64);
     let place = Affine::translate((dest.x0, dest.y0)) * Affine::scale_non_uniform(destination.width as f64 / r.width as f64, destination.height as f64 / r.height as f64) * Affine::translate((-(r.x as f64), -(r.y as f64)));
     let tint = tint.map(|t| [t.r as f32 / 255.0, t.g as f32 / 255.0, t.b as f32 / 255.0, t.a as f32 / 255.0]);
-    scene.fill_picture(transform, source.image_data(), place, &dest.abs(), sampling == ImageSampling::Nearest, tint, opacity);
+    scene.fill_picture(transform, image, place, &dest.abs(), sampling == ImageSampling::Nearest, tint, opacity);
 }
 
 impl ImageShape {
@@ -67,7 +76,24 @@ impl ImageShape {
         if let Some(r) = options.source_rectangle {
             source.check_area(r)?;
         }
-        Ok(ImageShape { source, destination, source_rectangle: options.source_rectangle, sampling: options.sampling, tint: options.tint })
+        Ok(ImageShape { source, destination, source_rectangle: options.source_rectangle, sampling: options.sampling, tint: options.tint, picture: None })
+    }
+
+    /// A picture element showing a [`PictureTarget`] - the picture another layer
+    /// ([`AnimationLayer::to_picture`](crate::rendering::AnimationLayer::to_picture)) draws this
+    /// frame - stretched into `destination` (no C# equivalent). Its [`source`](ImageShape::source)
+    /// is a 1 x 1 transparent stand-in (the pixels are on the GPU only); the flat look paints it
+    /// transparent and the line look leaves it out, as it has no CPU pixels to average. The error
+    /// says what is wrong with the destination.
+    pub fn from_picture_target(target: &PictureTarget, destination: RectangleF, sampling: ImageSampling) -> Result<ImageShape, String> {
+        check_destination(destination)?;
+        let source = ImageSource::from_rgba(&[0, 0, 0, 0], 1, 1)?;
+        Ok(ImageShape { source, destination, source_rectangle: None, sampling, tint: None, picture: Some(target.clone()) })
+    }
+
+    /// The picture target shown, when the shape was made from one.
+    pub fn picture_target(&self) -> Option<&PictureTarget> {
+        self.picture.as_ref()
     }
 
     /// The picture.
@@ -106,6 +132,9 @@ impl ImageShape {
     }
 
     pub(crate) fn encode(&self, scene: &mut VectorScene, transform: Affine, opacity: f32) {
-        encode_picture(scene, transform, &self.source, self.destination, self.source_rectangle, self.sampling, self.tint, opacity);
+        match &self.picture {
+            Some(p) => encode_image_data(scene, transform, p.stand_in(), self.destination, None, self.sampling, self.tint, opacity),
+            None => encode_picture(scene, transform, &self.source, self.destination, self.source_rectangle, self.sampling, self.tint, opacity),
+        }
     }
 }

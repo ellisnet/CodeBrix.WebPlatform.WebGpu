@@ -5,10 +5,14 @@
 use glam::{Mat3, Mat4, Vec3, Vec4};
 
 use crate::drawing3d::{Camera, MaterialAlphaMode, SceneLighting};
+use crate::lighting::local_lights::LocalLight;
+use crate::lighting::shadows::{sample_grid, ShadowView};
 use crate::models::{ModelMaterial, ModelMorphTarget, ModelPrimitive};
+use crate::pipelines::CullPreset;
 use crate::shaders::PbrFeatures;
 
-/// The frame uniforms of the model shader (400 bytes; C#: `PbrFrameUniforms`).
+/// The frame uniforms of the model shader (1792 bytes; C#: `PbrFrameUniforms`, 400 bytes: the
+/// local lights and the shadows after the directional lights are Not in C#).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PbrFrameUniforms {
@@ -19,11 +23,32 @@ pub(crate) struct PbrFrameUniforms {
     pub(crate) ambient_up: Vec4,
     pub(crate) environment: Vec4,
     pub(crate) lights: [Vec4; 16],
+    /// x: the local light count; y: 1 when light 0 (the key light) casts the sun's shadow; z: the
+    /// sun's normal offset (world units).
+    pub(crate) local: Vec4,
+    /// The sun's shadow: strength, samples per side, 1 / map size, depth bias.
+    pub(crate) sun_shadow: Vec4,
+    /// The spotlights' shadows: as `sun_shadow`.
+    pub(crate) spot_shadow: Vec4,
+    pub(crate) sun_matrix: Mat4,
+    pub(crate) spot_matrices: [Mat4; 4],
+    /// Four Vec4 per local light: position + 1 / range, colour x intensity + spot flag, axis +
+    /// cos(outer), cos(inner) + shadow layer + normal offset per unit distance + 0.
+    pub(crate) local_lights: [Vec4; 64],
 }
 
-pub(crate) const FRAME_UNIFORM_SIZE: u64 = 400;
+pub(crate) const FRAME_UNIFORM_SIZE: u64 = 1792;
 const _: () = assert!(std::mem::size_of::<PbrFrameUniforms>() == FRAME_UNIFORM_SIZE as usize);
-// SAFETY: #[repr(C)]; a Mat4 and 21 Vec4, all 16-byte multiples at 16-byte offsets, no padding
+/// The bytes between two frames' uniforms in the frame buffer: the size rounded up to the WebGPU
+/// dynamic-offset alignment.
+pub(crate) const FRAME_SLOT_SIZE: u64 = FRAME_UNIFORM_SIZE.div_ceil(256) * 256;
+/// The depth bias of the sun's shadow test, in the map's depth (0..1).
+const SUN_DEPTH_BIAS: f32 = 0.0002;
+/// The depth bias of a spotlight's shadow test.
+const SPOT_DEPTH_BIAS: f32 = 0.00005;
+/// The normal offset of the shadow test, in texels of the map.
+const NORMAL_OFFSET_TEXELS: f32 = 1.5;
+// SAFETY: #[repr(C)]; Mat4s and Vec4s only, all 16-byte multiples at 16-byte offsets, no padding
 // (size asserted above); every bit pattern of f32 is a valid value.
 unsafe impl bytemuck::Zeroable for PbrFrameUniforms {}
 // SAFETY: as above; Copy and 'static.
@@ -47,6 +72,12 @@ impl PbrFrameUniforms {
             ambient_up: Vec4::ZERO,
             environment: Vec4::new(0.0, 0.0, 0.0, lighting.environment_rotation),
             lights: [Vec4::ZERO; 16],
+            local: Vec4::ZERO,
+            sun_shadow: Vec4::ZERO,
+            spot_shadow: Vec4::ZERO,
+            sun_matrix: Mat4::IDENTITY,
+            spot_matrices: [Mat4::IDENTITY; 4],
+            local_lights: [Vec4::ZERO; 64],
         };
         let mut count = 0;
         let mut add = |direction: Vec3, color: crate::Color4, intensity: f32| {
@@ -63,6 +94,61 @@ impl PbrFrameUniforms {
         }
         frame.ambient_up = up.extend(count as f32);
         frame
+    }
+
+    /// True when the key light took the first light slot (it is lit), so the sun's shadow can
+    /// darken it.
+    pub(crate) fn key_light_shades(lighting: &SceneLighting) -> bool {
+        lighting.light_intensity != 0.0 && lighting.light_direction.length_squared() > 0.0
+    }
+
+    /// Writes the chosen local lights (`chosen`, indices into `lighting.local_lights`, at most 16)
+    /// and their shadow layers (`spot_layers[i]`: the layer of `chosen[i]`, if it casts) (Not in
+    /// C#). The spots' views give each casting spot its normal offset.
+    pub(crate) fn set_local_lights(&mut self, lights: &[LocalLight], chosen: &[usize], spot_layers: &[Option<usize>], spot_views: &[ShadowView]) {
+        let count = chosen.len().min(SceneLighting::MAX_LOCAL_LIGHTS);
+        for (slot, &index) in chosen.iter().take(count).enumerate() {
+            let light = &lights[index];
+            let range = light.range();
+            let inverse_range = if range.is_finite() { 1.0 / range } else { 0.0 };
+            let radiance = light.radiance();
+            let at = slot * 4;
+            self.local_lights[at] = light.position().extend(inverse_range);
+            match light.as_spot() {
+                Some(spot) => {
+                    let layer = spot_layers.get(slot).copied().flatten();
+                    let offset = layer.and_then(|l| spot_views.get(l)).map_or(0.0, |view| view.texel * NORMAL_OFFSET_TEXELS);
+                    self.local_lights[at + 1] = radiance.extend(1.0);
+                    self.local_lights[at + 2] = spot.direction.normalize().extend(spot.clamped_outer_angle().cos());
+                    self.local_lights[at + 3] = Vec4::new(spot.clamped_inner_angle().cos(), layer.map_or(-1.0, |l| l as f32), offset, 0.0);
+                }
+                None => {
+                    self.local_lights[at + 1] = radiance.extend(0.0);
+                    self.local_lights[at + 2] = Vec4::new(0.0, -1.0, 0.0, -1.0);
+                    self.local_lights[at + 3] = Vec4::new(1.0, -1.0, 0.0, 0.0);
+                }
+            }
+        }
+        self.local.x = count as f32;
+    }
+
+    /// Writes the shadows of the pair (Not in C#): the sun's view (when its shadow is drawn) and
+    /// the spotlights' views (layer order), with their settings.
+    pub(crate) fn set_shadows(&mut self, lighting: &SceneLighting, sun: Option<&ShadowView>, spots: &[ShadowView]) {
+        if let Some(view) = sun {
+            let settings = &lighting.sun_shadows;
+            self.local.y = 1.0;
+            self.local.z = view.texel * NORMAL_OFFSET_TEXELS;
+            self.sun_matrix = view.view_projection;
+            self.sun_shadow = Vec4::new(settings.strength.clamp(0.0, 1.0), sample_grid(settings.softness) as f32, 1.0 / settings.map_size.texels() as f32, SUN_DEPTH_BIAS);
+        }
+        for (layer, view) in spots.iter().take(SceneLighting::MAX_SHADOWED_SPOTLIGHTS).enumerate() {
+            self.spot_matrices[layer] = view.view_projection;
+        }
+        if !spots.is_empty() {
+            let settings = &lighting.spot_shadows;
+            self.spot_shadow = Vec4::new(settings.strength.clamp(0.0, 1.0), sample_grid(settings.softness) as f32, 1.0 / settings.map_size.texels() as f32, SPOT_DEPTH_BIAS);
+        }
     }
 }
 
@@ -89,7 +175,8 @@ unsafe impl bytemuck::Pod for PbrMaterialUniforms {}
 impl PbrMaterialUniforms {
     /// C#'s `CreateMaterial`: the factors, the dielectric reflectance from the index of
     /// refraction, the texture-coordinate set of each slot (a bit each) and each slot's
-    /// transform as two rows.
+    /// transform as two rows; `flags[2]` is 1 when the emissive is multiplied by the vertex
+    /// colour ([`ModelMaterial::emissive_vertex_color`], Not in C#).
     pub(crate) fn new(source: &ModelMaterial) -> PbrMaterialUniforms {
         let ior = source.index_of_refraction.max(1.0);
         let f0 = (ior - 1.0) / (ior + 1.0);
@@ -109,7 +196,7 @@ impl PbrMaterialUniforms {
             params: Vec4::new(source.metallic_factor, source.roughness_factor, source.normal_scale, source.occlusion_strength),
             extra: Vec4::new(source.alpha_cutoff, f0 * f0, source.specular_factor, source.clear_coat_factor),
             specular: source.specular_color.extend(0.0),
-            flags: [0, tex_coords, 0, 0],
+            flags: [0, tex_coords, u32::from(source.emissive_vertex_color), 0],
             uv,
         }
     }
@@ -139,7 +226,8 @@ pub(crate) fn material_features(source: &ModelMaterial, has_normal_texture: bool
     features
 }
 
-/// One instance record of the instance storage buffer (80 bytes; C#: `PbrInstance`).
+/// One instance record of the instance storage buffer (112 bytes; C#: `PbrInstance`, 80 bytes:
+/// the emissive strength, the tint and the flags are Not in C#).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PbrInstance {
@@ -147,13 +235,23 @@ pub(crate) struct PbrInstance {
     pub(crate) node_base: u32,
     pub(crate) joint_base: u32,
     pub(crate) weight_base: u32,
-    pub(crate) reserved: u32,
+    /// The instance's emissive strength (multiplies the material's emissive).
+    pub(crate) emissive: f32,
+    /// The instance's tint (rgb, multiplies the base colour) and alpha (a, multiplies the opacity).
+    pub(crate) tint: Vec4,
+    /// `flags[0]` bit 0: the instance receives shadows ([`INSTANCE_RECEIVES_SHADOWS`]);
+    /// `flags[1]`: the level-of-detail fade's dither code (0: none; `lod_dither`, Not in C#);
+    /// `flags[2..]` reserved (0).
+    pub(crate) flags: [u32; 4],
 }
 
-pub(crate) const INSTANCE_SIZE: u64 = 80;
+/// The instance flag: the instance receives shadows.
+pub(crate) const INSTANCE_RECEIVES_SHADOWS: u32 = 1;
+
+pub(crate) const INSTANCE_SIZE: u64 = 112;
 const _: () = assert!(std::mem::size_of::<PbrInstance>() == INSTANCE_SIZE as usize);
-// SAFETY: #[repr(C)]; a Mat4 then four u32: 80 bytes, a multiple of the Mat4's 16-byte alignment,
-// no padding (size asserted above).
+// SAFETY: #[repr(C)]; a Mat4, three u32 and an f32, a Vec4, four u32: 112 bytes, every field at a
+// multiple of its alignment, no padding (size asserted above).
 unsafe impl bytemuck::Zeroable for PbrInstance {}
 // SAFETY: as above; Copy and 'static.
 unsafe impl bytemuck::Pod for PbrInstance {}
@@ -229,29 +327,37 @@ pub(crate) fn needs_shader_encoding(format: wgpu::TextureFormat) -> bool {
     matches!(format, wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgb10a2Unorm)
 }
 
+/// A model pipeline's face culling and front face for its features: clockwise front faces when
+/// the draw mirrors (glTF 2.0 rule); [`PbrFeatures::BACK_FACES`] culls the front faces and
+/// [`PbrFeatures::FRONT_FACES`] the back faces (the two draws of a blended double-sided part, Not
+/// in C#), else a double-sided material culls nothing and every other culls back faces. "Front"
+/// is always the front of the mirrored-or-not winding, so a mirrored instance's two draws still
+/// draw its far side first.
+pub(crate) fn pipeline_culling(features: PbrFeatures) -> (CullPreset, wgpu::FrontFace) {
+    let front = if features.contains(PbrFeatures::MIRRORED) { wgpu::FrontFace::Cw } else { wgpu::FrontFace::Ccw };
+    let cull = if features.contains(PbrFeatures::BACK_FACES) {
+        CullPreset::Front
+    } else if features.contains(PbrFeatures::FRONT_FACES) {
+        CullPreset::Back
+    } else if features.contains(PbrFeatures::DOUBLE_SIDED) {
+        CullPreset::None
+    } else {
+        CullPreset::Back
+    };
+    (cull, front)
+}
+
 /// The determinant of a matrix's upper 3 x 3: negative = the transform mirrors (C#: `Determinant3`).
 pub(crate) fn determinant3(matrix: &Mat4) -> f32 {
     Mat3::from_mat4(*matrix).determinant()
-}
-
-/// The runs of equal flags in `flags`: (start, end, flag) for each run (C#: one draw per run of
-/// instances with the same winding).
-pub(crate) fn runs(flags: impl Iterator<Item = bool>) -> Vec<(usize, usize, bool)> {
-    let mut result: Vec<(usize, usize, bool)> = Vec::new();
-    for (index, flag) in flags.enumerate() {
-        match result.last_mut() {
-            Some(last) if last.2 == flag => last.1 = index + 1,
-            _ => result.push((index, index + 1, flag)),
-        }
-    }
-    result
 }
 
 #[cfg(test)]
 mod tests {
     use glam::{Mat4, Vec3, Vec4};
 
-    use super::{determinant3, material_features, needs_shader_encoding, pack_morph, runs, PbrFrameUniforms, PbrMaterialUniforms};
+    use super::{determinant3, material_features, needs_shader_encoding, pack_morph, pipeline_culling, PbrFrameUniforms, PbrMaterialUniforms};
+    use crate::pipelines::CullPreset;
     use crate::drawing3d::{Camera, DirectionalLight, MaterialAlphaMode, SceneLighting};
     use crate::models::{ModelMaterial, ModelMorphTarget, ModelPrimitive};
     use crate::shaders::PbrFeatures;
@@ -275,6 +381,56 @@ mod tests {
     }
 
     #[test]
+    fn without_local_lights_or_shadows_the_frame_after_the_directional_lights_is_empty() {
+        // The uniforms of C#'s 400 bytes are as before; the rest says "no local lights, no sun
+        // shadow", and the shader variant without LOCAL_LIGHTS / SHADOWS does not read it.
+        let frame = PbrFrameUniforms::new(&Camera::default(), &SceneLighting::default(), 1.0);
+        assert_eq!(frame.local, Vec4::ZERO);
+        assert_eq!(frame.sun_shadow, Vec4::ZERO);
+        assert!(frame.local_lights.iter().all(|v| *v == Vec4::ZERO));
+        assert_eq!(std::mem::offset_of!(PbrFrameUniforms, local), 400);
+        assert_eq!(super::FRAME_SLOT_SIZE, 1792);
+        assert_eq!(super::FRAME_SLOT_SIZE % 256, 0);
+    }
+
+    #[test]
+    fn the_frame_carries_the_chosen_local_lights_and_the_shadows() {
+        use crate::lighting::shadows::{spot_shadow_view, sun_shadow_view};
+        use crate::lighting::{LocalLight, PointLight, SpotLight, SunShadowSettings};
+        let mut lighting = SceneLighting::default();
+        let spot = SpotLight::new(Vec3::new(0.0, 4.0, 0.0), Vec3::new(0.0, -2.0, 0.0), Color4::new(1.0, 0.5, 0.25, 1.0), 2.0, 10.0, 0.2, 0.4).with_shadows(true);
+        lighting.local_lights = vec![LocalLight::from(PointLight::new(Vec3::new(1.0, 2.0, 3.0), Color4::WHITE, 3.0, f32::INFINITY)), LocalLight::from(spot)];
+        lighting.sun_shadows = SunShadowSettings { softness: 16, strength: 0.75, ..SunShadowSettings::covering(Vec3::splat(-5.0), Vec3::splat(5.0)) };
+        let mut frame = PbrFrameUniforms::new(&Camera::default(), &lighting, 1.0);
+        let spot_view = spot_shadow_view(&spot, 1000.0, 1024).unwrap();
+        // Chosen: the spot first, then the point light; the spot casts into layer 0.
+        frame.set_local_lights(&lighting.local_lights, &[1, 0], &[Some(0), None], std::slice::from_ref(&spot_view));
+        let sun = sun_shadow_view(lighting.light_direction, Vec3::splat(-5.0), Vec3::splat(5.0), 2048).unwrap();
+        frame.set_shadows(&lighting, Some(&sun), std::slice::from_ref(&spot_view));
+        assert_eq!(frame.local.x, 2.0);
+        // The spot: position + 1 / range, colour x intensity + spot flag, unit axis + cos(outer), cos(inner) + layer.
+        assert_eq!(frame.local_lights[0], Vec4::new(0.0, 4.0, 0.0, 0.1));
+        assert_eq!(frame.local_lights[1], Vec4::new(2.0, 1.0, 0.5, 1.0));
+        assert_eq!(frame.local_lights[2], Vec4::new(0.0, -1.0, 0.0, 0.4f32.cos()));
+        assert_eq!((frame.local_lights[3].x, frame.local_lights[3].y), (0.2f32.cos(), 0.0));
+        assert!((frame.local_lights[3].z - spot_view.texel * 1.5).abs() < 1e-9);
+        // The point light: no end (inverse range 0), no spot flag, no shadow layer.
+        assert_eq!(frame.local_lights[4], Vec4::new(1.0, 2.0, 3.0, 0.0));
+        assert_eq!(frame.local_lights[5], Vec4::new(3.0, 3.0, 3.0, 0.0));
+        assert_eq!(frame.local_lights[7].y, -1.0);
+        // The shadows: the sun on (light 0 is the key light), its matrix and settings; the spot's matrix.
+        assert_eq!(frame.local.y, 1.0);
+        assert!((frame.local.z - sun.texel * 1.5).abs() < 1e-9);
+        assert_eq!(frame.sun_matrix, sun.view_projection);
+        assert_eq!((frame.sun_shadow.x, frame.sun_shadow.y, frame.sun_shadow.z), (0.75, 4.0, 1.0 / 2048.0));
+        assert_eq!(frame.spot_matrices[0], spot_view.view_projection);
+        assert_eq!((frame.spot_shadow.x, frame.spot_shadow.y, frame.spot_shadow.z), (1.0, 3.0, 1.0 / 1024.0));
+        // Without the key light the sun's shadow has no light to darken.
+        lighting.light_intensity = 0.0;
+        assert!(!PbrFrameUniforms::key_light_shades(&lighting));
+    }
+
+    #[test]
     fn the_material_uniforms_follow_csharp() {
         let mut material = ModelMaterial::new(0, None);
         material.base_color_texture.transform = [2.0, 0.0, 0.0, 3.0, 0.5, 0.25];
@@ -286,6 +442,9 @@ mod tests {
         assert_eq!(uniforms.uv[1], Vec4::new(0.0, 3.0, 0.25, 0.0));
         assert_eq!(uniforms.flags[1], 1 << 2);
         assert_eq!(uniforms.emissive, Vec4::new(2.0, 1.0, 0.5, 0.0));
+        assert_eq!(uniforms.flags[2], 0);
+        material.emissive_vertex_color = true;
+        assert_eq!(PbrMaterialUniforms::new(&material).flags[2], 1);
         assert!((uniforms.extra.y - 0.04).abs() < 1e-6);
         material.alpha_mode = MaterialAlphaMode::Blend;
         material.double_sided = true;
@@ -305,10 +464,22 @@ mod tests {
     }
 
     #[test]
-    fn mirroring_and_encoding_and_runs() {
+    fn the_two_draws_of_a_blended_double_sided_part_cull_opposite_faces_mirrored_or_not() {
+        let part = PbrFeatures::ALPHA_BLEND | PbrFeatures::DOUBLE_SIDED;
+        assert_eq!(pipeline_culling(part), (CullPreset::None, wgpu::FrontFace::Ccw));
+        assert_eq!(pipeline_culling(part | PbrFeatures::BACK_FACES), (CullPreset::Front, wgpu::FrontFace::Ccw));
+        assert_eq!(pipeline_culling(part | PbrFeatures::FRONT_FACES), (CullPreset::Back, wgpu::FrontFace::Ccw));
+        // Mirrored: clockwise triangles are the front, so culling "front" still drops the near side.
+        assert_eq!(pipeline_culling(part | PbrFeatures::BACK_FACES | PbrFeatures::MIRRORED), (CullPreset::Front, wgpu::FrontFace::Cw));
+        assert_eq!(pipeline_culling(part | PbrFeatures::FRONT_FACES | PbrFeatures::MIRRORED), (CullPreset::Back, wgpu::FrontFace::Cw));
+        assert_eq!(pipeline_culling(PbrFeatures::NONE), (CullPreset::Back, wgpu::FrontFace::Ccw));
+        assert_eq!(pipeline_culling(PbrFeatures::DOUBLE_SIDED | PbrFeatures::MIRRORED), (CullPreset::None, wgpu::FrontFace::Cw));
+    }
+
+    #[test]
+    fn mirroring_and_encoding() {
         assert!(determinant3(&Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0))) < 0.0);
         assert!(needs_shader_encoding(wgpu::TextureFormat::Bgra8Unorm));
         assert!(!needs_shader_encoding(wgpu::TextureFormat::Bgra8UnormSrgb));
-        assert_eq!(runs([false, true, true, false].into_iter()), vec![(0, 1, false), (1, 3, true), (3, 4, false)]);
     }
 }

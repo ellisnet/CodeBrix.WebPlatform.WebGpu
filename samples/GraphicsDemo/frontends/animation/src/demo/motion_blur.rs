@@ -79,13 +79,13 @@ impl DemoScene for MotionBlurScene {
     fn render(&mut self, seconds: f64, scene: &mut VectorScene, width: u32, height: u32) {
         self.frame.set_time(seconds);
         self.frame.render_with_background(scene, width, height);
-        let targets: Vec<SessionRenderOptions> = PANEL_X.iter().map(|x| SessionRenderOptions { include_background: false, target: Some(part(&self.frame, *x, PANEL_Y, PANEL, PANEL, width, height)) }).collect();
+        let targets: Vec<SessionRenderOptions> = PANEL_X.iter().map(|x| SessionRenderOptions { include_background: false, target: Some(part(&self.frame, *x, PANEL_Y, PANEL, PANEL, width, height)), ..Default::default() }).collect();
         self.moment(seconds);
-        let sharp = targets[0];
-        self.drawing.render_with(scene, width, height, &sharp);
+        let sharp = &targets[0];
+        self.drawing.render_with(scene, width, height, sharp);
         let times = DrawingMotionBlur::get_sample_times(seconds, FRAME_DURATION, SAMPLES, Some(1.0)).unwrap();
         let plus = BlendMode::new(Mix::Normal, Compose::Plus);
-        for target in [targets[1], targets[2]] {
+        for target in [&targets[1], &targets[2]] {
             // The groups cover only the panel: a compose other than source-over composites its
             // whole shape, so a canvas-sized shape would cost a canvas-sized pass per sample.
             let r = target.target.unwrap();
@@ -96,7 +96,7 @@ impl DemoScene for MotionBlurScene {
             for t in &times {
                 self.moment(*t);
                 scene.push_layer(plus, 1.0 / SAMPLES as f32, Affine::IDENTITY, &canvas);
-                self.drawing.render_with(scene, width, height, &target);
+                self.drawing.render_with(scene, width, height, target);
                 scene.pop_layer();
             }
             scene.pop_layer();

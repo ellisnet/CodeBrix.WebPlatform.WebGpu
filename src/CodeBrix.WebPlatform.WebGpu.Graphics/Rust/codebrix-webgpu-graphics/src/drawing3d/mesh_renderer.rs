@@ -13,6 +13,7 @@ use crate::drawing3d::lit_material::MATERIAL_UNIFORM_SIZE;
 use crate::drawing3d::{Camera, LitMaterial, MaterialOptions, Mesh, MeshVertex, SceneLighting};
 use crate::frames::{BufferRange, DrawIndexedOptions, RenderPass};
 use crate::pipelines::{BlendPreset, ColorTargetOptions, CullPreset, DepthOptions, DepthPreset, GpuRenderPipeline, VertexLayout, VertexLayoutOptions, VertexType};
+use crate::presentation::TargetFormats;
 use crate::resources::{BindingEntry, BindingLayoutEntry, GpuBindGroup, GpuBindGroupLayout, GpuBuffer, GpuSampler, GpuShader, SamplerDescription};
 use crate::shaders::BuiltInShaders;
 
@@ -196,14 +197,17 @@ pub struct MeshRenderer {
     frame_id: Option<u64>,
     drawing: Option<Drawing>,
     batch: MeshBatch<MeshGeometry, LitMaterial>,
-    pipelines: HashMap<(wgpu::TextureFormat, Option<wgpu::TextureFormat>, bool, bool, bool), GpuRenderPipeline>,
+    /// The pipelines by target (colour, depth, sample count: a multisampled target gets its own)
+    /// and kind of draw.
+    pipelines: HashMap<PipelineKey, GpuRenderPipeline>,
     last_draw_call_count: usize,
     last_instance_count: usize,
 }
 
 impl MeshRenderer {
     /// A renderer; its pipelines are built when first needed, one per target format combination
-    /// (C#: `new MeshRenderer(context)`).
+    /// (colour format, depth format and sample count, so it draws into 1- and 4-sample targets
+    /// alike) and kind of draw (C#: `new MeshRenderer(context)`).
     pub fn new(context: &GraphicsContext) -> Result<MeshRenderer, GraphicsException> {
         let shader = context.create_shader(BuiltInShaders::LIT_MESH, Some("lit mesh"));
         let frame_layout = context.create_bind_group_layout(Some("mesh frame"), &[BindingLayoutEntry::uniform(0, wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT).with_dynamic_offset(true).with_min_binding_size(FRAME_UNIFORM_SIZE)]);
@@ -349,15 +353,14 @@ impl MeshRenderer {
 
     /// Records the draws of one group (opaque or translucent), in order.
     fn draw_ordered(&mut self, pass: &mut RenderPass<'_>, offset: u32, bytes: u64, bound: &mut Option<GpuRenderPipeline>, translucent: bool) -> Result<(), GraphicsException> {
-        let color = pass.target().color_format();
-        let depth = pass.target().depth_format();
+        let formats = pass.target().formats();
         let draws: Vec<DrawItem<MeshGeometry, LitMaterial>> = self.batch.draws.iter().filter(|item| item.material.is_translucent() == translucent).cloned().collect();
         let mut bound_material: Option<LitMaterial> = None;
         let mut bound_vertices: Option<wgpu::Buffer> = None;
         let mut bound_indices: Option<wgpu::Buffer> = None;
         for item in draws {
             item.material.upload()?;
-            let pipeline = self.pipeline(color, depth, item.material.double_sided(), translucent, item.mirrored)?;
+            let pipeline = self.pipeline(formats, item.material.double_sided(), translucent, item.mirrored)?;
             if bound.as_ref().map(|b| b.handle()) != Some(pipeline.handle()) {
                 pass.set_pipeline(&pipeline);
                 pass.set_bind_group_with_offsets(0, &self.frame_group, &[offset]);
@@ -385,12 +388,14 @@ impl MeshRenderer {
         Ok(())
     }
 
-    /// The pipeline for a target and a material's kind of draw (built on first use).
-    fn pipeline(&mut self, color: wgpu::TextureFormat, depth: Option<wgpu::TextureFormat>, double_sided: bool, translucent: bool, mirrored: bool) -> Result<GpuRenderPipeline, GraphicsException> {
-        let key = (color, depth, double_sided, translucent, mirrored);
+    /// The pipeline for a target (its formats and sample count) and a material's kind of draw
+    /// (built on first use).
+    fn pipeline(&mut self, formats: TargetFormats, double_sided: bool, translucent: bool, mirrored: bool) -> Result<GpuRenderPipeline, GraphicsException> {
+        let key = PipelineKey { formats, double_sided, translucent, mirrored };
         if let Some(pipeline) = self.pipelines.get(&key) {
             return Ok(pipeline.clone());
         }
+        let (color, depth) = (formats.color, formats.depth);
         let label = format!("lit mesh {color:?}{}{}{}", if double_sided { " double-sided" } else { "" }, if translucent { " translucent" } else { "" }, if mirrored { " mirrored" } else { "" });
         let mut builder = self
             .context
@@ -400,7 +405,8 @@ impl MeshRenderer {
             .with_vertex_buffer_of::<InstanceData>(VertexLayoutOptions { step_mode: wgpu::VertexStepMode::Instance, first_location: 4 })
             .with_color_target(color, ColorTargetOptions::blended(if translucent { BlendPreset::AlphaBlend } else { BlendPreset::Opaque }))
             .with_culling(if double_sided { CullPreset::None } else { CullPreset::Back }, if mirrored { wgpu::FrontFace::Cw } else { wgpu::FrontFace::Ccw })
-            .with_bind_group_layouts(&[&self.frame_layout, &self.material_layout]);
+            .with_bind_group_layouts(&[&self.frame_layout, &self.material_layout])
+            .with_sample_count(formats.sample_count);
         if let Some(depth) = depth {
             builder = builder.with_depth(depth, DepthOptions { preset: if translucent { DepthPreset::ReadOnly } else { DepthPreset::ReadWrite }, ..DepthOptions::default() });
         }
@@ -408,6 +414,16 @@ impl MeshRenderer {
         self.pipelines.insert(key, pipeline.clone());
         Ok(pipeline)
     }
+}
+
+/// What a mesh pipeline is kept by: the target's formats (with its sample count) and the kind of
+/// draw.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct PipelineKey {
+    formats: TargetFormats,
+    double_sided: bool,
+    translucent: bool,
+    mirrored: bool,
 }
 
 impl GraphicsContext {
@@ -429,9 +445,20 @@ fn create_frame_uniforms(context: &GraphicsContext, layout: &GpuBindGroupLayout,
 mod tests {
     use glam::{Mat4, Vec3, Vec4};
 
-    use super::{is_mirroring, DrawItem, FrameUniforms, InstanceData, MeshBatch};
+    use super::{is_mirroring, DrawItem, FrameUniforms, InstanceData, MeshBatch, PipelineKey};
     use crate::drawing3d::{Camera, SceneLighting};
     use crate::pipelines::{VertexLayoutOptions, VertexType};
+
+    #[test]
+    fn the_pipelines_are_kept_per_sample_count_of_the_target() {
+        // A 4-sample target needs pipelines of its own (WebGPU refuses a 1-sample pipeline there,
+        // and the pass's check panics): the key holds the target's formats with the count.
+        let key = |samples: u32| PipelineKey { formats: crate::presentation::TargetFormats::new(wgpu::TextureFormat::Bgra8Unorm, Some(wgpu::TextureFormat::Depth32Float), samples), double_sided: false, translucent: false, mirrored: false };
+        let keys: std::collections::HashSet<PipelineKey> = crate::presentation::SAMPLE_COUNTS.into_iter().map(key).collect();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(key(4), key(4));
+        assert_eq!(key(4).formats.sample_count, 4);
+    }
 
     #[test]
     fn a_negative_scale_mirrors() {

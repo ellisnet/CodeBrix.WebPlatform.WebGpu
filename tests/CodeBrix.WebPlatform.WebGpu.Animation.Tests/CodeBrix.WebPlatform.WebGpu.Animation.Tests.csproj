@@ -32,7 +32,7 @@
     dependency rule, which the gate and AnimationPackageDependenciesTests check).
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.327.240" />
+    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.329.452" />
     <ProjectReference Include="..\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend.csproj" />
     <ProjectReference Include="..\..\src\CodeBrix.WebPlatform.WebGpu.Graphics\CodeBrix.WebPlatform.WebGpu.Graphics.csproj" />
   </ItemGroup>
@@ -59,7 +59,9 @@
     <None Update="Materialize\frontend-main.rs" CopyToOutputDirectory="PreserveNewest" />
     <!--
       THE TEST FONTS (SIL Open Font License 1.1 - allowed in tests and samples only, never in a
-      package or a crate): Roboto and Open Sans, each with its original OFL.txt. The crate's own
+      package or a crate): Roboto (the static Roboto-Regular.ttf, and the variable Roboto.ttf for the
+      variable-font tests) and Open Sans, taken unchanged from the CodeBrix.Platform.Fonts.*
+      repositories, each family with its original OFL.txt. The crate's own
       text tests read them from the folder the environment variable CODEBRIX_ANIMATION_TEST_FONTS
       names, which the cargo test above sets to this copy beside the test assembly.
     -->

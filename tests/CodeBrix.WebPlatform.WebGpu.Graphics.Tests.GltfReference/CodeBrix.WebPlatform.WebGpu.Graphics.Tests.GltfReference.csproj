@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    THE REFERENCE CONVERTER: the C# glTF-to-model-data converter that the glTF loader of the Rust crate
+    codebrix-webgpu-graphics (src/gltf) is checked against. It follows the C# library's glTF loader step for step and
+    produces the Graphics library's model data (CodeBrix.WebPlatform.WebGpu.Graphics.Models), written by
+    ModelDataWriter. GltfReferenceFolder writes the reference folder the Rust tests read (the model packs, one blob per
+    case, cases.txt). A library for the tests only: never packed, never run by itself.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>CodeBrix.WebPlatform.WebGpu.Graphics.Tests.GltfReference</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The model data types and the writer of the model data format. -->
+    <ProjectReference Include="..\..\src\CodeBrix.WebPlatform.WebGpu.Graphics\CodeBrix.WebPlatform.WebGpu.Graphics.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- glTF 2.0 reading. -->
+    <PackageReference Include="CodeBrix.Graphics3D.Gltf2.MitLicenseForever" Version="1.0.290.996" />
+    <!-- Image decoding: model textures become RGBA8 pixels. -->
+    <PackageReference Include="CodeBrix.Imaging.ApacheLicenseForever" Version="1.0.320.279" />
+  </ItemGroup>
+
+  <!--
+    THE MODEL PACKS, copied into this library's output folder - and so beside the assembly of every project that
+    references it - as gltf-reference-models/<pack>/..., the folder GltfReferenceFolder.Write reads by default:
+      * the GraphicsDemo sample's model packs, LINKED from the sample (the repository's existing set of test models;
+        nothing is copied in the repository);
+      * this library's own Models/<pack>/... (further test assets; see Models/README.txt for what a pack must hold).
+    A pack name must not repeat one of the sample's. Build output, never committed, never packed.
+  -->
+  <ItemGroup>
+    <None Remove="Models\**" />
+    <None Include="Models\README.txt" />
+    <None Include="..\..\samples\GraphicsDemo\backend\GraphicsDemo.Assets\Models\**\*"
+          Link="gltf-reference-models\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
+    <None Include="Models\**\*"
+          Exclude="Models\README.txt"
+          Link="gltf-reference-models\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
+  </ItemGroup>
+
+</Project>

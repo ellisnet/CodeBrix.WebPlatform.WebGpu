@@ -21,7 +21,21 @@ TEST PROJECTS
     tests/CodeBrix.WebPlatform.WebGpu.Animation.Tests/
     tests/CodeBrix.WebPlatform.WebGpu.LibraryChecker.Tests/
 
-xUnit v3; run them as described in MAINTAINER-README.txt (TESTING).
+xUnit v3; run them as described in MAINTAINER-README.txt (TESTING). Beside
+them, two test-side libraries that are never packed:
+
+    tests/CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend/
+        A small backend the materialize tests read (never run).
+    tests/CodeBrix.WebPlatform.WebGpu.Graphics.Tests.GltfReference/
+        THE REFERENCE CONVERTER: a C# glTF-to-model-data converter (on the
+        CodeBrix.Graphics3D.Gltf2 and CodeBrix.Imaging packages) that the
+        Graphics crate's Rust glTF loader is checked against, value by
+        value, by Graphics.Tests. Its test models are the GraphicsDemo
+        sample's model packs (linked from the sample) and the packs in its
+        Models/ folder - glTF Sample Assets of the Khronos Group, CC0-1.0
+        and CC-BY-4.0 only, each pack with its licence texts and a
+        SOURCE.txt with every model's attribution (Models/README.txt states
+        the rule).
 
 
 THE MAINTAINER TOOL
@@ -44,10 +58,12 @@ A CodeBrix.WebPlatform application that uses the WebGpu, Graphics and
 Animation packages the way any application does: a small backend, a build
 program that registers the crate bundles, and an assets project
 (GraphicsDemo.Assets) whose resources the backend serves - the desktop model
-viewer's glTF models and a skinned character converted in .NET into model
-data, a morph-target shape built in code, one HDR panorama as its Radiance
-.hdr file, two fonts, a picture both as decoded pixels (the picture-pixels
-form) and as its PNG file, a caption file, SVG documents and Lottie files.
+viewer's glTF models and a skinned character served as their .glb files (read
+in the browser by the graphics crate's glTF loader), a ground and a
+morph-target shape built in code as model-data blobs, one HDR panorama as its
+Radiance .hdr file, its fonts, a picture both as decoded pixels (the
+picture-pixels form) and as its PNG file, a caption file, SVG documents and
+Lottie files.
 It has two named frontend applications:
 
   - "graphics", with a scene for every area of the graphics crate: "Viewer"
@@ -71,14 +87,28 @@ It has two named frontend applications:
     "Skinned model", "Morph targets", "More" (a panorama made in code, a
     render bundle, particles moved by a compute pass and drawn by an
     indirect draw, two animated textures, GPU timer results) and "On the
-    page" (models drawn on a transparent canvas over the page);
+    page" (models drawn on a transparent canvas over the page), and a row of
+    feature demos - lights, shadows, culling, translucency, glow and bloom,
+    particles, picking and labels, anti-aliasing, level of detail, a water
+    pond over a glass mosaic floor and a water lake - with a frame-timings
+    panel;
   - "animation", the scene catalogue of the desktop AnimationDemoApp (its
     scenes ported, then scenes of the sample's own for SVG documents that
     animate themselves and for Lottie), drawn by codebrix-webgpu-animation
     on the page's clock, with its keys - Space pauses the clock, Left and
     Right seek, Shift with Left or Right moves between scenes, Home starts
     again, D shows the debug overlay - and a page of its own for drawing on
-    the page (?scene=on-the-page).
+    the page (?scene=on-the-page); and feature scenes with a panel of
+    controls and read-outs (and a scene-time scrubber) for the render-time
+    looks and wipes, fixed-width strokes, a grid of the sketch helper's
+    settings, ownership colours, stroke sets and their planning, live
+    colour pickup (a 3D scene among the sources), the surface finish,
+    checkpoints and stroke-level transitions; and water scenes - ripples on
+    a pool floor (a click drops a stone, and scrubbing back before it
+    removes its ring), a reflection below a waterline, a painted pond whose
+    one ripple field both bends the water and breaks up the bank's
+    reflection, and a simulated pond that cannot be rewound - beside a
+    caustics panel in the noise scene.
 
 A plain page of the developer's own at the site root links to both and to
 the site's two notices files. Without WebGPU each application shows "WebGPU
@@ -107,9 +137,13 @@ THE RUST MATERIAL OF THE Graphics LIBRARY
     src/CodeBrix.WebPlatform.WebGpu.Graphics/Rust/
 
 The first-party crate codebrix-webgpu-graphics (codebrix-webgpu-graphics/,
-its WGSL under src/shaders/wgsl/) and its hand-written notices (notices/).
-The archive made from the crate and the notices travel in the package. See
-MAINTAINER-README.txt (THE GRAPHICS CRATE).
+its WGSL under src/shaders/wgsl/), the crate set of the third-party crates
+only it needs (graphics-crates/Cargo.toml and its Cargo.lock: the glTF
+crates), those crates (vendor/), the notes on upgrading them (vendoring/)
+and the notices (notices/: the hand-written header and the generated file).
+Only the archive made from vendor/ and codebrix-webgpu-graphics/ and the
+generated notices travel in the package. See MAINTAINER-README.txt (THE
+GRAPHICS CRATE, VENDORED SNAPSHOTS).
 
 
 THE RUST MATERIAL OF THE Animation LIBRARY

@@ -9,8 +9,8 @@ namespace CodeBrix.WebPlatform.WebGpu.LibraryChecker;
 /// checks, all derived from the repository root (the folder that holds
 /// CodeBrix.WebPlatform.WebGpu.slnx and the licence allowlist). Only what is in the repository
 /// outside <c>samples/</c> is checked: the wgpu crates that the WebGpu package carries, their
-/// crate set and lock file, the third-party crates that only the Animation package carries and
-/// their crate set, the first-party crates, the dependency rule between the packages, the
+/// crate set and lock file, the third-party crates that only the Graphics package carries and
+/// those only the Animation package carries, with their crate sets, the first-party crates, the dependency rule between the packages, the
 /// notices, the licence allowlist and the no-Node rule.
 /// </summary>
 public sealed class RepositoryLayout
@@ -71,12 +71,40 @@ public sealed class RepositoryLayout
 
     /// <summary>
     /// The first-party crate of the Graphics package (codebrix-webgpu-graphics): carried in that
-    /// package's own archive, in vendored form, alone; ours - not third-party.
+    /// package's own archive, in vendored form, beside the third-party crates only it needs; ours -
+    /// not third-party.
     /// </summary>
     public string GraphicsCrate => Path.Combine(GraphicsRust, "codebrix-webgpu-graphics");
 
-    /// <summary>The hand-written notices for what the Graphics crate contains, packed into the Graphics package.</summary>
-    public string GraphicsNoticesFile => Path.Combine(GraphicsRust, "notices", "THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt");
+    /// <summary>
+    /// The manifest folder that names the Graphics package's crate set (gltf), whose Cargo.lock is
+    /// resolved against the platform's and the WebGpu crate set's.
+    /// </summary>
+    public string GraphicsCrateSet => Path.Combine(GraphicsRust, "graphics-crates");
+
+    /// <summary>The lock file of the Graphics crate set.</summary>
+    public string GraphicsCrateSetLock => Path.Combine(GraphicsCrateSet, "Cargo.lock");
+
+    /// <summary>
+    /// The third-party crates that ONLY the Graphics package carries (the Graphics crate set's
+    /// crates that neither the platform nor the WebGpu package carries), in its archive.
+    /// </summary>
+    public string GraphicsVendor => Path.Combine(GraphicsRust, "vendor");
+
+    /// <summary>The Graphics package's vendored crates, relative to the repository root, with forward slashes.</summary>
+    public string GraphicsVendorRelative => Relative(GraphicsVendor);
+
+    /// <summary>The folder of the Graphics package's notices: the hand-written header and the generated file.</summary>
+    public string GraphicsNoticesFolder => Path.Combine(GraphicsRust, "notices");
+
+    /// <summary>
+    /// The hand-written opening of the Graphics package's notices (the crate's own-code statement
+    /// and the outside sources of its shaders and its .hdr decoder, the glTF crates' credits).
+    /// </summary>
+    public string GraphicsNoticesHeaderFile => Path.Combine(GraphicsNoticesFolder, "notices-header-WebGpuGraphicsCrates.txt");
+
+    /// <summary>The generated notices of the Graphics package, packed into it.</summary>
+    public string GraphicsNoticesFile => Path.Combine(GraphicsNoticesFolder, "THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt");
 
     /// <summary>The folder of the Animation library's Rust material.</summary>
     public string AnimationRust => Combine("src/CodeBrix.WebPlatform.WebGpu.Animation/Rust");

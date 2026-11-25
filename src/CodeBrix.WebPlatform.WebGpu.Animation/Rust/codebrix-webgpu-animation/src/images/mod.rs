@@ -1,17 +1,21 @@
 //! Pictures for the drawing (C# `CodeBrix.Imaging.Drawing.Images`): [`ImageSource`] (a copy of
-//! straight-alpha RGBA pixels: decoded ones, a PNG FILE it reads itself - PNG is the only file
-//! format - or the picture-pixels form a backend writes), [`SpriteSheet`] (the
+//! straight-alpha RGBA pixels: decoded ones, a PNG or JPEG FILE it reads itself - PNG and JPEG are
+//! the file formats it reads, through codebrix-webgpu's decoders - or the picture-pixels form a
+//! backend writes), [`SpriteSheet`] (the
 //! frames of a sprite), [`ImageSampling`] and [`SpritePlayback`]. They are drawn by
 //! [`ImageShape`](crate::shapes::ImageShape) and [`SpriteShape`](crate::shapes::SpriteShape).
 
 mod image_sampling;
 mod image_source;
+mod image_source_jpeg;
 mod image_source_png;
 mod sprite_playback;
 mod sprite_sheet;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_jpeg;
 #[cfg(test)]
 mod tests_png;
 

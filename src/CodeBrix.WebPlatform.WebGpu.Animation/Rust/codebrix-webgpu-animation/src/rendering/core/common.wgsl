@@ -1,5 +1,7 @@
 // The shaders of the codebrix-webgpu-animation renderer: stencil-then-cover with 4x MSAA. This
-// part is shared by both shader modules (paint.wgsl and composite.wgsl are appended to it).
+// part is the head of EVERY shader module of the renderer: each module is this file followed by
+// its own part (paint.wgsl, strokes.wgsl, composite.wgsl, or one part of effects.wgsl), with
+// noise.wgsl in between where the module uses the shared noise (gpu.rs puts them together).
 // Every colour that reaches a target is LINEAR and PREMULTIPLIED (the canvas host's convention);
 // the targets are Rgba8UnormSrgb (MSAA) and the host's sRGB view, so fixed-function blending
 // happens in linear space. Gradient ramps hold premultiplied sRGB-ENCODED samples (as vello's),

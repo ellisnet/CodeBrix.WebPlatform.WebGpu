@@ -8,6 +8,15 @@ const EPSILON: f64 = 1e-7;
 
 /// The CSS `cubic-bezier(x1, y1, x2, y2)` timing function: the curve from (0, 0) to (1, 1) with
 /// those two control points, evaluated as y for a given x (the progress).
+///
+/// A CURVE AS A CONSTANT: [`CubicBezierEasing::new`] is a `const fn`, so a curve of the
+/// application's own is declared once, checked when the program is COMPILED (Not in C#, where the
+/// constructor runs and throws at run time):
+/// `const SNAP: CubicBezierEasing = CubicBezierEasing::new(0.2, 0.0, 0.0, 1.0).unwrap();`.
+/// Control points outside the rule make `new` return None, and `.unwrap()` in a constant then
+/// stops the build with an error. The fields stay private: x1 and x2 must lie in 0..1 (the curve's
+/// x must rise for the solver to find one y for each progress), and private fields keep every
+/// curve that exists inside that rule.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CubicBezierEasing {
     x1: f64,
@@ -27,31 +36,34 @@ impl CubicBezierEasing {
     pub const EASE_IN_OUT: CubicBezierEasing = CubicBezierEasing { x1: 0.42, y1: 0.0, x2: 0.58, y2: 1.0 };
 
     /// The curve with these control points. None where C# throws ArgumentOutOfRangeException:
-    /// x1 or x2 outside 0..1, or any value that is not finite.
-    pub fn new(x1: f64, y1: f64, x2: f64, y2: f64) -> Option<CubicBezierEasing> {
-        if !x1.is_finite() || !(0.0..=1.0).contains(&x1) || !x2.is_finite() || !(0.0..=1.0).contains(&x2) || !y1.is_finite() || !y2.is_finite() {
+    /// x1 or x2 outside 0..1, or any value that is not finite. A `const fn` (Not in C#): usable
+    /// in a `const` with `.unwrap()`, which turns a curve outside the rule into a build error.
+    pub const fn new(x1: f64, y1: f64, x2: f64, y2: f64) -> Option<CubicBezierEasing> {
+        // Written without RangeInclusive::contains, which is not a const fn. A NaN fails every
+        // comparison, so it is refused by the range test as well as by is_finite.
+        if !x1.is_finite() || !(x1 >= 0.0 && x1 <= 1.0) || !x2.is_finite() || !(x2 >= 0.0 && x2 <= 1.0) || !y1.is_finite() || !y2.is_finite() {
             return None;
         }
         Some(CubicBezierEasing { x1, y1, x2, y2 })
     }
 
     /// The first control point's x.
-    pub fn x1(&self) -> f64 {
+    pub const fn x1(&self) -> f64 {
         self.x1
     }
 
     /// The first control point's y.
-    pub fn y1(&self) -> f64 {
+    pub const fn y1(&self) -> f64 {
         self.y1
     }
 
     /// The second control point's x.
-    pub fn x2(&self) -> f64 {
+    pub const fn x2(&self) -> f64 {
         self.x2
     }
 
     /// The second control point's y.
-    pub fn y2(&self) -> f64 {
+    pub const fn y2(&self) -> f64 {
         self.y2
     }
 

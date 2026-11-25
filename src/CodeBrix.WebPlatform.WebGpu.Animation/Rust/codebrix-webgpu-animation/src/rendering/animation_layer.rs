@@ -2,7 +2,9 @@
 //! frame it asks the application for the frame's drawing (a [`VectorScene`], which a
 //! [`DrawingSession`](crate::DrawingSession) records itself into) and draws it OVER what the
 //! layers below drew, in the host's convention (linear, premultiplied, through the sRGB view).
-//! It never clears the target and never reads a clock: the time is the frame's.
+//! It never clears the target, and what it draws never depends on a clock: the time is the
+//! frame's (its CPU clock only MEASURES the frame for [`RenderStats`]). A layer made with
+//! [`AnimationLayer::to_picture`] draws INTO a [`PictureTarget`] instead (Not in C#).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -11,6 +13,8 @@ use codebrix_webgpu::{CanvasFrame, CanvasRenderer, CanvasTarget, FrameInfo, GpuC
 
 use crate::drawing_session::DrawingSession;
 use crate::rendering::core::{RenderStats, VectorRenderer};
+use crate::rendering::cpu_clock;
+use crate::rendering::picture_target::{self, PictureTarget};
 use crate::rendering::vector_scene::VectorScene;
 
 type PixelsCallback = Box<dyn FnOnce(Vec<u8>, u32, u32)>;
@@ -32,7 +36,7 @@ pub struct AnimationLayerControl {
 }
 
 impl AnimationLayerControl {
-    /// The counters of the last frame drawn.
+    /// The counters and the CPU timings of the last frame drawn.
     pub fn stats(&self) -> RenderStats {
         self.shared.stats.get()
     }
@@ -61,13 +65,33 @@ pub struct AnimationLayer {
     scene: VectorScene,
     draw: Box<dyn FnMut(&AnimationFrame<'_>, &mut VectorScene)>,
     control: AnimationLayerControl,
+    /// The picture this layer draws into instead of the canvas (None: the canvas).
+    picture: Option<PictureTarget>,
 }
 
 impl AnimationLayer {
     /// A layer whose closure records each frame's drawing into the (emptied) scene. Put it on
     /// the canvas with `RendererHandle::new(layer)`; keep [`AnimationLayer::control`] first.
     pub fn new(draw: impl FnMut(&AnimationFrame<'_>, &mut VectorScene) + 'static) -> AnimationLayer {
-        AnimationLayer { renderer: VectorRenderer::default(), scene: VectorScene::new(), draw: Box::new(draw), control: AnimationLayerControl::default() }
+        AnimationLayer { renderer: VectorRenderer::default(), scene: VectorScene::new(), draw: Box::new(draw), control: AnimationLayerControl::default(), picture: None }
+    }
+
+    /// A layer that draws its closure's scene INTO a picture target instead of onto the canvas
+    /// (it draws nothing on the canvas; Not in C#): every frame the picture is cleared to
+    /// transparent and the scene drawn into it, at the picture's size - the closure's
+    /// `frame.info.width` and `height` ARE the picture's, so `session.render(scene,
+    /// frame.info.width, frame.info.height)` fits a session into it. Put it BELOW the layers that
+    /// read the picture in `CanvasLayers` (all layers share one encoder, so they read this frame's
+    /// picture; listed above them they read the previous frame's). It has its own renderer and
+    /// buffers (a second drawing's whole cost: record, build, encode, its multisampled targets at
+    /// the picture's size).
+    pub fn to_picture(target: PictureTarget, draw: impl FnMut(&AnimationFrame<'_>, &mut VectorScene) + 'static) -> AnimationLayer {
+        AnimationLayer { picture: Some(target), ..AnimationLayer::new(draw) }
+    }
+
+    /// The picture target the layer draws into (None: it draws onto the canvas).
+    pub fn picture(&self) -> Option<&PictureTarget> {
+        self.picture.as_ref()
     }
 
     /// A layer that draws a shared session every frame, as it is (set its time and change its
@@ -91,11 +115,20 @@ impl CanvasRenderer for AnimationLayer {
     }
 
     fn resize(&mut self, _context: &GpuContext, width: u32, height: u32) {
-        self.renderer.resize(width, height);
+        // A picture target's layer is sized by its picture, not the canvas.
+        if self.picture.is_none() {
+            self.renderer.resize(width, height);
+        }
     }
 
     fn render(&mut self, frame: &mut CanvasFrame<'_>) {
         let shared = self.control.shared.clone();
+        // The canvas frame being drawn, for picture-target readers; a picture layer's picture is
+        // this frame's from here on.
+        picture_target::set_canvas_frame(frame.info.number);
+        if let Some(p) = &self.picture {
+            p.mark_drawn(frame.info.number);
+        }
         // The copy made last frame has been submitted: map it now.
         if shared.readback_state.get() == 1 {
             if let Some(done) = shared.waiting.borrow_mut().take() {
@@ -111,11 +144,18 @@ impl CanvasRenderer for AnimationLayer {
         }
         let read = shared.readback_state.get() == 0 && shared.request.borrow().is_some();
         self.scene.reset();
+        let record_start = cpu_clock::now_ms();
         {
-            let animation_frame = AnimationFrame { info: frame.info, points: frame.points };
+            let mut info = frame.info;
+            if let Some(p) = &self.picture {
+                (info.width, info.height) = p.size();
+            }
+            let animation_frame = AnimationFrame { info, points: frame.points };
             (self.draw)(&animation_frame, &mut self.scene);
         }
-        let stats = self.renderer.render(frame, &self.scene, read);
+        let record_ms = cpu_clock::since_ms(record_start);
+        let mut stats = self.renderer.render(frame, &self.scene, read, self.picture.as_ref());
+        stats.record_ms = record_ms;
         if read {
             *shared.waiting.borrow_mut() = shared.request.borrow_mut().take();
             shared.readback_state.set(1);

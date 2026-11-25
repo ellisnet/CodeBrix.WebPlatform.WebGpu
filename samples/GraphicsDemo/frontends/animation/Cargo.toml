@@ -3,7 +3,7 @@ name = "graphicsdemo-animation"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "The animation frontend application of the GraphicsDemo sample: the scenes of the AnimationDemoApp, text included, drawn through codebrix-webgpu-animation as a layer of the codebrix-webgpu canvas host, in Rust and Dioxus compiled to WebAssembly."
+description = "The animation frontend application of the GraphicsDemo sample: the scenes of the AnimationDemoApp, text included, and the sample's own feature scenes, drawn through codebrix-webgpu-animation as a layer of the codebrix-webgpu canvas host (one scene also draws a 3D source through codebrix-webgpu-graphics), in Rust and Dioxus compiled to WebAssembly."
 license = "Apache-2.0"
 
 [dependencies]
@@ -19,9 +19,13 @@ codebrix-webgpu = "1.0"
 # The animation library - the drawing session, shapes, text, gradient fills, fades, pictures, sprites,
 # masks, effects, easing, colour ramps, timelines and the 2D renderer - from the CodeBrix.WebPlatform.WebGpu.Animation package's
 # crate bundle.
-codebrix-webgpu-animation = "1.6"
+codebrix-webgpu-animation = "1.8"
+# The graphics library, for ONE scene ("live-pickup"): a 3D scene drawn into a texture the stroke
+# set picks its colours from (the owner's ruling O7 lets this application name it for that scene);
+# the build program registers its bundle for both frontends.
+codebrix-webgpu-graphics = "1.8"
 # The page address (which scene starts, ?scene=...&t=...&paused=1).
-web-sys = { version = "=0.3.107", features = ["Window", "Location"] }
+web-sys = { version = "=0.3.107", features = ["Document", "DomRect", "Element", "Location", "Performance", "Window"] }
 
 [features]
 # Hot reload for `dx serve`; never enabled for a build that ships.

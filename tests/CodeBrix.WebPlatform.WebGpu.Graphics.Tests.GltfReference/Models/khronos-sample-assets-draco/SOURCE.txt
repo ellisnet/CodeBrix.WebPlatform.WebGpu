@@ -1,0 +1,31 @@
+SOURCE OF THIS PACK
+===================
+
+Every model folder here is a model of the Khronos Group's glTF Sample Assets repository,
+https://github.com/KhronosGroup/glTF-Sample-Assets, exactly as that repository holds it at commit
+e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea (obtained 2026-11-24); a model folder <Name>/ comes from
+https://github.com/KhronosGroup/glTF-Sample-Assets/tree/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/<Name>.
+Of each model only its glTF-Draco variant folder was taken, with the model's own LICENSE.md and metadata.json;
+its preview pictures and README were not.
+No file was edited.
+
+THIS PACK holds only the Draco-compressed variants (glTF-Draco) of two of those models. They are here
+BECAUSE the loader and the reference converter both refuse them (KHR_draco_mesh_compression): the tests check
+that the refusal names the extension. They are kept apart from the pack khronos-sample-assets so that that
+pack's models can also be converted together as one set.
+
+LICENCES. Only models whose metadata.json names CC0-1.0 or CC-BY-4.0 for EVERY part were taken (models whose
+metadata also names a logo or trademark licence were left out). The licence text is the repository's own
+file: LICENSES/CC-BY-4.0.txt in this folder (both models here are CC-BY-4.0). Each model's LICENSE.md says which of
+them covers it. The attribution lines below are what each model's metadata.json records (part: licence,
+(c) year, owner; the artist where one is named).
+
+THE MODELS
+----------
+
+Box   (variants taken: glTF-Draco)
+    Everything: CC-BY-4.0, (c) 2017, Cesium
+
+MorphPrimitivesTest   (variants taken: glTF-Draco)
+    Everything: CC-BY-4.0, (c) 2018, ft-lab
+    DRACO compression: CC-BY-4.0, (c) 2020, Frank Galligan

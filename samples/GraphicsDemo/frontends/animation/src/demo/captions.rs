@@ -63,7 +63,7 @@ impl CaptionScene {
         session.animations_mut().bind(sun, AnimatedProperty::Position, points(&[(0.0, 200.0, 330.0, EasingKind::Linear), (8.0, 1080.0, 150.0, EasingKind::SineInOut)])).unwrap();
         // The safe area the captions are placed in, dashed.
         let safe = layout.safe_area();
-        let dashes = PathStrokeStyle::new(1.5, PathStrokeStyleOptions { cap: PathStrokeCap::Butt, join: PathStrokeJoin::Miter, miter_limit: 4.0, dash_pattern: Some(vec![8.0, 6.0]), dash_offset: 0.0 }).unwrap();
+        let dashes = PathStrokeStyle::new(1.5, PathStrokeStyleOptions { cap: PathStrokeCap::Butt, join: PathStrokeJoin::Miter, miter_limit: 4.0, dash_pattern: Some(vec![8.0, 6.0]), dash_offset: 0.0, ..Default::default() }).unwrap();
         let guide_layer = session.add_layer("Guide", INK);
         guide_layer.add_shape(PathShape::with_style(PathGeometry::rectangle(safe), dashes, Some(Color::from_rgba(255, 255, 255, 120)), None, None));
         label(guide_layer, fonts, "BroadcastTitleSafe (opt-in placement; the default is the frame)", safe.x + 8.0, safe.y + 22.0, 13.0, Color::from_rgba(255, 255, 255, 160), TextAlign::Left);
@@ -98,6 +98,6 @@ impl DemoScene for CaptionScene {
         self.header.render_with_background(scene, width, height);
         self.session.set_time(seconds);
         let target = crate::demo::kit::part(&self.header, 0.0, CONTENT_TOP, FRAME_WIDTH as f32, FRAME_HEIGHT as f32 - CONTENT_TOP, width, height);
-        self.session.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(target) });
+        self.session.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(target), ..Default::default() });
     }
 }

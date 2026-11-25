@@ -79,4 +79,34 @@ public class PictureLibraryTests
         png.ETag.Length.Should().Be(66);
         ReferenceEquals(png, Library.CubePetsColormapPng).Should().BeTrue();
     }
+
+    [Fact]
+    public void CubePetsColormapJpeg_is_a_jpeg_file_of_the_same_picture()
+    {
+        //Arrange
+        JpegFile jpeg = Library.CubePetsColormapJpeg;
+
+        //Act
+        byte[] start = jpeg.Bytes.AsSpan(0, 2).ToArray();
+        byte[] end = jpeg.Bytes.AsSpan(jpeg.Bytes.Length - 2, 2).ToArray();
+
+        //Assert
+        start.Should().Equal(new byte[] { 0xFF, 0xD8 });
+        end.Should().Equal(new byte[] { 0xFF, 0xD9 });
+        jpeg.ETag.Length.Should().Be(66);
+        ReferenceEquals(jpeg, Library.CubePetsColormapJpeg).Should().BeTrue();
+    }
+
+    [Fact]
+    public void JpegFile_refuses_bytes_without_the_start_of_image_marker()
+    {
+        //Arrange
+        byte[] png = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+
+        //Act
+        Action make = () => new JpegFile(png);
+
+        //Assert
+        make.Should().Throw<ArgumentException>();
+    }
 }

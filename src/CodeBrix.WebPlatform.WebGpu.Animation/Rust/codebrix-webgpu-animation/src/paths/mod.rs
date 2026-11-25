@@ -17,16 +17,22 @@ mod path_measure;
 mod path_morph;
 mod path_point;
 mod path_polyline;
+mod path_sketch;
 mod path_stroke_cap;
 mod path_stroke_join;
 mod path_stroke_style;
+mod stroke_width_mode;
 
 #[cfg(test)]
 mod tests_combine;
 #[cfg(test)]
 mod tests_dash;
 #[cfg(test)]
+mod tests_fixed_width;
+#[cfg(test)]
 mod tests_queries;
+#[cfg(test)]
+mod tests_sketch;
 
 pub(crate) use path_area_query::PathAreaQuery;
 pub use path_boolean_operation::PathBooleanOperation;
@@ -36,6 +42,8 @@ pub use path_geometry_combine::PathInflateOptions;
 pub use path_morph::PathMorph;
 pub use path_point::PathPoint;
 pub use path_polyline::PathPolyline;
+pub use path_sketch::SketchOptions;
 pub use path_stroke_cap::PathStrokeCap;
 pub use path_stroke_join::PathStrokeJoin;
 pub use path_stroke_style::{PathStrokeStyle, PathStrokeStyleOptions};
+pub use stroke_width_mode::StrokeWidthMode;

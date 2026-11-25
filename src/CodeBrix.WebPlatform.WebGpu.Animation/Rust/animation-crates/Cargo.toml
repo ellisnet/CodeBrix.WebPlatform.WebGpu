@@ -8,7 +8,9 @@
 #
 # THE VENDORED SET of this package (../vendor) is the lock's crates MINUS those the platform or the
 # WebGpu package already carries: the Animation package's bundle holds only what it adds (the
-# owner's rule for the Graphics and Animation packages). So this folder resolves offline only
+# owner's rule for the Graphics and Animation packages). PNG files are read through the WebGpu
+# package's codebrix-webgpu (decode_png), so png and its tree are the WebGpu package's crates, not
+# this set's. So this folder resolves offline only
 # against a merged source (this package's vendor folder, the WebGpu package's and the platform's
 # crates), which is what an application's vendor folder is and what the licence gate builds.
 #
@@ -45,13 +47,6 @@ harfrust = "=0.15.0"
 # brings i_float, i_shape, i_tree and i_key_sort (all from the same project), and libm through
 # i_float (libm is the WebGpu package's).
 i_overlay = "=9.2.0"
-# PNG files: the one file format the Animation crate reads. Approved by the owner by name, at
-# 0.18.1, with its tree. Its default features (none): `benchmarks`, `unstable` and `zlib-rs` stay
-# off. It brings fdeflate, flate2 (with flate2's default `rust_backend`: miniz_oxide 0.9.1),
-# miniz_oxide 0.8.9 (png's own), crc32fast, adler2 and simd-adler32; bitflags and cfg-if are the
-# WebGpu package's. zlib-rs is named by the lock (an optional dependency of flate2) and must be
-# in the vendor folder for an offline resolve, but nothing compiles it.
-png = "=0.18.1"
 # SVG documents: parsing, static CSS, use/defs and paint servers resolved into a tree, and SVG
 # text laid out and turned into paths. Approved by the owner by name at 0.50.0, default features
 # OFF; its `text` feature on (approved in advance; the demo's SVGs contain text): no system

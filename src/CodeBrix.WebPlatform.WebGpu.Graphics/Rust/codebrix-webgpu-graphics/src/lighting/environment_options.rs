@@ -10,7 +10,11 @@ pub struct EnvironmentOptions {
     /// The face size of the radiance cube (the environment itself, drawn by the
     /// [`crate::SkyboxRenderer`] and the source of the filtered maps), rounded up to a power of
     /// two, 16 to 4096 (and the device's limit). Default 512 (a 2048 x 1024 panorama maps about
-    /// one to one) (C#: `CubeSize`).
+    /// one to one) (C#: `CubeSize`). Raise it when the skybox must stay sharp - a star field or
+    /// a 4096-wide panorama wants 1024, an 8192-wide one 2048 - at four times the GPU memory per
+    /// doubling (six RGBA16Float faces with their mips: about 17 MB at 512, 67 MB at 1024, 268 MB
+    /// at 2048). The lighting (the irradiance and prefiltered cubes, sized by their own fields)
+    /// does not change with it.
     pub cube_size: u32,
     /// The face size of the diffuse irradiance cube, a power of two from 4 to 128. Default 32
     /// (C#: `IrradianceSize`).

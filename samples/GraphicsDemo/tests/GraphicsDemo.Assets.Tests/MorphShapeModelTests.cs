@@ -3,7 +3,7 @@ using System.Linq;
 using System.Numerics;
 using CodeBrix.WebPlatform.WebGpu.Graphics.Models;
 using GraphicsDemo.Assets;
-using GraphicsDemo.Assets.Conversion;
+using GraphicsDemo.Assets.BuiltModels;
 using SilverAssertions;
 using Xunit;
 
@@ -90,7 +90,7 @@ public class MorphShapeModelTests
 
         //Act
         ModelBlob blob = library.GetModelBlob(MorphShapeModel.Name);
-        byte[] again = ModelDataWriter.Write(library.BuildModelSet(MorphShapeModel.Name));
+        byte[] again = ModelDataWriter.Write(ModelLibrary.BuildModelSet(MorphShapeModel.Name));
 
         //Assert
         blob.Should().NotBeNull();

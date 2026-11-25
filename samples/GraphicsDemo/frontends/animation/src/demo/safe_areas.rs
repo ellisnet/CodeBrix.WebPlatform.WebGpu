@@ -155,8 +155,8 @@ impl DemoScene for SafeAreaScene {
         self.frame.set_time(seconds);
         self.frame.render_with_background(scene, width, height);
         let phone = part(&self.frame, PHONE.0, PHONE.1, PHONE.2, PHONE.3, width, height);
-        self.portrait.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(phone) });
+        self.portrait.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(phone), ..Default::default() });
         let wide = part(&self.frame, WIDE.0, WIDE.1, WIDE.2, WIDE.3, width, height);
-        self.landscape.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(wide) });
+        self.landscape.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(wide), ..Default::default() });
     }
 }

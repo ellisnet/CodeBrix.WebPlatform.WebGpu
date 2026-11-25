@@ -13,7 +13,8 @@ use crate::drawing3d::MaterialAlphaMode;
 pub struct ModelTextureSlot {
     /// The texture's index in [`Model::textures`](crate::Model::textures), or None when the slot
     /// is empty or its image could not be decoded (C#: `Texture`, the object; read it with
-    /// [`Model::slot_texture`](crate::Model::slot_texture)).
+    /// [`Model::slot_texture`](crate::Model::slot_texture); set an application's texture with
+    /// [`Model::set_material_texture`](crate::Model::set_material_texture)).
     pub texture: Option<usize>,
     /// The sampler's index in [`Model::samplers`](crate::Model::samplers) (C#: `Sampler`).
     pub sampler: Option<usize>,
@@ -54,6 +55,24 @@ impl Default for ModelTextureSlot {
     }
 }
 
+/// Which texture slot of a [`ModelMaterial`] (Not in C#): for
+/// [`Model::set_material_texture`](crate::Model::set_material_texture) and
+/// [`ModelMaterial::slot_mut`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ModelTextureKind {
+    /// baseColorTexture (sRGB).
+    BaseColor,
+    /// metallicRoughnessTexture (linear; roughness in G, metallic in B). An ORM texture (occlusion
+    /// in R) goes into this slot and the occlusion slot.
+    MetallicRoughness,
+    /// normalTexture (linear, tangent space).
+    Normal,
+    /// occlusionTexture (linear; occlusion in R).
+    Occlusion,
+    /// emissiveTexture (sRGB).
+    Emissive,
+}
+
 /// A glTF material, captured completely as metallic-roughness parameters (C#: `ModelMaterial`).
 /// Renderers read what they support; [`ModelMaterial::approximated_features`] lists the
 /// extensions that are captured but only approximated. The defaults are glTF's.
@@ -87,6 +106,12 @@ pub struct ModelMaterial {
     pub emissive_strength: f32,
     /// emissiveTexture, sRGB (C#: `EmissiveTexture`).
     pub emissive_texture: ModelTextureSlot,
+    /// True to multiply the emissive (factor x strength x texture) by the vertex colour (COLOR_0),
+    /// so one material carries many lamp colours, or light baked into vertex colours shows in an
+    /// unlit interior. Default false (glTF multiplies only the base colour by the vertex colour).
+    /// Not in glTF and not in the model data: set it on a loaded model with
+    /// [`Model::material_mut`](crate::Model::material_mut). Not in C#.
+    pub emissive_vertex_color: bool,
     /// alphaMode: Opaque, Mask or Blend; default Opaque (C#: `AlphaMode`).
     pub alpha_mode: MaterialAlphaMode,
     /// alphaCutoff, used by Mask; default 0.5 (C#: `AlphaCutoff`).
@@ -130,6 +155,7 @@ impl ModelMaterial {
             emissive_factor: Vec3::ZERO,
             emissive_strength: 1.0,
             emissive_texture: ModelTextureSlot::EMPTY,
+            emissive_vertex_color: false,
             alpha_mode: MaterialAlphaMode::Opaque,
             alpha_cutoff: 0.5,
             double_sided: false,
@@ -147,6 +173,28 @@ impl ModelMaterial {
     /// True when the base colour is alpha-blended (C#: `IsTranslucent`).
     pub fn is_translucent(&self) -> bool {
         self.alpha_mode == MaterialAlphaMode::Blend
+    }
+
+    /// One texture slot (Not in C#).
+    pub fn slot(&self, kind: ModelTextureKind) -> &ModelTextureSlot {
+        match kind {
+            ModelTextureKind::BaseColor => &self.base_color_texture,
+            ModelTextureKind::MetallicRoughness => &self.metallic_roughness_texture,
+            ModelTextureKind::Normal => &self.normal_texture,
+            ModelTextureKind::Occlusion => &self.occlusion_texture,
+            ModelTextureKind::Emissive => &self.emissive_texture,
+        }
+    }
+
+    /// One texture slot, to change (Not in C#).
+    pub fn slot_mut(&mut self, kind: ModelTextureKind) -> &mut ModelTextureSlot {
+        match kind {
+            ModelTextureKind::BaseColor => &mut self.base_color_texture,
+            ModelTextureKind::MetallicRoughness => &mut self.metallic_roughness_texture,
+            ModelTextureKind::Normal => &mut self.normal_texture,
+            ModelTextureKind::Occlusion => &mut self.occlusion_texture,
+            ModelTextureKind::Emissive => &mut self.emissive_texture,
+        }
     }
 
     /// The five texture slots in the PBR shader's order: base colour, metallic-roughness, normal,

@@ -3,9 +3,10 @@
 
 use crate::paths::path_stroke_cap::PathStrokeCap;
 use crate::paths::path_stroke_join::PathStrokeJoin;
+use crate::paths::stroke_width_mode::StrokeWidthMode;
 
 /// The optional parts of a [`PathStrokeStyle`] (C#'s default arguments: round caps, round joins,
-/// miter limit 4, no dashes, dash offset 0).
+/// miter limit 4, no dashes, dash offset 0; and, Not in C#, a width that scales with the element).
 #[derive(Clone, Debug, PartialEq)]
 pub struct PathStrokeStyleOptions {
     /// The caps.
@@ -18,11 +19,14 @@ pub struct PathStrokeStyleOptions {
     pub dash_pattern: Option<Vec<f32>>,
     /// How far into the pattern the stroke starts.
     pub dash_offset: f32,
+    /// Whether the width (and the dashes) scale with the element (the default) or stay fixed in
+    /// the drawing's own units ([`StrokeWidthMode`]). Not in C#.
+    pub width_mode: StrokeWidthMode,
 }
 
 impl Default for PathStrokeStyleOptions {
     fn default() -> PathStrokeStyleOptions {
-        PathStrokeStyleOptions { cap: PathStrokeCap::Round, join: PathStrokeJoin::Round, miter_limit: 4.0, dash_pattern: None, dash_offset: 0.0 }
+        PathStrokeStyleOptions { cap: PathStrokeCap::Round, join: PathStrokeJoin::Round, miter_limit: 4.0, dash_pattern: None, dash_offset: 0.0, width_mode: StrokeWidthMode::ScalesWithElement }
     }
 }
 
@@ -85,6 +89,22 @@ impl PathStrokeStyle {
     /// A copy of the dash pattern (empty for a solid stroke).
     pub fn get_dash_pattern(&self) -> Vec<f32> {
         self.options.dash_pattern.clone().unwrap_or_default()
+    }
+
+    /// Whether the width scales with the element or stays fixed in the drawing's units. Not in C#.
+    pub fn width_mode(&self) -> StrokeWidthMode {
+        self.options.width_mode
+    }
+
+    /// True when the width stays fixed in the drawing's own units ([`StrokeWidthMode::Fixed`]).
+    /// Not in C#.
+    pub fn is_fixed_width(&self) -> bool {
+        self.options.width_mode == StrokeWidthMode::Fixed
+    }
+
+    /// The same style with another width mode. Not in C#.
+    pub fn with_width_mode(&self, width_mode: StrokeWidthMode) -> PathStrokeStyle {
+        PathStrokeStyle { width: self.width, options: PathStrokeStyleOptions { width_mode, ..self.options.clone() } }
     }
 
     /// The same style with another width.

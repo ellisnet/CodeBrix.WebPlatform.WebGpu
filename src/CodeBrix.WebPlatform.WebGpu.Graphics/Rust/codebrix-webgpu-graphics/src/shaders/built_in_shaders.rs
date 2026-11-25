@@ -3,7 +3,7 @@
 //! `EnvironmentShaders` and `MipmapGenerator`), and [`BuiltInShaderSource`], the list of every one
 //! of them for a page that compiles them all.
 
-use crate::shaders::{PbrFeatures, PbrShader};
+use crate::shaders::{PbrFeatures, PbrShader, ShadowDepthShader};
 
 /// The sprite and lit-mesh shaders (C#: `BuiltInShaders`).
 pub struct BuiltInShaders;
@@ -59,7 +59,8 @@ pub struct BuiltInShaderSource {
 impl BuiltInShaderSource {
     /// Every built-in source: the sprite, lit-mesh, mipmap and environment shaders, then the PBR
     /// shader's variants for `pbr_variants` (for example
-    /// [`PbrFeatures::every_shader_variant`]).
+    /// [`PbrFeatures::every_shader_variant`]), then the sixteen variants of the model renderer's
+    /// shadow depth shader ([`ShadowDepthShader`], Not in C#).
     pub fn all(pbr_variants: impl IntoIterator<Item = PbrFeatures>) -> Vec<BuiltInShaderSource> {
         let named = [
             ("sprite", BuiltInShaders::SPRITE),
@@ -75,6 +76,7 @@ impl BuiltInShaderSource {
         ];
         let mut list: Vec<BuiltInShaderSource> = named.iter().map(|(name, source)| BuiltInShaderSource { name: (*name).to_string(), source: (*source).to_string() }).collect();
         list.extend(pbr_variants.into_iter().map(|features| BuiltInShaderSource { name: format!("pbr {features}"), source: PbrShader::source(features) }));
+        list.extend(ShadowDepthShader::every_variant().map(|features| BuiltInShaderSource { name: format!("pbr shadow depth {features}"), source: ShadowDepthShader::source(features) }));
         list
     }
 }
@@ -108,11 +110,12 @@ mod tests {
     }
 
     #[test]
-    fn all_lists_ten_sources_then_the_pbr_variants() {
+    fn all_lists_ten_sources_then_the_pbr_variants_then_the_shadow_depth_ones() {
         let list = BuiltInShaderSource::all(PbrFeatures::every_shader_variant());
-        assert_eq!(list.len(), 10 + 512);
+        assert_eq!(list.len(), 10 + 4096 + 16);
         assert_eq!(list[0].name, "sprite");
         assert_eq!(list[10].name, "pbr NONE");
+        assert_eq!(list[10 + 4096].name, "pbr shadow depth NONE");
         let mut names: Vec<&str> = list.iter().map(|s| s.name.as_str()).collect();
         names.sort_unstable();
         names.dedup();

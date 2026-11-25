@@ -154,7 +154,11 @@ impl DrawingSvgShape {
                 }
                 SvgDrawCommand::Stroke { path, transform: t, stroke, anti_alias: _ } => {
                     if let Some((b, bt)) = brush(&stroke.paint, stroke.opacity) {
-                        scene.stroke(&stroke.to_kurbo(), transform * *t, &b, bt, &**path);
+                        if stroke.non_scaling {
+                            scene.stroke_fixed_width(&stroke.to_kurbo(), transform * *t, ctx.drawing, &b, bt, &**path);
+                        } else {
+                            scene.stroke(&stroke.to_kurbo(), transform * *t, &b, bt, &**path);
+                        }
                     }
                 }
                 SvgDrawCommand::Image { source, size, transform: t, smooth } => {

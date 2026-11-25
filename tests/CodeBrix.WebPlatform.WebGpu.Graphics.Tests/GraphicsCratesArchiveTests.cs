@@ -13,7 +13,9 @@ namespace CodeBrix.WebPlatform.WebGpu.Graphics.Tests;
 
 /// <summary>
 /// The crate archive the Graphics project writes (webgpu-graphics-crates.zip beside the test
-/// assembly): the first-party crate codebrix-webgpu-graphics in vendored form, and nothing else.
+/// assembly): the first-party crate codebrix-webgpu-graphics in vendored form, the third-party
+/// crates only this package carries (the glTF crates) byte for byte as they are vendored, and
+/// nothing else.
 /// </summary>
 public class GraphicsCratesArchiveTests
 {
@@ -42,17 +44,53 @@ public class GraphicsCratesArchiveTests
 
     private static bool Same(byte[] first, byte[] second) => first.AsSpan().SequenceEqual(second);
 
+    private static List<string> Tops(ZipArchive archive)
+        => archive.Entries.Select(e => e.FullName.Replace('\\', '/')).Select(e => e.Contains('/') ? e.Substring(0, e.IndexOf('/')) : e).Distinct().OrderBy(e => e, StringComparer.Ordinal).ToList();
+
     [Fact]
-    public void the_archive_holds_only_the_codebrix_webgpu_graphics_folder()
+    public void the_archive_holds_the_codebrix_webgpu_graphics_folder_and_the_gltf_crates()
     {
         //Arrange
         using var archive = ZipFile.OpenRead(GraphicsCrates.GetArchivePath());
 
         //Act
-        var tops = archive.Entries.Select(e => e.FullName.Replace('\\', '/')).Select(e => e.Contains('/') ? e.Substring(0, e.IndexOf('/')) : e).Distinct().ToList();
+        var tops = Tops(archive);
 
         //Assert
-        tops.Should().Equal(CrateFolder);
+        tops.Should().Contain(new[] { CrateFolder, "gltf-1.4.1", "gltf-json-1.4.1", "gltf-derive-1.4.1" });
+    }
+
+    [Fact]
+    public void the_archive_holds_exactly_the_vendor_folder_and_the_crate()
+    {
+        //Arrange
+        var vendor = RepositorySource.GraphicsVendorFolder();
+        Assert.SkipWhen(vendor == null, "The repository's source is not beside this test's source file.");
+        var expected = Directory.GetDirectories(vendor).Select(Path.GetFileName).Append(CrateFolder).OrderBy(f => f, StringComparer.Ordinal).ToList();
+        using var archive = ZipFile.OpenRead(GraphicsCrates.GetArchivePath());
+
+        //Act
+        var tops = Tops(archive);
+
+        //Assert
+        tops.Should().Equal(expected);
+    }
+
+    [Fact]
+    public void the_vendored_crates_are_in_the_archive_byte_for_byte()
+    {
+        //Arrange
+        var vendor = RepositorySource.GraphicsVendorFolder();
+        Assert.SkipWhen(vendor == null, "The repository's source is not beside this test's source file.");
+        using var archive = ZipFile.OpenRead(GraphicsCrates.GetArchivePath());
+        var entries = archive.Entries.Where(e => !e.FullName.StartsWith(CrateFolder + "/", StringComparison.Ordinal)).ToDictionary(e => e.FullName, StringComparer.Ordinal);
+
+        //Act
+        var files = Directory.GetFiles(vendor, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(vendor, f).Replace('\\', '/')).OrderBy(f => f, StringComparer.Ordinal).ToList();
+
+        //Assert
+        entries.Keys.OrderBy(k => k, StringComparer.Ordinal).Should().Equal(files);
+        files.Should().OnlyContain(f => Same(Read(entries[f]), File.ReadAllBytes(Path.Combine(vendor, f))));
     }
 
     [Fact]
@@ -126,13 +164,14 @@ public class GraphicsCratesArchiveTests
     {
         //Arrange
         using var webGpu = ZipFile.OpenRead(WebGpuCrates.GetArchivePath());
-        var webGpuFolders = webGpu.Entries.Select(e => e.FullName.Split('/')[0]).ToHashSet(StringComparer.Ordinal);
+        var webGpuNames = webGpu.Entries.Where(e => e.FullName.Count(c => c == '/') == 1 && e.FullName.EndsWith("/Cargo.toml", StringComparison.Ordinal))
+            .Select(e => e.FullName.Split('/')[0]).Select(f => f.Substring(0, f.LastIndexOf('-'))).ToHashSet(StringComparer.Ordinal);
         using var archive = ZipFile.OpenRead(GraphicsCrates.GetArchivePath());
 
         //Act
-        var folders = archive.Entries.Select(e => e.FullName.Split('/')[0]).Distinct().ToList();
+        var names = Tops(archive).Select(f => f.Substring(0, f.LastIndexOf('-'))).ToList();
 
         //Assert
-        folders.Should().NotContain(f => webGpuFolders.Contains(f));
+        names.Should().NotContain(n => webGpuNames.Contains(n), "the WebGpu package's crates (wgpu, glam, codebrix-webgpu, serde, ...) come from its bundle, in no other version");
     }
 }

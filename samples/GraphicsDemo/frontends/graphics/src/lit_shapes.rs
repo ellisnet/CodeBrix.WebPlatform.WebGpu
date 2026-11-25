@@ -2,7 +2,8 @@
 //! spheres and a plane) on a checkered ground, lit by the MeshRenderer's key light and ambient
 //! term, with depth, seen through a perspective or orthographic Camera that an OrbitController
 //! drives from the canvas's input: drag (or one finger) to orbit - the scene follows the pointer -
-//! the wheel to zoom, two fingers to pinch-zoom; it auto-orbits until the first drag. A ring of
+//! a right-button, middle-button or Shift drag to pan, the wheel to zoom (in either projection),
+//! two fingers to pan and pinch-zoom; it auto-orbits until the first drag. A ring of
 //! small cubes is ONE instanced draw; one of them is mirrored (a negative scale) and still
 //! shades like the others; one sphere is translucent and is drawn after the opaque shapes. It is
 //! a LAYER of the canvas host: it loads the colour (never clears it), clears only its own depth
@@ -73,6 +74,8 @@ pub struct LitShapesRenderer {
     orthographic: Signal<bool>,
     resume_requests: Signal<u64>,
     resumes_seen: u64,
+    /// The projection of the last frame (to notice a switch to orthographic).
+    was_orthographic: bool,
 }
 
 impl LitShapesRenderer {
@@ -85,7 +88,7 @@ impl LitShapesRenderer {
         orbit.set_distance(9.0);
         orbit.set_pitch(0.45);
         let lighting = SceneLighting { ambient_color: Color4::new(0.22, 0.24, 0.3, 1.0), light_color: Color4::new(1.0, 0.95, 0.86, 1.0), ..SceneLighting::default() };
-        LitShapesRenderer { graphics, gpu: None, depth: None, controller: OrbitController::new(orbit), camera: Camera::new(), lighting, view, errors, orthographic, resume_requests, resumes_seen: 0 }
+        LitShapesRenderer { graphics, gpu: None, depth: None, controller: OrbitController::new(orbit), camera: Camera::new(), lighting, view, errors, orthographic, resume_requests, resumes_seen: 0, was_orthographic: false }
     }
 
     fn report(&mut self, error: String) {
@@ -185,10 +188,19 @@ impl CanvasRenderer for LitShapesRenderer {
             self.controller.set_auto_orbit(true);
         }
         self.controller.update(time);
-        self.controller.apply(&mut self.camera);
         let orthographic = *self.orthographic.peek();
         self.camera.projection = if orthographic { ProjectionKind::Orthographic } else { ProjectionKind::Perspective };
-        self.camera.orthographic_height = self.controller.orbit.distance() * 0.9;
+        if orthographic && !self.was_orthographic {
+            // Switched to orthographic: a view height of 0.9 x the distance, set ONCE before the
+            // next apply. The controller takes that ratio from the camera and from then on zooms
+            // the orthographic view itself (the wheel and a pinch scale the height with the
+            // distance, within the distance limits).
+            self.camera.orthographic_height = self.controller.orbit.distance() * 0.9;
+        }
+        self.was_orthographic = orthographic;
+        // The canvas's CSS height: a pan moves the scene exactly with the pointer.
+        self.controller.set_viewport(&self.camera, frame.info.height as f32 / frame.info.pixel_ratio as f32);
+        self.controller.apply(&mut self.camera);
         let graphics = self.graphics.clone();
         let mut failure = None;
         let mut counts = (0, 0);
@@ -228,8 +240,8 @@ impl CanvasRenderer for LitShapesRenderer {
         }
     }
 
-    /// Drag (or one finger): orbit, the scene following the pointer. Wheel: zoom. Two fingers:
-    /// pinch-zoom.
+    /// Drag (or one finger): orbit, the scene following the pointer. Right-button, middle-button or
+    /// Shift drag: pan. Wheel: zoom. Two fingers: pan and pinch-zoom.
     fn input(&mut self, input: &CanvasInput) {
         self.controller.input(input);
     }

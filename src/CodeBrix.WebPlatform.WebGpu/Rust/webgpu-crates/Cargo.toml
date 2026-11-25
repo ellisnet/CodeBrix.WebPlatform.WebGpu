@@ -51,3 +51,18 @@ wgpu = { version = "=30.0.2", default-features = false, features = ["std", "webg
 # (bytemuck is already in the set for wgpu). glam's other optional dependencies (approx, mint,
 # rand, serde, libm, ...) stay off and are not vendored.
 glam = { version = "=0.34.3", features = ["bytemuck"] }
+# PNG files: the decoder behind codebrix-webgpu's decode_png (and so behind the Graphics and
+# Animation crates' PNG readers). Approved by the owner by name at 0.18.1, with its tree; moved
+# here from the Animation package's crate set. Its default features (none): `benchmarks`,
+# `unstable` and `zlib-rs` stay off. It brings fdeflate, flate2 (with flate2's default
+# `rust_backend`: miniz_oxide 0.9.1), miniz_oxide 0.8.9 (png's own), crc32fast, adler2 and
+# simd-adler32. zlib-rs is named by the lock (an optional dependency of flate2) and must be in the
+# vendor folder for an offline resolve, but nothing compiles it. vendoring/png/UPGRADE-README.txt.
+png = "=0.18.1"
+# JPEG files: the decoder behind codebrix-webgpu's decode_jpeg (baseline and progressive). Approved
+# by the owner by name (pure Rust, "MIT OR Apache-2.0 OR Zlib"), at the newest stable 0.5 release.
+# DEFAULT FEATURES OFF, `std` on: `x86` and `neon` (native SIMD; nothing on WebAssembly),
+# `portable_simd` (nightly only), `log` and zune-core's `serde` stay off and are not vendored. It
+# brings zune-core (same project, same licence) and nothing else. vendoring/zune-jpeg/
+# UPGRADE-README.txt.
+zune-jpeg = { version = "=0.5.15", default-features = false, features = ["std"] }

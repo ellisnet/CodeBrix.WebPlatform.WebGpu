@@ -379,3 +379,56 @@ fn update_to_follows_the_frame_time_through_pause_speed_and_seeks() {
     assert!((x_at(10.1) - expected(0.1)).abs() < 1e-4, "a seek back plays the loop back to the same place");
     assert!((x_at(17.6) - expected(7.6)).abs() < 1e-3, "a seek forward wraps the loop");
 }
+
+#[test]
+fn the_clip_limit_is_per_player_and_defaults_to_eight() {
+    let mut test = TestInstance::new();
+    let mut player = test.player();
+    assert_eq!(player.max_states(), AnimationPlayer::MAX_STATES);
+    assert_eq!(AnimationPlayer::MAX_STATES, 8);
+    player.set_max_states(12);
+    for _ in 0..12 {
+        player.blend_named("slide", 0.1, PlayOptions::default()).unwrap();
+    }
+    let error = player.blend_named("lift", 0.1, PlayOptions::default()).unwrap_err();
+    assert!(error.message().contains("its limit is 12"), "{}", error.message());
+    // A lower limit stops nothing that plays; the next start is held to it.
+    player.set_max_states(2);
+    assert_eq!(player.state_count(), 12);
+    assert!(player.blend_named("lift", 0.1, PlayOptions::default()).is_err());
+    player.stop();
+    player.set_max_states(0);
+    assert_eq!(player.max_states(), 1);
+    player.play_named("slide", PlayOptions::default()).unwrap();
+    assert!(player.blend_named("lift", 0.5, PlayOptions::default()).is_err());
+    // A cross-fade makes room by fading the playing clip out, even at a limit of 1.
+    player.cross_fade_named("lift", 1.0, PlayOptions::default()).unwrap();
+    assert_eq!(player.state_count(), 1);
+    assert_eq!(player.get_state(0).unwrap().name(), Some("lift"));
+}
+
+#[test]
+fn update_to_since_zero_poses_the_clips_as_if_playing_since_time_zero() {
+    // A page opened at t = 10.5: the first call already shows the pose of 10.5 s of playing.
+    let mut test = TestInstance::new();
+    test.player().play_named("slide", PlayOptions { start_time: 0.25, ..PlayOptions::default() }).unwrap();
+    let expected = |time: f64| (((time + 0.25) % 2.0) * 2.0) as f32;
+    test.player().update_to_since_zero(10.5);
+    assert!((test.locals[MOVER].translation.x - expected(10.5)).abs() < 1e-4, "{}", test.locals[MOVER].translation.x);
+    // Later calls advance by the difference, as update_to does.
+    test.player().update_to_since_zero(11.0);
+    assert!((test.locals[MOVER].translation.x - expected(11.0)).abs() < 1e-4);
+    test.player().update_to(11.25);
+    assert!((test.locals[MOVER].translation.x - expected(11.25)).abs() < 1e-4);
+
+    // A once-clip is finished and reported by the first call; update_to's first call is unchanged.
+    let mut once = TestInstance::new();
+    once.player().play_named("lift", PlayOptions::looping(AnimationLoopMode::Once)).unwrap();
+    once.player().update_to_since_zero(12.0);
+    assert_eq!(once.player().finished_clips(), &[player_clip("lift")]);
+    close(once.locals[MOVER].translation, Vec3::new(0.0, 2.0, 0.0));
+    let mut baseline = TestInstance::new();
+    baseline.player().play_named("lift", PlayOptions::looping(AnimationLoopMode::Once)).unwrap();
+    baseline.player().update_to(12.0);
+    close(baseline.locals[MOVER].translation, Vec3::ZERO);
+}

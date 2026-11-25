@@ -1,5 +1,7 @@
-//! The internal face of one registered font file: the font read from its bytes, its metrics,
-//! and the caches that live as long as the face - glyph outlines in font units and shape plans.
+//! The internal face of one registered font file: the font read from its bytes - for a variable
+//! font, the INSTANCE at the axis values it was registered with - its metrics, and the caches
+//! that live as long as the face - glyph outlines in font units and shape plans. Shaping, glyph
+//! advances, metrics and outlines all read the one instance, so text is measured and drawn alike.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -8,8 +10,11 @@ use std::rc::Rc;
 
 use harfrust::font::glyph::outline::{DrawMemory, DrawOptions, PathSink};
 use harfrust::font::name::NameId;
+use harfrust::font::Variation;
 use harfrust::{Direction, Feature, Font, GlyphId, Script, ShapePlan, Tag};
 use kurbo::{PathEl, Rect};
+
+use crate::text::font_variation::{tag_text, FontVariation, FontVariationAxis};
 
 thread_local! {
     static NEXT_FACE_ID: Cell<u64> = const { Cell::new(1) };
@@ -98,8 +103,11 @@ pub(crate) fn element_bounds(elements: &[PathEl]) -> Option<Rect> {
 }
 
 impl FontFace {
-    /// Reads a font from its bytes (the first face of a collection). The error says what to do.
-    pub(crate) fn from_bytes(bytes: Vec<u8>) -> Result<FontFace, String> {
+    /// Reads a font from its bytes (the first face of a collection) at the instance the axis
+    /// values choose; none = the font's default instance, exactly as a font without axes. An axis
+    /// the font does not have, a value outside its axis's range or not finite, and an axis given
+    /// twice are refused; the error names the font's axes and what to do.
+    pub(crate) fn from_bytes_with_variations(bytes: Vec<u8>, variations: &[FontVariation]) -> Result<FontFace, String> {
         if bytes.is_empty() {
             return Err("The data could not be read as a font: it is empty. Pass the bytes of a TrueType or OpenType font file.".to_string());
         }
@@ -109,6 +117,7 @@ impl FontFace {
         if font.num_glyphs() == 0 {
             return Err("The data could not be read as a font: it holds no glyphs. Pass the bytes of a TrueType or OpenType font file.".to_string());
         }
+        let font = instance(font, variations)?;
         let metrics = font.metrics();
         let upem = metrics.units_per_em.max(1) as f32;
         let cap_height = metrics.cap_height.map(|c| c.to_f32()).filter(|c| *c > 0.0).or_else(|| metrics.x_height.map(|x| x.to_f32()).filter(|x| *x > 0.0)).unwrap_or(upem * 0.7);
@@ -126,6 +135,11 @@ impl FontFace {
             id
         });
         Ok(FontFace { id, font, family_name, units_per_em: upem, cap_height, outlines: RefCell::new(HashMap::new()), plans: RefCell::new(HashMap::new()) })
+    }
+
+    /// The font's variation axes, in the font's order (empty for a font that is not variable).
+    pub(crate) fn variation_axes(&self) -> Vec<FontVariationAxis> {
+        variation_axes(&self.font)
     }
 
     /// The glyph of a character in the font's character map (None: the font lacks it).
@@ -214,4 +228,49 @@ impl FontFace {
         self.plans.borrow_mut().insert(key, plan.clone());
         plan
     }
+}
+
+/// The font's variation axes, in the font's order.
+fn variation_axes(font: &Font) -> Vec<FontVariationAxis> {
+    font.axes()
+        .iter()
+        .map(|axis| FontVariationAxis { tag: axis.tag().to_be_bytes(), min_value: axis.min_value(), default_value: axis.default_value(), max_value: axis.max_value(), is_hidden: axis.is_hidden() })
+        .collect()
+}
+
+/// The font's axes for a message: `wght 100..900 (default 400), wdth 75..100 (default 100)`, or
+/// that it has none.
+fn axes_text(axes: &[FontVariationAxis]) -> String {
+    if axes.is_empty() {
+        return "it has no variation axes (it is not a variable font): register it without axis values".to_string();
+    }
+    format!("its axes are {}", axes.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "))
+}
+
+/// The font at the instance the axis values choose (the font itself when there are none), after
+/// checking every value against the font's axes.
+fn instance(font: Font, variations: &[FontVariation]) -> Result<Font, String> {
+    if variations.is_empty() {
+        return Ok(font);
+    }
+    check_variations(&variation_axes(&font), variations)?;
+    Ok(font.instance_builder().variations(variations.iter().map(|v| Variation::new(Tag::new(&v.tag), v.value))).build())
+}
+
+/// Checks axis values against a font's axes: each axis must be one the font has, given once, at
+/// a finite value inside its range. The error names the font's axes and what to do.
+pub(crate) fn check_variations(axes: &[FontVariationAxis], variations: &[FontVariation]) -> Result<(), String> {
+    for (i, variation) in variations.iter().enumerate() {
+        let tag = tag_text(variation.tag);
+        let Some(axis) = axes.iter().find(|a| a.tag == variation.tag) else {
+            return Err(format!("The font has no '{tag}' axis; {}.", axes_text(axes)));
+        };
+        if variations[..i].iter().any(|v| v.tag == variation.tag) {
+            return Err(format!("The '{tag}' axis is given more than once: give each axis one value ({}).", axes_text(axes)));
+        }
+        if !variation.value.is_finite() || variation.value < axis.min_value || variation.value > axis.max_value {
+            return Err(format!("The value {} is outside the font's '{tag}' axis, which runs from {} to {} (default {}): pass a value in that range.", variation.value, axis.min_value, axis.max_value, axis.default_value));
+        }
+    }
+    Ok(())
 }

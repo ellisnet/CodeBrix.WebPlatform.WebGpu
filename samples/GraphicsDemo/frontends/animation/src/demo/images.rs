@@ -5,7 +5,7 @@
 //! landscape turning and scaling through its transform while its opacity pulses; a slow zoom and
 //! pan made by rebuilding an ImageShape with a moving source rectangle; a tint bound to a colour
 //! track (day, dusk, night). Bottom: the tiny heart drawn large with nearest and with bilinear
-//! sampling, the backend's picture between them (decoded on the backend, and as a PNG file decoded by the crate); emblems over transparency (on a checkerboard)
+//! sampling, the backend's picture between them (decoded on the backend, and as a PNG file and a JPEG file decoded by the crate); emblems over transparency (on a checkerboard)
 //! in a group that turns, one appearing at 2 s (a time window). The C# scene exports the emblem
 //! panel from a second session; here the turning group sits inside a still group whose mask
 //! keeps it to the panel.
@@ -21,7 +21,7 @@ use codebrix_webgpu_animation::text::{FontRegistry, TextAlign};
 use codebrix_webgpu_animation::{Color, DrawingSession, PointF, Rectangle, RectangleF};
 
 use crate::demo::kit::{checkerboard, floats, outline_rect, points, L};
-use crate::demo::pictures::{backend_picture, backend_png_picture, emblem, landscape, ping_pong, pixel_heart};
+use crate::demo::pictures::{backend_jpeg_picture, backend_picture, backend_png_picture, emblem, landscape, ping_pong, pixel_heart};
 use crate::demo::{create_frame_session, label, DemoScene, DIM, INK};
 
 const TITLE: &str = "Pictures as elements";
@@ -45,7 +45,7 @@ impl ImageScene {
         label(notes, fonts, "a moving source rectangle (zoom and pan)", 640.0, 380.0, 14.0, DIM, TextAlign::Center);
         label(notes, fonts, "Tint bound to a ColorTrack", 1060.0, 380.0, 14.0, DIM, TextAlign::Center);
         label(notes, fonts, "a 13 x 11 pixel picture: Nearest | Linear", 400.0, 690.0, 14.0, DIM, TextAlign::Center);
-        label(notes, fonts, "backend pixels | PNG file", 400.0, 652.0, 13.0, DIM, TextAlign::Center);
+        label(notes, fonts, "backend pixels | PNG file | JPEG file", 400.0, 652.0, 13.0, DIM, TextAlign::Center);
         label(notes, fonts, "over transparency, in a turning group", PANEL.x + PANEL.width / 2.0, 690.0, 14.0, DIM, TextAlign::Center);
         checkerboard(notes, PANEL.x, PANEL.y, PANEL.width, PANEL.height);
         session.add_layer("Pictures", INK);
@@ -75,13 +75,14 @@ impl ImageScene {
         session.draw_shape(ImageShape::new(heart.clone(), RectangleF::new(90.0, 450.0, 221.0, 187.0), nearest).unwrap());
         session.draw_shape(ImageShape::new(heart, RectangleF::new(490.0, 450.0, 221.0, 187.0), ImageShapeOptions::default()).unwrap());
         // The backend's picture (a 512 x 512 colour map), its top-left quarter drawn nearest: on the
-        // left as pixels the backend decoded (the picture-pixels form), on the right as the PNG FILE
-        // itself, served by the backend and decoded by the crate (ImageSource::from_png).
+        // left as pixels the backend decoded (the picture-pixels form), in the middle as the PNG FILE
+        // itself, served by the backend and decoded by the crate (ImageSource::from_png), on the right
+        // as a JPEG FILE the backend made from it, decoded by the crate (ImageSource::from_jpeg).
         let quarter = ImageShapeOptions { source_rectangle: Some(Rectangle::new(0, 0, 256, 256)), ..nearest };
-        session.draw_shape(ImageShape::new(backend_picture(), RectangleF::new(338.0, 530.0, 60.0, 60.0), quarter).unwrap());
-        session.draw_shape(outline_rect(338.0, 530.0, 60.0, 60.0, 1.0, Some(DIM), 0.0));
-        session.draw_shape(ImageShape::new(backend_png_picture(), RectangleF::new(404.0, 530.0, 60.0, 60.0), quarter).unwrap());
-        session.draw_shape(outline_rect(404.0, 530.0, 60.0, 60.0, 1.0, Some(DIM), 0.0));
+        for (x, picture) in [(318.0, backend_picture()), (376.0, backend_png_picture()), (434.0, backend_jpeg_picture())] {
+            session.draw_shape(ImageShape::new(picture, RectangleF::new(x, 533.0, 54.0, 54.0), quarter).unwrap());
+            session.draw_shape(outline_rect(x, 533.0, 54.0, 54.0, 1.0, Some(DIM), 0.0));
+        }
         // Emblems over transparency in a turning group, kept to the panel by a still group's mask.
         let mut emblems = DrawingGroup::new(None);
         emblems.add(ImageShape::new(emblem.clone(), RectangleF::new(PANEL.x + 60.0, PANEL.y + 75.0, 100.0, 100.0), ImageShapeOptions::default()).unwrap());

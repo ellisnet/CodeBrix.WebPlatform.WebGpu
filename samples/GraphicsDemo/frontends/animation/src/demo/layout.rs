@@ -96,7 +96,7 @@ impl DemoScene for LayoutScene {
         self.landscape.set_time(seconds);
         let p = part(&self.frame, 64.0, 140.0, 270.0, 480.0, width, height);
         let l = part(&self.frame, 440.0, 140.0, 784.0, 441.0, width, height);
-        self.portrait.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(p) });
-        self.landscape.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(l) });
+        self.portrait.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(p), ..Default::default() });
+        self.landscape.render_with(scene, width, height, &SessionRenderOptions { include_background: true, target: Some(l), ..Default::default() });
     }
 }

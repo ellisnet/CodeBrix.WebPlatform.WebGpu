@@ -5,7 +5,7 @@
 use glam::{Mat4, Quat, Vec3, Vec4};
 
 use crate::drawing3d::MaterialAlphaMode;
-use crate::models::model_layout::{rest_matrices, ModelDrawItem, ModelLayout};
+use crate::models::model_layout::{morph_center_shifts, rest_matrices, ModelDrawItem, ModelLayout};
 use crate::models::{AnimationInterpolation, AnimationPath, ModelDataSet, ModelVertex};
 
 const TRIANGLE: &[u8] = include_bytes!("../../fixtures/triangle.cbmd");
@@ -151,6 +151,36 @@ fn the_layout_is_derived_as_csharp_derives_it() {
     assert!(matrices[4].transform_point3(Vec3::ZERO).distance(Vec3::new(1.0, 6.0, 3.0)) < 1e-5);
     // The skinned primitive's bounds count untransformed; the quad's through root * shear.
     assert!(layout.bounds_max.z >= 0.5);
+}
+
+#[test]
+fn the_model_facts_are_readable_without_a_gpu() {
+    let set = ModelDataSet::read(EVERY_SECTION).unwrap();
+    let model = &set.models[0];
+    let layout = ModelLayout::new(&model.nodes, &model.meshes, &model.skins);
+    assert_eq!(model.bounds(), (layout.bounds_min, layout.bounds_max));
+    // The quad's material is MASK and the skinned primitive uses the default material: the
+    // blended material "coat" is not used by a drawn part.
+    assert!(model.has_opaque_parts() && !model.has_blended_parts());
+    assert_eq!(model.animation_names(), vec![Some("move"), Some("idle")]);
+    assert_eq!(model.node_names().len(), 5);
+    let mut blended = model.clone();
+    blended.default_material.alpha_mode = MaterialAlphaMode::Blend;
+    assert!(blended.has_opaque_parts() && blended.has_blended_parts());
+    let triangle = &ModelDataSet::read(TRIANGLE).unwrap().models[0];
+    assert_eq!(triangle.bounds(), (Vec3::ZERO, Vec3::new(1.0, 1.0, 0.0)));
+    assert_eq!(triangle.node_names(), vec![Some("triangle")]);
+    assert!(triangle.animation_names().is_empty());
+}
+
+#[test]
+fn the_morph_centre_shift_is_derived_from_the_blob_s_vertices() {
+    // The skinned primitive's one target moves its three vertices 0.5 along z.
+    let set = ModelDataSet::read(EVERY_SECTION).unwrap();
+    let model = &set.models[0];
+    let shifts = morph_center_shifts(&model.meshes, model.vertex_bytes);
+    assert_eq!(shifts[0], vec![Vec::<Vec3>::new()]);
+    assert!(shifts[1][0][0].distance(Vec3::new(0.0, 0.0, 0.5)) < 1e-6, "{:?}", shifts[1][0]);
 }
 
 #[test]

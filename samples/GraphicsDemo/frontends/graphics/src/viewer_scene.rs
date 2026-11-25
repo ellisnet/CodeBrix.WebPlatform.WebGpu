@@ -1,9 +1,11 @@
 //! The "Viewer" scene (the application's first scene): the desktop model viewer's complete scene
-//! in the browser (viewer.rs, viewer_actors.rs). The page asks the backend for the scene's description (JSON) and its
-//! model data (ONE binary blob, through the generated `_bytes` call of a [WireFile] action - the
-//! platform's client does the fetching, the graphics crate takes the bytes), shows a loading line
-//! while they arrive and a clear message when a request fails, then starts the canvas with the
-//! viewer layer on its own clock.
+//! in the browser (viewer.rs, viewer_actors.rs). The page asks the backend for the scene's
+//! description (JSON), which names each model and where it comes from: the scene's MODEL FILES -
+//! .glb files served unchanged, with the colour maps they name - fetched through the generated
+//! `_bytes` calls of [WireFile] actions and read by the graphics crate's glTF loader
+//! (model_files.rs); and the ground, which is built in code on the backend and comes as a model
+//! data blob. The page shows a loading line while they arrive and a clear message when a request
+//! fails, then starts the canvas with the viewer layer on its own clock.
 //!
 //! The desktop viewer's command-line switches are query parameters of the page: `?ldr` draws
 //! straight into the canvas (no HDR target, no tone mapping) and `?no-skybox` clears to the flat
@@ -22,24 +24,40 @@ use dioxus::prelude::*;
 
 use crate::generated::api::{environments, models};
 use crate::generated::models::ViewerScene as ViewerSceneData;
+use crate::model_files::{self, ModelFileRequest, ModelFiles};
 use crate::page_cache;
-use crate::viewer::{srgb_to_linear, EnvironmentChoice, PanoramaBytes, ViewerControls, ViewerOptions, ViewerRenderer, ViewerView};
+use crate::viewer::{srgb_to_linear, EnvironmentChoice, PanoramaBytes, ViewerControls, ViewerModels, ViewerOptions, ViewerRenderer, ViewerView};
 
-/// What the two requests brought.
+/// What the requests brought.
 #[derive(Clone)]
 struct Loaded {
     scene: ViewerSceneData,
-    blob: Rc<Vec<u8>>,
+    models: ViewerModels,
 }
 
 /// The page's key of the panorama's bytes.
 const PANORAMA_KEY: &str = "environment:small-cathedral";
 
-/// Fetches the description, then the blob - or takes them from what the page kept.
+/// Fetches the description, then the model files (and what they name) and the blobs of the models
+/// built in code - or takes them from what the page kept.
 async fn load() -> Result<Loaded, String> {
     let scene = page_cache::viewer_scene(async { models::scene().await.map_err(|e| format!("The scene's description could not be read from the backend: {}", e.message())) }).await?;
-    let blob = page_cache::bytes("models:scene", async { models::scene_data_bytes().await.map_err(|e| format!("The scene's model data could not be read from the backend: {}", e.message())) }).await?;
-    Ok(Loaded { scene, blob })
+    let models = load_scene_models(&scene).await?;
+    Ok(Loaded { scene, models })
+}
+
+/// The scene's models: the model files through the glTF loader's fetch step, the models built in
+/// code (no file: the ground) as blobs. Shared with the "On the page" scene.
+pub async fn load_scene_models(scene: &ViewerSceneData) -> Result<ViewerModels, String> {
+    let requests: Vec<ModelFileRequest> = scene.models.iter().filter(|m| !m.file.is_empty()).map(|m| ModelFileRequest { name: m.name.clone(), file: m.file.clone(), pack: m.pack.clone() }).collect();
+    let files: ModelFiles = model_files::fetch(&requests).await?;
+    let mut blobs = Vec::new();
+    for model in scene.models.iter().filter(|m| m.file.is_empty()) {
+        let name = model.name.clone();
+        let bytes = page_cache::bytes(&format!("model:{name}"), async { models::model_data_bytes(&name).await.map_err(|e| format!("The model '{name}' could not be read from the backend: {}", e.message())) }).await?;
+        blobs.push((model.index as usize, bytes));
+    }
+    Ok(ViewerModels { files, blobs: Rc::new(blobs) })
 }
 
 /// The viewer's switches from the page's query string: `?ldr`, `?no-skybox` (names alone or with
@@ -64,13 +82,13 @@ pub fn ViewerScene(context: GpuContext) -> Element {
                 p { class: "mt-2 text-sm", "Check that the backend is running, then switch to another scene and back to try again." }
             }
         },
-        Some(Ok(loaded)) => rsx! { ViewerCanvas { context: context.clone(), scene: loaded.scene.clone(), blob: loaded.blob.clone() } },
+        Some(Ok(loaded)) => rsx! { ViewerCanvas { context: context.clone(), scene: loaded.scene.clone(), models: loaded.models.clone() } },
     }
 }
 
 /// The canvas with the viewer layer, its clock, the controls, the read-outs and the legend.
 #[component]
-fn ViewerCanvas(context: GpuContext, scene: ViewerSceneData, blob: Rc<Vec<u8>>) -> Element {
+fn ViewerCanvas(context: GpuContext, scene: ViewerSceneData, models: ViewerModels) -> Element {
     let graphics = use_hook(|| GraphicsContext::wrap_gpu_context(&context));
     let options = use_hook(options_from_query);
     let view = use_signal(ViewerView::default);
@@ -86,10 +104,12 @@ fn ViewerCanvas(context: GpuContext, scene: ViewerSceneData, blob: Rc<Vec<u8>>) 
         resume_requests: use_signal(|| 0u64),
     };
     let clock = use_hook(CanvasClock::new);
-    let blob_bytes = blob.len();
+    let download_bytes = models.download_bytes();
+    let file_count = models.files.file_count + models.blobs.len();
+    let fetch_ms = models.files.fetch_ms;
     let layers = {
         let scene = scene.clone();
-        use_hook(move || CanvasLayers::single(RendererHandle::new(ViewerRenderer::new(graphics.clone(), blob, scene, options, controls, view, errors))))
+        use_hook(move || CanvasLayers::single(RendererHandle::new(ViewerRenderer::new(graphics.clone(), models, scene, options, controls, view, errors))))
     };
     let toggle_clock = {
         let clock = clock.clone();
@@ -157,14 +177,15 @@ fn ViewerCanvas(context: GpuContext, scene: ViewerSceneData, blob: Rc<Vec<u8>>) 
                 clock: clock.clone(),
                 clear_color: clear,
                 id: "viewer-canvas",
-                label: "The model viewer's scene: a chest opening and closing, animals walking and dancing around it, a bird circling overhead, and trees, rocks, barrels, a camp fire, grass and a fence on a green ground under a sky. Drag to orbit, use the wheel to zoom; on a touch screen, one finger orbits and two fingers pinch to zoom.",
+                label: "The model viewer's scene: a chest opening and closing, animals walking and dancing around it, a bird circling overhead, and trees, rocks, barrels, a camp fire, grass and a fence on a green ground under a sky. Drag to orbit, drag with the right or middle button or with Shift to pan, use the wheel to zoom; on a touch screen, one finger orbits and two fingers pan and pinch to zoom.",
                 class: "aspect-video w-full touch-none select-none rounded-lg ring-1 ring-white/10 focus-visible:outline-2 focus-visible:outline-sky-400",
             }
             div { id: "viewer-legend", class: "pointer-events-none absolute left-3 top-3 rounded-md bg-slate-950/70 px-3 py-2 text-xs text-slate-200 ring-1 ring-white/10",
                 p { class: "font-semibold text-white", "Controls" }
                 p { "Drag: orbit (the scene follows the pointer)" }
+                p { "Right or middle drag, or Shift + drag: pan" }
                 p { "Wheel: zoom" }
-                p { "Touch: one finger orbits, two fingers pinch to zoom" }
+                p { "Touch: one finger orbits, two fingers pan and pinch to zoom" }
                 p { "It turns by itself until you drag." }
             }
         }
@@ -238,11 +259,16 @@ fn ViewerCanvas(context: GpuContext, scene: ViewerSceneData, blob: Rc<Vec<u8>>) 
                 "; skybox " span { id: "viewer-skybox", class: "text-white", "{skybox}" }
             }
             p { class: "text-slate-300",
-                "Model data: " span { id: "viewer-blob-bytes", class: "font-mono text-white", "{blob_bytes}" } " bytes, "
+                "Models: " span { id: "viewer-files", class: "font-mono text-white", "{file_count}" } " files of "
+                span { id: "viewer-download-bytes", class: "font-mono text-white", "{download_bytes}" } " bytes from the backend (fetched and parsed in "
+                span { id: "viewer-fetch-ms", class: "font-mono text-white", "{fetch_ms}" } " ms), built and uploaded in "
+                span { id: "viewer-build-ms", class: "font-mono text-white", "{shown.build_ms}" } " ms; "
                 span { id: "viewer-models", class: "font-mono text-white", "{shown.models}" } " models, "
+                span { id: "viewer-textures", class: "font-mono text-white", "{shown.textures}" } " textures, "
                 span { id: "viewer-instances", class: "font-mono text-white", "{shown.instances}" } " placed, "
                 span { id: "viewer-triangles", class: "font-mono text-white", "{shown.triangles}" } " triangles"
             }
+            p { class: "text-slate-300", "Textures shared between the two loads of the scene's model files: " span { id: "viewer-texture-sharing", class: "font-mono text-white", "{shown.texture_sharing}" } }
             p { class: "text-slate-300",
                 "Last frame: " span { id: "viewer-draw-calls", class: "font-mono text-white", "{shown.draw_calls}" } " draw call(s), "
                 span { id: "viewer-drawn", class: "font-mono text-white", "{shown.drawn}" } " primitive instances, "
@@ -264,7 +290,7 @@ fn ViewerCanvas(context: GpuContext, scene: ViewerSceneData, blob: Rc<Vec<u8>>) 
                 p { class: "font-mono text-red-300", "{error}" }
             }
             p { class: "mt-2 text-slate-400",
-                "The desktop viewer's ground and static props with physically based shading, lit by image-based light from its procedural sky and its sun (or by the HDR panorama alone), with the sky drawn behind them and the high-dynamic-range picture tone mapped for the screen. Open the page with "
+                "The desktop viewer's ground and static props with physically based shading - the models are the kits' .glb files, read in the browser by the graphics crate's glTF loader - lit by image-based light from its procedural sky and its sun (or by the HDR panorama alone), with the sky drawn behind them and the high-dynamic-range picture tone mapped for the screen. Open the page with "
                 a { class: "text-sky-300 hover:text-sky-200", href: "?ldr", "?ldr" } ", "
                 a { class: "text-sky-300 hover:text-sky-200", href: "?no-skybox", "?no-skybox" } " or "
                 a { class: "text-sky-300 hover:text-sky-200", href: "?ldr&no-skybox", "?ldr&no-skybox" } " for the desktop viewer's switches ("

@@ -53,7 +53,7 @@
     <Product>CodeBrix.WebPlatform.WebGpu.Graphics</Product>
     <Title>CodeBrix.WebPlatform.WebGpu.Graphics</Title>
     <Authors>Jeremy Ellis</Authors>
-    <Description>2D and 3D graphics through WebGPU for the browser frontend of a CodeBrix.WebPlatform application, written in Rust as the crate codebrix-webgpu-graphics: the crate in one archive with its notices, and the one call the build program makes to register it (after the WebGpu package's crates, which it builds on) as a crate bundle, so that the frontend builds offline.</Description>
+    <Description>2D and 3D graphics through WebGPU for the browser frontend of a CodeBrix.WebPlatform application, written in Rust as the crate codebrix-webgpu-graphics, with glTF 2.0 model loading (the gltf crates it needs travel with it, exactly as crates.io published them): the crate and those crates in one archive with their notices, and the one call the build program makes to register it (after the WebGpu package's crates, which it builds on) as a crate bundle, so that the frontend builds offline.</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/ellisnet/CodeBrix.WebPlatform.WebGpu</PackageProjectUrl>
     <RepositoryUrl>https://github.com/ellisnet/CodeBrix.WebPlatform.WebGpu</RepositoryUrl>
@@ -86,7 +86,7 @@
     other.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.WebPlatform.Core.ApacheLicenseForever" Version="[1.0.327.240]" />
+    <PackageReference Include="CodeBrix.WebPlatform.Core.ApacheLicenseForever" Version="[1.0.329.452]" />
     <ProjectReference Include="..\CodeBrix.WebPlatform.WebGpu\CodeBrix.WebPlatform.WebGpu.csproj" />
   </ItemGroup>
 
@@ -94,11 +94,13 @@
 
   <!--
     The Rust material (Rust/): the first-party crate codebrix-webgpu-graphics
-    (Rust/codebrix-webgpu-graphics) and its hand-written notices (Rust/notices). None of it is
-    compiled or packed as it is; the crate is data for the archive below, never project items.
+    (Rust/codebrix-webgpu-graphics), the crate set of the third-party crates only this package
+    needs (Rust/graphics-crates: Cargo.toml and Cargo.lock), those crates (Rust/vendor), the
+    upgrade notes (Rust/vendoring) and the notices (Rust/notices). None of it is compiled or packed
+    as it is; the crates are data for the archive below, never project items.
   -->
   <PropertyGroup>
-    <DefaultItemExcludes>$(DefaultItemExcludes);Rust\codebrix-webgpu-graphics\target\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);Rust\vendor\**;Rust\graphics-crates\target\**;Rust\codebrix-webgpu-graphics\target\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
@@ -106,18 +108,24 @@
   </ItemGroup>
 
   <!--
-    THE GRAPHICS CRATES. Rust/codebrix-webgpu-graphics is the FIRST-PARTY crate of this package. It
-    travels as ONE archive, not inside the assembly and not as loose files, written by the SAME
-    task as the WebGpu package's archive (../CodeBrix.WebPlatform.WebGpu/WebGpuCratesArchive.targets,
-    the one place that task lives):
+    THE GRAPHICS CRATES. Rust/vendor holds the third-party crates that ONLY this package needs
+    (gltf, gltf-json and gltf-derive - the glTF loader - and what they bring beyond the platform's
+    and the WebGpu package's crates: inflections and lazy_static), exactly as crates.io published
+    them; Rust/codebrix-webgpu-graphics is the FIRST-PARTY crate of this package. They travel as ONE
+    archive, not inside the assembly and not as loose files, written by the SAME task as the WebGpu
+    package's archive (../CodeBrix.WebPlatform.WebGpu/WebGpuCratesArchive.targets, the one place
+    that task lives):
       * _CreateGraphicsCratesArchive writes obj/webgpu-graphics-crates/webgpu-graphics-crates.zip:
-        the crate in vendored form (folder <name>-<version>, its files, a GENERATED
-        .cargo-checksum.json; never its target/ or Cargo.lock), deterministically. There are NO
-        vendored third-party crates in it: wgpu, glam and codebrix-webgpu come from the WebGpu
-        package's bundle, which GraphicsCrates.Register() registers first. It runs only when one
-        of the crate's files, this project file or the task's file is newer than the archive;
-      * the archive and the hand-written notices for what the crate contains
-        (Rust/notices/THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt) are packed under
+        every vendored crate byte for byte, and the first-party crate in vendored form (folder
+        <name>-<version>, its files, a GENERATED .cargo-checksum.json; never its target/ or
+        Cargo.lock), deterministically. wgpu, glam, codebrix-webgpu and the crates shared with the
+        platform (serde, serde_json, byteorder, syn, ...) come from the WebGpu package's bundle and
+        the platform, never from this archive; GraphicsCrates.Register() registers the WebGpu
+        bundle first. It runs only when one of those files, the crate set's lock file, this project
+        file or the task's file is newer than the archive;
+      * the archive and the notices (Rust/notices/THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt: the
+        hand-written ones for the crate and the generated ones for the third-party crates, taken
+        only when it exists: the licence gate writes it) are packed under
         tools/webgpu-graphics-crates/, and
         buildTransitive/CodeBrix.WebPlatform.WebGpu.Graphics.ApacheLicenseForever.targets copies
         them into the consuming project's output folder as webgpu-graphics-crates/;
@@ -130,12 +138,15 @@
   <PropertyGroup>
     <!-- Path.Combine, so that an absolute intermediate folder (dotnet build with an artifacts path) is used as it is. -->
     <_GraphicsCratesArchive>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(BaseIntermediateOutputPath)', 'webgpu-graphics-crates', 'webgpu-graphics-crates.zip'))</_GraphicsCratesArchive>
+    <_GraphicsCratesVendorFolder>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', 'Rust', 'vendor'))</_GraphicsCratesVendorFolder>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- The first-party crates the archive carries in vendored form. -->
     <_GraphicsFirstPartyCrate Include="Rust\codebrix-webgpu-graphics" />
+    <_GraphicsCrateFile Include="Rust\vendor\**\*" />
     <_GraphicsCrateFile Include="Rust\codebrix-webgpu-graphics\**\*" Exclude="Rust\codebrix-webgpu-graphics\target\**;Rust\codebrix-webgpu-graphics\Cargo.lock" />
+    <_GraphicsCrateFile Include="Rust\graphics-crates\Cargo.lock" Condition="Exists('Rust\graphics-crates\Cargo.lock')" />
     <_GraphicsCrateFile Include="$(MSBuildProjectFullPath)" />
     <_GraphicsCrateFile Include="$(MSBuildProjectDirectory)\..\CodeBrix.WebPlatform.WebGpu\WebGpuCratesArchive.targets" />
     <None Include="$(_GraphicsCratesArchive)"
@@ -143,6 +154,7 @@
           Link="webgpu-graphics-crates\webgpu-graphics-crates.zip"
           CopyToOutputDirectory="PreserveNewest" Visible="false" />
     <None Include="Rust\notices\THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt"
+          Condition="Exists('Rust\notices\THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt')"
           Pack="true" PackagePath="tools\webgpu-graphics-crates"
           Link="webgpu-graphics-crates\THIRD-PARTY-NOTICES-WebGpuGraphicsCrates.txt"
           CopyToOutputDirectory="PreserveNewest" Visible="false" />
@@ -154,7 +166,8 @@
           BeforeTargets="AssignTargetPaths;BeforeBuild"
           Inputs="@(_GraphicsCrateFile)"
           Outputs="$(_GraphicsCratesArchive)">
-    <WriteWebGpuCratesArchive FirstPartyCrateFolders="@(_GraphicsFirstPartyCrate)"
+    <WriteWebGpuCratesArchive VendorFolder="$(_GraphicsCratesVendorFolder)"
+                              FirstPartyCrateFolders="@(_GraphicsFirstPartyCrate)"
                               DestinationFile="$(_GraphicsCratesArchive)" />
   </Target>
 

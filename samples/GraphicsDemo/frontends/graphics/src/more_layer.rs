@@ -299,6 +299,8 @@ impl CanvasRenderer for MoreLayer {
         let aspect = frame.info.width.max(1) as f32 / frame.info.height.max(1) as f32;
         let css_width = frame.info.width as f32 / pixel_ratio.max(0.01);
         self.controller.update(time);
+        // The canvas's CSS height: a pan moves the scene exactly with the pointer.
+        self.controller.set_viewport(&self.camera, frame.info.height as f32 / pixel_ratio.max(0.01));
         self.controller.apply(&mut self.camera);
         let mut failures = Vec::new();
         let mut view = MoreView { frame: number, time: (time * 1000.0).round() / 1000.0, ..MoreView::default() };

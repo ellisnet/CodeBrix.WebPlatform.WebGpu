@@ -23,25 +23,29 @@ public static class Program
           all          every check below (the default)
           no-node      no package.json, node_modules or JavaScript of ours outside samples/
           vendor       the vendored wgpu crates are untouched and are exactly the crate set's derived
-                       set; the Animation package's vendored crates are exactly its crate set's own
-                       crates; git hides no vendored file; no GitHub workflow files
+                       set; the Graphics and the Animation packages' vendored crates are exactly
+                       their crate sets' own crates; git hides no vendored file; no GitHub workflow
+                       files
           platform     every vendored crate the platform also carries is at the platform's version with
-                       the same content (the strict rule), and the Animation crate set shares every
-                       crate the WebGpu package or the platform carries at its version; the
+                       the same content (the strict rule), and the Graphics and the Animation crate
+                       sets share every crate the WebGpu package or the platform carries at its
+                       version; no crate is vendored by both of them in two versions; the
                        packages pin Core to that platform
                        version; Graphics and Animation pin the WebGpu package of the same build
                        exactly (the family rule)
           first-party  the first-party crates codebrix-webgpu, codebrix-webgpu-graphics and
                        codebrix-webgpu-animation: ours
                        (Apache-2.0, not published), every dependency at an exact version the vendored
-                       or the platform's crates carry (or codebrix-webgpu at its own version)
+                       or the platform's crates carry (or codebrix-webgpu at its own version; the
+                       Graphics and Animation crates also their own package's vendored crates)
           dependency-rule
                        Graphics and Animation (project and crate) both depend on WebGpu and never
                        name each other
-          licenses     every crate's license is on the allowlist for its tier
-          notices      the generated notices (the WebGpu package's and the Animation package's) are
-                       up to date (--write regenerates them); the
-                       Graphics package's hand-written notices are packed and complete
+          licenses     every crate's license is on the allowlist for its tier (the WebGpu, the
+                       Graphics and the Animation crate sets)
+          notices      the generated notices (the WebGpu, the Graphics and the Animation packages')
+                       are up to date (--write regenerates them); the Graphics and the Animation
+                       packages' hand-written headers are complete and their notices packed
 
         Maintenance (not a check):
           revendor     re-take the wgpu crates from crates.io (needs the network)

@@ -1,8 +1,9 @@
-//! The layer of the two validation scenes ("Skinned model" and "Morph targets"): ONE model from
-//! the backend's model data, one instance of it playing a clip on the host's clock, drawn by the
-//! ModelRenderer - which skins it on the GPU from the instance's joint palette, or morphs it from
-//! its morph weights - lit by the context's default environment (the procedural sky with its sun)
-//! and drawn over the skybox, under an orbit camera framed on the model's bounds.
+//! The layer of the two validation scenes ("Skinned model" and "Morph targets"): ONE model - a
+//! .glb file read by the graphics crate's glTF loader, or a model data blob - one instance of it
+//! playing a clip on the host's clock, drawn by the ModelRenderer - which skins it on the GPU from
+//! the instance's joint palette, or morphs it from its morph weights - lit by the context's default
+//! environment (the procedural sky with its sun), its opaque parts, then the skybox, then its
+//! blended parts, under an orbit camera framed on the model's bounds (OrbitController::frame_box).
 //!
 //! It takes its time from the frame: the player follows the frame's TIME
 //! (AnimationPlayer::update_to), so pausing the clock holds the pose, resuming goes on from it,
@@ -14,8 +15,41 @@ use std::rc::Rc;
 
 use codebrix_webgpu::glam::Vec3;
 use codebrix_webgpu::{wgpu, CanvasFrame, CanvasInput, CanvasRenderer, CanvasTarget, GpuContext};
-use codebrix_webgpu_graphics::{Camera, DepthTextureOptions, GpuTexture, GraphicsContext, ModelInstance, ModelLoadOptions, ModelRenderer, OrbitCamera, OrbitController, OrbitLimits, PlayOptions, SceneLighting, SkyboxRenderer};
+use codebrix_webgpu_graphics::{Camera, DepthTextureOptions, GltfLoadOptions, GltfModelSet, GpuTexture, GraphicsContext, Model, ModelInstance, ModelLoadOptions, ModelRenderer, OrbitCamera, OrbitController, PlayOptions, SceneLighting, SkyboxRenderer};
 use dioxus::prelude::*;
+
+use crate::model_files::{self, ModelFiles};
+
+/// Where the layer's one model comes from.
+#[derive(Clone, PartialEq)]
+pub enum ModelSource {
+    /// A model file (and what it names), for the glTF loader; the first model of the files.
+    Files(ModelFiles),
+    /// A model data blob (a model built in code on the backend).
+    Blob(Rc<Vec<u8>>),
+}
+
+impl ModelSource {
+    /// The bytes fetched from the backend for the model.
+    pub fn download_bytes(&self) -> usize {
+        match self {
+            ModelSource::Files(files) => files.bytes,
+            ModelSource::Blob(bytes) => bytes.len(),
+        }
+    }
+
+    /// Makes the GPU model.
+    fn create_model(&self, graphics: &GraphicsContext) -> Result<Model, String> {
+        match self {
+            ModelSource::Blob(bytes) => graphics.load_model(bytes, &ModelLoadOptions::default()).map_err(|e| e.to_string()),
+            ModelSource::Files(files) => {
+                let mut set = GltfModelSet::new();
+                model_files::add_models(&mut set, files, &[0], &GltfLoadOptions::default())?;
+                set.create_models(graphics, &ModelLoadOptions::default()).map_err(|e| e.to_string())?.into_iter().next().ok_or_else(|| "The model file gave no model.".to_string())
+            }
+        }
+    }
+}
 
 /// What the layer reads out of the pose for the page: a node's world position (the skinned
 /// archer's arm), or a node's morph weights (the morph shape).
@@ -69,7 +103,7 @@ struct Gpu {
 /// Draws one animated model.
 pub struct ModelLayer {
     graphics: GraphicsContext,
-    bytes: Rc<Vec<u8>>,
+    source: ModelSource,
     clip: Signal<String>,
     probe: Probe,
     gpu: Option<Gpu>,
@@ -85,13 +119,13 @@ pub struct ModelLayer {
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 
 impl ModelLayer {
-    /// A layer for the one model in `bytes`, playing the clip `clip` names (read every frame: a
-    /// change cross-fades to the new clip), reading out `probe`; it publishes its view into
-    /// `view` and every error into `errors`.
-    pub fn new(graphics: GraphicsContext, bytes: Rc<Vec<u8>>, clip: Signal<String>, probe: Probe, view: Signal<ModelView>, errors: Signal<Vec<String>>) -> ModelLayer {
+    /// A layer for the one model `source` holds, playing the clip `clip` names (read every
+    /// frame: a change cross-fades to the new clip), reading out `probe`; it publishes its view
+    /// into `view` and every error into `errors`.
+    pub fn new(graphics: GraphicsContext, source: ModelSource, clip: Signal<String>, probe: Probe, view: Signal<ModelView>, errors: Signal<Vec<String>>) -> ModelLayer {
         let mut camera = Camera::new();
         camera.field_of_view = 40f32.to_radians();
-        ModelLayer { graphics, bytes, clip, probe, gpu: None, depth: None, controller: OrbitController::new(OrbitCamera::new()), camera, playing: String::new(), view, errors }
+        ModelLayer { graphics, source, clip, probe, gpu: None, depth: None, controller: OrbitController::new(OrbitCamera::new()), camera, playing: String::new(), view, errors }
     }
 
     fn report(&mut self, error: String) {
@@ -103,21 +137,19 @@ impl ModelLayer {
 
     /// Loads the model, makes its instance, starts the clip and frames the camera on it.
     fn create_gpu(&mut self) -> Result<Gpu, String> {
-        let model = self.graphics.load_model(&self.bytes, &ModelLoadOptions::default()).map_err(|e| e.to_string())?;
+        let model = self.source.create_model(&self.graphics)?;
         let mut instance = model.create_instance();
         let clip = self.clip.peek().clone();
         instance.animation().play_named(&clip, PlayOptions::default()).map_err(|e| e.to_string())?;
         self.playing = clip;
-        // Frame the model: the orbit's target is its centre, the distance a little over twice
-        // its radius; it turns slowly by itself until the first drag.
-        let center = model.bounds_center();
+        // Frame the model (OrbitController::frame_box: the target at the box's centre, a distance
+        // that fits it in view, distance limits and pan bounds scaled to it); it turns slowly by
+        // itself until the first drag.
         let radius = ((model.bounds_max() - model.bounds_min()).length() * 0.5).max(0.01);
         let mut orbit = OrbitCamera::new();
-        orbit.target = center;
+        orbit.set_pitch(0.25);
         let mut controller = OrbitController::new(orbit);
-        controller.limits = OrbitLimits { min_distance: radius * 1.2, max_distance: radius * 12.0, ..controller.limits };
-        controller.orbit.set_distance(radius * 3.2);
-        controller.orbit.set_pitch(0.25);
+        controller.frame_box(model.bounds_min(), model.bounds_max(), &self.camera, 16.0 / 9.0);
         controller.auto_orbit_start_yaw = 0.6;
         controller.auto_orbit_speed = 0.25;
         self.controller = controller;
@@ -155,6 +187,8 @@ impl CanvasRenderer for ModelLayer {
         let time = frame.info.time;
         let number = frame.info.number;
         self.controller.update(time);
+        // The canvas's CSS height: a pan moves the model exactly with the pointer.
+        self.controller.set_viewport(&self.camera, frame.info.height as f32 / frame.info.pixel_ratio as f32);
         self.controller.apply(&mut self.camera);
         let wanted = self.clip.peek().clone();
         let mut failures = Vec::new();
@@ -184,8 +218,10 @@ impl CanvasRenderer for ModelLayer {
                 let mut pass = graphics_frame.begin_render_pass(None, Some(1.0))?;
                 gpu.renderer.begin(&pass, &self.camera, Some(&lighting))?;
                 gpu.renderer.draw(&gpu.instance)?;
-                gpu.renderer.end(&mut pass)?;
+                // Opaque parts, the sky behind them, then any blended parts over both.
+                gpu.renderer.end_opaque(&mut pass)?;
                 gpu.skybox.draw(&mut pass, &self.camera, Some(&lighting))?;
+                gpu.renderer.end_blended(&mut pass)?;
                 Ok(())
             })();
             if let Err(error) = result {
@@ -223,7 +259,8 @@ impl CanvasRenderer for ModelLayer {
         }
     }
 
-    /// Drag (or one finger): orbit. Wheel: zoom. Two fingers: pinch-zoom.
+    /// Drag (or one finger): orbit. Right-button, middle-button or Shift drag: pan. Wheel: zoom.
+    /// Two fingers: pan and pinch-zoom.
     fn input(&mut self, input: &CanvasInput) {
         self.controller.input(input);
     }

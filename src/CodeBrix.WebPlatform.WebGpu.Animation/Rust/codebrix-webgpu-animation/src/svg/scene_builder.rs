@@ -90,11 +90,20 @@ pub(crate) struct SceneBuilder<'w> {
     /// Paint servers converted once, shared by identity.
     linear: HashMap<*const usvg::LinearGradient, Arc<SvgLinearGradient>>,
     radial: HashMap<*const usvg::RadialGradient, Arc<SvgRadialGradient>>,
+    /// The ids of the elements with `vector-effect="non-scaling-stroke"` (usvg drops the
+    /// property, so the crate reads it from the document and finds the paths by id).
+    non_scaling: HashSet<String>,
 }
 
 impl<'w> SceneBuilder<'w> {
     pub(crate) fn new(warnings: &'w mut WarningList) -> SceneBuilder<'w> {
-        SceneBuilder { nodes: Vec::new(), warnings, linear: HashMap::new(), radial: HashMap::new() }
+        SceneBuilder { nodes: Vec::new(), warnings, linear: HashMap::new(), radial: HashMap::new(), non_scaling: HashSet::new() }
+    }
+
+    /// The ids of the elements whose strokes do not scale (`vector-effect="non-scaling-stroke"`).
+    pub(crate) fn with_non_scaling_strokes(mut self, ids: HashSet<String>) -> SceneBuilder<'w> {
+        self.non_scaling = ids;
+        self
     }
 
     /// Converts the tree; `xml` is the (prepared) document the tree was parsed from.
@@ -225,6 +234,7 @@ impl<'w> SceneBuilder<'w> {
                         usvg::FillRule::EvenOdd => SvgFillRule::EvenOdd,
                     },
                 });
+                let non_scaling_stroke = !p.id().is_empty() && self.non_scaling.contains(p.id());
                 let stroke = p.stroke().map(|s| SvgStroke {
                     paint: self.paint(s.paint()),
                     opacity: s.opacity().get(),
@@ -242,6 +252,7 @@ impl<'w> SceneBuilder<'w> {
                     miter_limit: s.miterlimit().get(),
                     dash_array: s.dasharray().map(|d| d.to_vec()),
                     dash_offset: s.dashoffset(),
+                    non_scaling: non_scaling_stroke,
                 });
                 Some(self.push(SvgSceneNode {
                     id: p.id().to_string(),
@@ -258,6 +269,7 @@ impl<'w> SceneBuilder<'w> {
                         },
                         visible: p.is_visible(),
                         anti_alias: p.rendering_mode().use_shape_antialiasing(),
+                        non_scaling_stroke,
                     }),
                 }))
             }

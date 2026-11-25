@@ -1,13 +1,14 @@
 //! The graphics application of the GraphicsDemo sample, served below /graphics. It asks the
 //! browser for a WebGPU adapter and device (WebGPU only: no WebGL fallback) through the
 //! codebrix-webgpu crate - with `timestamp-query` where the browser grants it, for the GPU timer
-//! of the "More" scene - then shows one of ten SCENES, chosen with the buttons at the top:
+//! of the "More" scene - then shows one of seventeen SCENES, chosen with the buttons at the top:
 //!
 //! - "Viewer" (the first, shown when the page opens): the desktop model viewer's complete scene -
 //!   its ground, static props and animated actors (the chest, the animals and the Avian, each
-//!   instance played by the graphics crate's AnimationPlayer on the page's clock), glTF models the
-//!   BACKEND converted into one model-data blob, fetched
-//!   through the generated client's `_bytes` call and drawn by the ModelRenderer with physically
+//!   instance played by the graphics crate's AnimationPlayer on the page's clock), the kits' .glb
+//!   files the backend serves unchanged, fetched through the generated client's `_bytes` calls and
+//!   read in the browser by the graphics crate's glTF loader (model_files.rs), the ground from the
+//!   blob of a model the backend builds in code, drawn by the ModelRenderer with physically
 //!   based shading under the viewer's orbit camera, lit by image-based light from its procedural
 //!   sky (or from an HDR panorama the backend serves), with the skybox, rendered through an HDR
 //!   target and tone mapped; `?ldr` and `?no-skybox` are the desktop viewer's switches
@@ -30,9 +31,9 @@
 //!   wheel, one-finger orbit and pinch zoom, auto-orbit until the first drag), with a legend of
 //!   the controls in HTML over the canvas (lit_scene.rs, lit_shapes.rs).
 //! - "Skinned model" and "Morph targets": the two validation scenes of skinning and morph targets
-//!   (none of the viewer's models has either) - the Kenney archer playing its clips, and a shape
-//!   the backend builds in code with three morph targets and a weights clip (model_scene.rs,
-//!   model_layer.rs).
+//!   (none of the viewer's models has either) - the Kenney archer (its .glb file, through the glTF
+//!   loader) playing its clips, and a shape the backend builds in code with three morph targets and
+//!   a weights clip (its blob) (model_scene.rs, model_layer.rs).
 //! - "More": the graphics crate's remaining features, each visible: an HDR panorama made in code
 //!   as the background, a ring of cubes from a render bundle, particles moved by a compute pass
 //!   and drawn by an indirect draw whose count the compute pass decides, two animated textures,
@@ -41,15 +42,32 @@
 //!   canvas over the page's own gradient and text, with a few of the viewer's models turning on
 //!   it through the HDR path (tone mapped with `preserve_alpha`), no skybox (page_scene.rs).
 //!
+//! - The FEATURE DEMOS (demos/, also `?scene=<name>`): "Lights" (`lights`), "Shadows"
+//!   (`shadows`), "Culling" (`culling`), "Translucency" (`translucency`), "Glow and bloom"
+//!   (`glow`), "Particles" (`particles`), "Picking and labels" (`picking`), "Anti-aliasing"
+//!   (`antialiasing`), "Level of detail" (`lod`), "Water pond" (`water-pond`) and "Water lake"
+//!   (`water-lake`) - the graphics crate's local lights, shadows,
+//!   frustum culling, two-pass translucency and per-instance look, glow layer, bloom, particle
+//!   system, picking and world-to-canvas labels, multisampling (1 or 4 samples, switched while
+//!   the page runs, beside a second canvas held at 1; the HDR path and the direct path over a
+//!   layer below), level of detail with a fade band, and water (a simulated wave field over the
+//!   owner's mosaic rosette pool floor, stirred by the pointer and rain; open-water waves on a lake
+//!   with a floating barrel and a wake), each with its controls, read-outs and the frame timer's
+//!   timings.
+//!
+//! The button of the scene on show is filled and marked `aria-current="true"` (one at a time).
+//!
 //! What a scene fetched from the backend is kept for the life of the page (page_cache.rs):
 //! returning to a scene asks the backend for nothing.
 //!
 //! The scenes are inside a WebGpuBoundary: without WebGPU the page shows its OWN fallback panel
 //! instead (what the scenes would show), not the crate's "WebGPU is not available" message.
 
+mod demos;
 mod generated;
 mod lit_scene;
 mod lit_shapes;
+mod model_files;
 mod model_layer;
 mod model_scene;
 mod more_layer;
@@ -70,6 +88,7 @@ mod viewer_scene;
 use codebrix_webgpu::{set_page_gpu_options, use_gpu, wgpu, CanvasClock, CanvasLayers, GpuContext, PageGpuOptions, RendererHandle, WebGpuBoundary, WebGpuCanvas};
 use dioxus::prelude::*;
 
+use crate::demos::{DemoKind, DemoScene};
 use crate::lit_scene::LitScene;
 use crate::model_scene::{ModelScene, ModelSceneKind};
 use crate::more_scene::MoreScene;
@@ -105,6 +124,8 @@ enum SceneKind {
     More,
     /// Models on a transparent canvas over the page (drawing "on the page").
     OnThePage,
+    /// One of the feature demos of the graphics crate's newer capabilities (demos/).
+    Demo(DemoKind),
 }
 
 /// The clock's named point at which the overlay appears and the triangle turns lighter.
@@ -112,7 +133,9 @@ pub const TITLE_IN: &str = "title in";
 /// Where on the clock's timeline "title in" is, in seconds.
 const TITLE_IN_SECONDS: f64 = 2.0;
 
-const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
+/// The Tailwind stylesheet the platform's frontend build generates from tailwind.css (build output,
+/// at the platform's fixed path assets/generated/tailwind.css).
+const TAILWIND_CSS: Asset = asset!("/assets/generated/tailwind.css");
 /// The site icon (the CodeBrix icon as an .ico file). Served without a hash suffix, at the fixed
 /// path `index.html` also links, so the browser finds it before the application has started.
 const FAVICON: Asset = asset!("/assets/favicon.ico", AssetOptions::builder().with_hash_suffix(false));
@@ -163,6 +186,12 @@ fn NoWebGpu() -> Element {
                         " - {what}"
                     }
                 }
+                for kind in DemoKind::ALL {
+                    li { key: "{kind.slug()}",
+                        span { class: "font-medium text-sky-200", "{kind.title()}" }
+                        " - {kind.summary()}"
+                    }
+                }
             }
             p { class: "mt-5 text-sm",
                 a { href: "/", class: "text-sky-300 hover:text-sky-200", "Back to all applications" }
@@ -196,29 +225,54 @@ fn Scenes() -> Element {
         let search = web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default();
         if search.trim_start_matches('?').split('&').any(|pair| pair == "scene=on-the-page") {
             SceneKind::OnThePage
+        } else if let Some(kind) = DemoKind::from_query() {
+            SceneKind::Demo(kind)
         } else {
             SceneKind::Viewer
         }
     });
+    // THE CURRENT SCENE'S BUTTON is filled (a light fill with dark text and a white ring), every
+    // other button stays dark: driven by the same `scene` signal that chooses what is drawn, so the
+    // two cannot disagree; it also carries aria-current="true".
     let tab = |kind: SceneKind| {
         if scene() == kind {
-            "rounded-md bg-sky-700 px-3 py-1.5 text-sm text-white ring-1 ring-sky-300/40"
+            "rounded-md bg-sky-300 px-3 py-1.5 text-sm font-semibold text-slate-950 ring-2 ring-white"
         } else {
             "rounded-md bg-slate-800 px-3 py-1.5 text-sm text-slate-100 ring-1 ring-white/10 hover:bg-slate-700"
         }
     };
+    let current = |kind: SceneKind| if scene() == kind { "true" } else { "false" };
+    // When the scene changes, the current button is scrolled into view inside the button rows
+    // (never the page, never the keyboard focus) - for when the rows ever scroll.
+    use_effect(move || {
+        let id = scene_button_id(scene());
+        keep_in_view("scene-buttons", &id);
+    });
+    let base_scenes = [
+        (SceneKind::Viewer, "scene-viewer", "Viewer"),
+        (SceneKind::Layers, "scene-layers", "Layers"),
+        (SceneKind::Shaders, "scene-shaders", "Shaders"),
+        (SceneKind::Quad, "scene-quad", "Textured quad"),
+        (SceneKind::Sprites, "scene-sprites", "Sprites"),
+        (SceneKind::LitShapes, "scene-lit", "Lit shapes"),
+        (SceneKind::Skinned, "scene-skinned", "Skinned model"),
+        (SceneKind::Morph, "scene-morph", "Morph targets"),
+        (SceneKind::More, "scene-more", "More"),
+        (SceneKind::OnThePage, "scene-on-the-page", "On the page"),
+    ];
     rsx! {
-        nav { class: "flex flex-wrap gap-2", "aria-label": "Scenes",
-            button { id: "scene-viewer", class: tab(SceneKind::Viewer), onclick: move |_| scene.set(SceneKind::Viewer), "Viewer" }
-            button { id: "scene-layers", class: tab(SceneKind::Layers), onclick: move |_| scene.set(SceneKind::Layers), "Layers" }
-            button { id: "scene-shaders", class: tab(SceneKind::Shaders), onclick: move |_| scene.set(SceneKind::Shaders), "Shaders" }
-            button { id: "scene-quad", class: tab(SceneKind::Quad), onclick: move |_| scene.set(SceneKind::Quad), "Textured quad" }
-            button { id: "scene-sprites", class: tab(SceneKind::Sprites), onclick: move |_| scene.set(SceneKind::Sprites), "Sprites" }
-            button { id: "scene-lit", class: tab(SceneKind::LitShapes), onclick: move |_| scene.set(SceneKind::LitShapes), "Lit shapes" }
-            button { id: "scene-skinned", class: tab(SceneKind::Skinned), onclick: move |_| scene.set(SceneKind::Skinned), "Skinned model" }
-            button { id: "scene-morph", class: tab(SceneKind::Morph), onclick: move |_| scene.set(SceneKind::Morph), "Morph targets" }
-            button { id: "scene-more", class: tab(SceneKind::More), onclick: move |_| scene.set(SceneKind::More), "More" }
-            button { id: "scene-on-the-page", class: tab(SceneKind::OnThePage), onclick: move |_| scene.set(SceneKind::OnThePage), "On the page" }
+        nav { id: "scene-buttons", class: "flex max-h-48 flex-col gap-2 overflow-y-auto", "aria-label": "Scenes",
+            div { class: "flex flex-wrap gap-2",
+                for (kind, id, text) in base_scenes {
+                    button { key: "{id}", id: "{id}", class: tab(kind), "aria-current": current(kind), onclick: move |_| scene.set(kind), "{text}" }
+                }
+            }
+            div { class: "flex flex-wrap items-center gap-2",
+                span { class: "pr-1 text-xs font-semibold uppercase tracking-wide text-slate-400", "Feature demos" }
+                for kind in DemoKind::ALL {
+                    button { key: "{kind.slug()}", id: "scene-{kind.slug()}", class: tab(SceneKind::Demo(kind)), "aria-current": current(SceneKind::Demo(kind)), onclick: move |_| scene.set(SceneKind::Demo(kind)), "{kind.title()}" }
+                }
+            }
         }
         match scene() {
             SceneKind::Viewer => rsx! { ViewerScene { context: context.clone() } },
@@ -231,6 +285,7 @@ fn Scenes() -> Element {
             SceneKind::Morph => rsx! { ModelScene { key: "{scene():?}", context: context.clone(), kind: ModelSceneKind::Morph } },
             SceneKind::More => rsx! { MoreScene { context: context.clone() } },
             SceneKind::OnThePage => rsx! { PageScene { context: context.clone() } },
+            SceneKind::Demo(kind) => rsx! { DemoScene { key: "{kind.slug()}", context: context.clone(), kind } },
         }
     }
 }
@@ -347,5 +402,39 @@ fn ViewReadout(view: Signal<View>) -> Element {
             span { id: "view-scale", class: "font-mono text-white", "{view.scale:.2}" } ", "
             span { id: "view-spin", "{spin}" }
         }
+    }
+}
+
+/// The id of a scene's button.
+fn scene_button_id(kind: SceneKind) -> String {
+    match kind {
+        SceneKind::Viewer => "scene-viewer".to_string(),
+        SceneKind::Layers => "scene-layers".to_string(),
+        SceneKind::Shaders => "scene-shaders".to_string(),
+        SceneKind::Quad => "scene-quad".to_string(),
+        SceneKind::Sprites => "scene-sprites".to_string(),
+        SceneKind::LitShapes => "scene-lit".to_string(),
+        SceneKind::Skinned => "scene-skinned".to_string(),
+        SceneKind::Morph => "scene-morph".to_string(),
+        SceneKind::More => "scene-more".to_string(),
+        SceneKind::OnThePage => "scene-on-the-page".to_string(),
+        SceneKind::Demo(kind) => format!("scene-{}", kind.slug()),
+    }
+}
+
+/// Scrolls the element `container_id` (only it: never the page, and the keyboard focus stays
+/// where it is) so that its child `child_id` is wholly in view; nothing when it already is.
+fn keep_in_view(container_id: &str, child_id: &str) {
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else { return };
+    let (Some(container), Some(child)) = (document.get_element_by_id(container_id), document.get_element_by_id(child_id)) else { return };
+    let (outer, inner) = (container.get_bounding_client_rect(), child.get_bounding_client_rect());
+    let top = inner.top() - outer.top() + f64::from(container.scroll_top());
+    let bottom = top + inner.height();
+    let height = f64::from(container.client_height());
+    let scroll = f64::from(container.scroll_top());
+    if top < scroll {
+        container.set_scroll_top(top.floor() as i32);
+    } else if bottom > scroll + height {
+        container.set_scroll_top((bottom - height).ceil() as i32);
     }
 }

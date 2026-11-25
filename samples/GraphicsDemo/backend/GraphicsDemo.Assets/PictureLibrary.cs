@@ -1,13 +1,13 @@
 using System;
 using System.Threading;
-using GraphicsDemo.Assets.Conversion.Internal;
+using GraphicsDemo.Assets.Internal;
 
 namespace GraphicsDemo.Assets;
 
 /// <summary>
-/// The pictures of the "animation" application, DECODED here on the backend with CodeBrix.Imaging (the sample's
-/// rule: resources stay on the backend, and no image decoder runs in the browser) and served as pixels in the
-/// <see cref="PicturePixels"/> form. The decoded picture is an embedded file this assembly already carries for the
+/// The pictures of the "animation" application: one DECODED here on the backend with CodeBrix.Imaging and served as
+/// pixels in the <see cref="PicturePixels"/> form (the "images" scene shows it beside the same file decoded by the
+/// animation crate in the browser), the same picture as its PNG file and as a JPEG file made from it here, and one made in code. The decoded picture is an embedded file this assembly already carries for the
 /// models: the Kenney "Cube Pets" pack's colour map (CC0; see THIRD-PARTY-NOTICES.txt at the sample's root), so no
 /// new asset comes with it. The Lottie badge is made in code here (the picture of the "lottie-images" scene's image
 /// layer). Made on first use and kept. Every member is safe to call from several threads.
@@ -32,22 +32,37 @@ public sealed class PictureLibrary
     /// <summary>The content type of a PNG file.</summary>
     public const string PngContentType = "image/png";
 
+    /// <summary>The content type of a JPEG file.</summary>
+    public const string JpegContentType = "image/jpeg";
+
+    /// <summary>The quality the colour map's JPEG file is encoded at.</summary>
+    public const int JpegQuality = 90;
+
     private readonly Lazy<PicturePixels> cubePetsColormap;
     private readonly Lazy<PngFile> cubePetsColormapPng;
+    private readonly Lazy<JpegFile> cubePetsColormapJpeg;
     private readonly Lazy<PicturePixels> lottieBadge = new Lazy<PicturePixels>(MakeLottieBadge, LazyThreadSafetyMode.ExecutionAndPublication);
 
     /// <summary>Creates the library (nothing is decoded yet).</summary>
-    /// <param name="models">The model library whose embedded files hold the pictures.</param>
+    /// <param name="models">The model library whose embedded files hold the pictures (the colour map is one of a model pack's files).</param>
     /// <exception cref="ArgumentNullException">An argument is null.</exception>
     public PictureLibrary(ModelLibrary models)
     {
         ArgumentNullException.ThrowIfNull(models);
         cubePetsColormap = new Lazy<PicturePixels>(() => Decode(models, CubePetsColormapName, CubePetsColormapPath), LazyThreadSafetyMode.ExecutionAndPublication);
+        cubePetsColormapJpeg = new Lazy<JpegFile>(() => new JpegFile(PictureDecoder.ToJpeg(models.ReadResource(CubePetsColormapPath) ?? throw new InvalidOperationException("The embedded picture '" + CubePetsColormapPath + "' is missing; check the EmbeddedResource items of GraphicsDemo.Assets.csproj."), CubePetsColormapPath, JpegQuality)), LazyThreadSafetyMode.ExecutionAndPublication);
         cubePetsColormapPng = new Lazy<PngFile>(() => new PngFile(models.ReadResource(CubePetsColormapPath) ?? throw new InvalidOperationException("The embedded picture '" + CubePetsColormapPath + "' is missing; check the EmbeddedResource items of GraphicsDemo.Assets.csproj.")), LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     /// <summary>The Cube Pets colour map as the PNG FILE itself (not decoded here: the frontend's crate reads PNG files).</summary>
     public PngFile CubePetsColormapPng => cubePetsColormapPng.Value;
+
+    /// <summary>
+    /// The Cube Pets colour map as a JPEG FILE (baseline, quality <see cref="JpegQuality"/>), encoded here from the PNG on
+    /// first use: the frontend's crate reads it with <c>ImageSource::from_jpeg</c>. Made from the same CC0 picture, so
+    /// no new asset comes with it.
+    /// </summary>
+    public JpegFile CubePetsColormapJpeg => cubePetsColormapJpeg.Value;
 
     /// <summary>The Cube Pets colour map (512 x 512), decoded.</summary>
     public PicturePixels CubePetsColormap => cubePetsColormap.Value;
@@ -88,7 +103,7 @@ public sealed class PictureLibrary
     private static PicturePixels Decode(ModelLibrary models, string name, string path)
     {
         byte[] encoded = models.ReadResource(path) ?? throw new InvalidOperationException("The embedded picture '" + path + "' is missing; check the EmbeddedResource items of GraphicsDemo.Assets.csproj.");
-        byte[] rgba = TextureDecoder.Decode(encoded, path, out int width, out int height);
+        byte[] rgba = PictureDecoder.Decode(encoded, path, out int width, out int height);
         return new PicturePixels(name, rgba, width, height);
     }
 }

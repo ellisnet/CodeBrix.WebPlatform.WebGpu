@@ -33,7 +33,12 @@ internal static class Cargo
 
     /// <summary>Runs cargo in a folder, with its build output in <paramref name="targetDirectory"/>.</summary>
     /// <returns>The exit code and what cargo wrote to its standard output and its standard error.</returns>
-    public static async Task<(int ExitCode, string Output, string Errors)> RunAsync(string workingDirectory, string targetDirectory, IEnumerable<string> arguments, CancellationToken cancellationToken)
+    public static Task<(int ExitCode, string Output, string Errors)> RunAsync(string workingDirectory, string targetDirectory, IEnumerable<string> arguments, CancellationToken cancellationToken)
+        => RunAsync(workingDirectory, targetDirectory, arguments, null, cancellationToken);
+
+    /// <summary>Runs cargo in a folder, with its build output in <paramref name="targetDirectory"/> and extra environment variables.</summary>
+    /// <returns>The exit code and what cargo wrote to its standard output and its standard error.</returns>
+    public static async Task<(int ExitCode, string Output, string Errors)> RunAsync(string workingDirectory, string targetDirectory, IEnumerable<string> arguments, IReadOnlyDictionary<string, string> environment, CancellationToken cancellationToken)
     {
         var start = new ProcessStartInfo("cargo")
         {
@@ -49,6 +54,14 @@ internal static class Cargo
 
         start.Environment["CARGO_TARGET_DIR"] = targetDirectory;
         start.Environment["CARGO_TERM_COLOR"] = "never";
+        if (environment != null)
+        {
+            foreach (var variable in environment)
+            {
+                start.Environment[variable.Key] = variable.Value;
+            }
+        }
+
         using var process = Process.Start(start);
         var output = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var errors = process.StandardError.ReadToEndAsync(cancellationToken);
