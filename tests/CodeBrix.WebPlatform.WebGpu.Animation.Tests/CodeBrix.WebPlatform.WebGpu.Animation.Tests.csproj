@@ -32,7 +32,7 @@
     dependency rule, which the gate and AnimationPackageDependenciesTests check).
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.329.452" />
+    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.332.326" />
     <ProjectReference Include="..\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend.csproj" />
     <ProjectReference Include="..\..\src\CodeBrix.WebPlatform.WebGpu.Graphics\CodeBrix.WebPlatform.WebGpu.Graphics.csproj" />
   </ItemGroup>

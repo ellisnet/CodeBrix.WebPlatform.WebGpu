@@ -86,7 +86,7 @@
     other.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.WebPlatform.Core.ApacheLicenseForever" Version="[1.0.329.452]" />
+    <PackageReference Include="CodeBrix.WebPlatform.Core.ApacheLicenseForever" Version="[1.0.332.326]" />
     <ProjectReference Include="..\CodeBrix.WebPlatform.WebGpu\CodeBrix.WebPlatform.WebGpu.csproj" />
   </ItemGroup>
 

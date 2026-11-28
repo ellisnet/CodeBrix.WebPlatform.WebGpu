@@ -37,7 +37,7 @@
     packages.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.329.452" />
+    <PackageReference Include="CodeBrix.WebPlatform.FrontendBuilder.ApacheLicenseForever" Version="1.0.332.326" />
     <ProjectReference Include="..\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend\CodeBrix.WebPlatform.WebGpu.Tests.SampleBackend.csproj" />
   </ItemGroup>
 
