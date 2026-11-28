@@ -11,8 +11,8 @@ mod particle_system;
 
 pub use bloom_renderer::{BloomRenderer, BloomSettings};
 pub use glow_drawing::GlowBlend;
-pub use glow_layer::{Glow, GlowLayer, GlowPulse};
-pub use particle_system::{EmitterShape, ParticleEmitter, ParticleSettings, ParticleSystem, ParticleSystemOptions};
+pub use glow_layer::{Glow, GlowFacing, GlowLayer, GlowNearFade, GlowPulse};
+pub use particle_system::{EmitterShape, ParticleEmitter, ParticleSettings, ParticleStretch, ParticleSystem, ParticleSystemOptions};
 
 use crate::presentation::RenderTargetView;
 

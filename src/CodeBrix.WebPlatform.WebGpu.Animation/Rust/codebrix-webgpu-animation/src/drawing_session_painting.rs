@@ -55,14 +55,14 @@ impl DrawingSession {
     }
 
     // The hard-edged mask of some layers into a plane (C#'s RenderToMaskCore, HardEdged branch):
-    // visible layers only, every element's areas at the session's time, 1 where covered.
+    // visible layers only (inside their time windows), every element's areas at the session's time, 1 where covered.
     fn hard_edged_mask_into(&self, layers: &[&DrawingLayer], mask: &mut DrawingPlane) -> Result<(), String> {
         let (width, height) = mask.size();
         let data = mask.data_mut();
         data.fill(0.0);
         let mut areas: Vec<Area> = Vec::new();
         for layer in layers {
-            if !layer.is_visible() {
+            if !layer.is_visible_at(self.time()) {
                 continue;
             }
             let parent = coverage_collector::layer_matrix(self, layer, width, height);
@@ -91,7 +91,7 @@ impl DrawingSession {
     }
 
     /// Exports the mask of ONE layer (C# `ExportMask(DrawingLayer, Size, MaskMeaning)`; see
-    /// [`DrawingSession::export_mask`]). A hidden layer gives an empty mask, as in C#.
+    /// [`DrawingSession::export_mask`]). A hidden layer gives an empty mask, as in C# (so does a layer outside its time window).
     pub fn export_layer_mask(&self, layer: &str, output_size: (u32, u32), meaning: MaskMeaning) -> Result<DrawingPlane, String> {
         check_size(output_size)?;
         check_meaning(meaning)?;
@@ -124,7 +124,7 @@ impl DrawingSession {
         let mut areas: Vec<Area> = Vec::new();
         let w = width as usize;
         for layer in layers {
-            if !layer.is_visible() {
+            if !layer.is_visible_at(self.time()) {
                 continue;
             }
             let parent = coverage_collector::layer_matrix(self, layer, width, height);

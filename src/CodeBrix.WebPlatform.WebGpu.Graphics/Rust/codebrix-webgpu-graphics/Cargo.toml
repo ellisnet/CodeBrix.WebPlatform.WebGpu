@@ -12,7 +12,7 @@
 # a name and version from a vendor folder as unchanging.
 [package]
 name = "codebrix-webgpu-graphics"
-version = "1.8.0"
+version = "1.9.0"
 edition = "2021"
 publish = false
 description = "2D and 3D graphics through WebGPU for CodeBrix.WebPlatform frontends: the GraphicsContext, frames, resources, pipelines, sprites, lit meshes, PBR models with skinning, morph targets and animation playback, glTF loading, image-based lighting and tone mapping, animated textures, render bundles, indirect draws, compute, queries and texture readback of CodeBrix.WebGpu.Graphics, with culling, level of detail, point and spot lights, sun and spot shadows, multisampling, bloom, a glow layer, GPU particles, frame timings and water (a simulated wave field, open-water waves and a water surface), as a layer on the codebrix-webgpu canvas host."
@@ -21,7 +21,7 @@ repository = "https://github.com/ellisnet/CodeBrix.WebPlatform.WebGpu"
 
 [dependencies]
 # The context, the canvas host, its layers and its one clock; and through it wgpu and glam.
-codebrix-webgpu = "=1.3.0"
+codebrix-webgpu = "=1.4.0"
 # WebGPU in the browser only: the WebGpu package's features, no WebGL, no native backend.
 wgpu = { version = "=30.0.2", default-features = false, features = ["std", "webgpu", "wgsl"] }
 # The maths types (System.Numerics' counterparts), under glam's own names.

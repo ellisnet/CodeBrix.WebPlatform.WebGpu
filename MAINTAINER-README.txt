@@ -343,6 +343,18 @@ package's buildTransitive targets.
 
 Building the libraries does NOT compile any Rust.
 
+A CHANGED CRATE AT AN UNCHANGED VERSION IS NOT RECOMPILED by a frontend's
+cargo target folder that already built it. Every entry of the archives
+carries the one fixed time stamp of WriteWebGpuCratesArchive (1 January
+1980), so a changed file does not look newer. Cargo also takes a vendored
+crate as fixed by its name and version: it recompiles it for a new version,
+not for changed source. So after changing codebrix-webgpu,
+codebrix-webgpu-graphics or codebrix-webgpu-animation without raising its
+version (a preview, a local check), delete that crate's compiled files from
+the frontend's target folder (the codebrix-webgpu* entries under
+target/<profile>/deps, .fingerprint and build), or the whole target folder,
+before building the frontend again.
+
 
 TESTING
 =======
@@ -404,7 +416,9 @@ collection (MaterializedFrontend); the tests then check:
     (none of glam's other optional dependencies is needed - or carried);
   - `cargo check --offline --target wasm32-unknown-unknown` compiles the
     whole test frontend (Materialize/frontend-main.rs, which uses the public
-    API of codebrix-webgpu: two layers, one clock, a named point, the maths)
+    API of codebrix-webgpu: two layers, one clock, a named point, the maths,
+    a layer's time scale, the tap count, a canvas that idles while paused, a
+    decorative canvas, the offscreen target)
     with no warning from the crate or the frontend;
   - `cargo test --offline` runs the crate's own unit tests ON THE HOST, from
     a copy of the codebrix-webgpu folder of the materialized vendor folder
@@ -455,8 +469,13 @@ textures from PNG and JPEG bytes put into a loaded model's materials, the
 model facts, the per-instance look and node visibility, culling and its
 statistics, local lights and shadows, the frame timer, the glow layer,
 bloom and particles, multisampling on a canvas frame target and an HDR
-target, level of detail, the wave field and open-water waves, and the water
-surface)
+target, level of detail, the wave field and open-water waves, the water
+surface, frames on a target of their own without a canvas -
+begin_frame_on and begin_frame_with_encoder_on -, node extras, the tone
+mapper in a viewport, the per-half draw counts, animated model textures,
+oriented and near-fading glows, several emitters, lit and stretched
+particles, the sun's cascades, and a masked, flowing water surface with
+the reflection environment and the cascades' numbers)
 with no warning from the crate or the frontend, and `cargo test --offline` runs the graphics crate's unit
 tests on the host from the copy in the materialized vendor folder. The same
 skip rule as WebGpu.Tests. A new feature of the crate gets its block in
@@ -535,7 +554,13 @@ fixture because the bundle registry is process-wide:
     and colour, picked colours from a picture, a picture target listed below
     its reader and an application texture, the surface finish, checkpoints,
     a stroke-level transition, the ripple field and caustics, and refraction
-    and reflection with every water source) with no warning from the crate or the frontend, and
+    and reflection with every water source, the OffscreenRenderer drawing
+    a session into a texture of the application's, the document reports, a
+    bool function binding, layer time windows and blend modes, element blend
+    modes, the edge detail options, CSS-pixel strokes and the line look in
+    them, the cull rectangle and the culled wipe, water that follows its
+    layer, point reduction, per-stroke own weights, the GPU timing and a
+    live picture) with no warning from the crate or the frontend, and
     `cargo test --offline` runs the crate's unit tests on the host from the
     copy in the materialized vendor folder;
   - then with GraphicsCrates.Register() as well: the three bundles are
@@ -554,7 +579,15 @@ WHAT THE UNIT TESTS OF codebrix-webgpu COVER, AND WHAT CANNOT BE TESTED ON THE
 HOST. The crate's `#[cfg(test)]` tests (run by the materialize test above)
 cover its CPU-only logic: the clock (pause, resume, speed, seek, a seek
 before the first frame on a running and on a paused clock, the same
-tick for every canvas in one animation frame), the IMAGE DECODERS (PNG: every
+tick for every canvas in one animation frame, the change count that wakes
+an idling canvas), a layer's OWN TIMELINE (its time scale: identical to the
+clock at 1, scaled from 0 before its first frame, no jump when the scale
+changes, a seek's and a resume's delta 0) and its keeping and forgetting by
+the layer list, WHEN AN IDLING CANVAS DRAWS (idle.rs: the first frame, a size
+or ratio change, a layer change or redraw request, a clock change, a request,
+a frame not drawn, a loop held back), THE TAP COUNT (taps.rs: the interval,
+the distance per kind of pointer, button and kind, a pinch's second finger,
+the options), CanvasTarget::offscreen, the IMAGE DECODERS (PNG: every
 colour type and bit depth, palette and tRNS, 16-bit keeping the high byte,
 an APNG's default image, the size limit; JPEG: baseline, progressive,
 greyscale, 4:2:0 at an odd size, and every refusal - CMYK, YCCK, 12-bit,
@@ -581,7 +614,9 @@ no requestAnimationFrame, no adapter. Those parts are proved by the
 GraphicsDemo sample in headless Chrome (its MAINTAINER-README.txt says how).
 
 WHAT THE UNIT TESTS OF codebrix-webgpu-graphics COVER: Color4 (hex, bytes,
-packing, lerp), the error and exception messages, the C# defaults of every
+packing, lerp), the error and exception messages, a pass's target (the one
+given, else the frame's own - begin_frame_on's or a canvas frame's - and the
+refusal without either), the C# defaults of every
 options struct, the buffer write checks (alignment, overrun, padding), the
 factories' usage rules, texture formats, the full mip chain length and the CPU
 box filter, sampler presets, binding-layout entries and their `with_*`
@@ -653,7 +688,9 @@ chain and bright pass, the particles' spawning and stepping, mirrored in
 effects/particle_math.rs), and WATER (water/tests.rs and
 water/tests_surface.rs: the wave field's CPU twin, its stability rule,
 drops, wakes, rain, masks and stirring, the open-water waves, the water
-surface's uniform record and its CPU twins). What needs a
+surface's uniform record and its CPU twins; water/tests_shape_flow.rs: the
+mask, the flow, the reflection environment and the cascades on the water).
+What needs a
 browser - creating anything on a device, compiling, drawing, readback - is
 proved in the GraphicsDemo sample's scenes in headless Chrome ("Shaders",
 "Textured quad", the Viewer and the feature demos; its MAINTAINER-README.txt
@@ -1124,11 +1161,14 @@ not run cargo in its folder). In addition:
     CPU twin WaveCore shared by WaveField and the public CpuWaveField,
     open-water waves, the water surface, its scene capture) are new files
     with OUR OWN shaders (glow, bloom, particles, wave_field,
-    water_surface, water_capture .wgsl, listed by EffectShaders::all() and
+    water_surface, water_capture .wgsl - the surface's sun map declared by
+    water_sun_map.wgsl or, for cascades, water_sun_cascades.wgsl, joined to
+    it by concat! -, listed by EffectShaders::all() and
     WaterShaders::all(), not by BuiltInShaderSource::all): THE WGSL COPY
     rules below do not apply to them. Each shader has a host-tested twin in
     Rust that must stay in step with it: particles.wgsl with
-    effects/particle_math.rs, wave_field.wgsl with water/wave_math.rs,
+    effects/particle_math.rs, glow.wgsl with effects/glow_drawing.rs,
+    wave_field.wgsl with water/wave_math.rs,
     water_surface.wgsl with water/water_math.rs and water/gerstner_math.rs
     (the uniform record's offsets are asserted against the WGSL struct's
     field order). The wave field damps the VELOCITY, not the height (a
@@ -1181,7 +1221,8 @@ not run cargo in its folder). In addition:
     ToneMapper, the internal EnvironmentBaker, GraphicsContext.Environments),
     of its GPU MipmapGenerator and GenerateMipmaps, and of
     HeadlessRenderTarget - same uniform layouts (BakeUniforms 80 bytes in
-    256-byte slots, SkyUniforms 112, SkyboxUniforms 96, ToneMapUniforms 32),
+    256-byte slots, SkyUniforms 112, SkyboxUniforms 96, ToneMapUniforms 32 -
+    48 here: the viewport row of apply_in_pass is ours),
     same passes in the same order, same option clamping. Differences: no
     Parallel.For (the CPU halving of over-wide panoramas and the half-float
     conversion run on one thread; the half conversion is our own small
@@ -1410,7 +1451,8 @@ tests; do not run cargo in its folder). In addition:
     shader's ripple loop transcribes -; tests.rs, tests_water_gpu.rs),
     src/images/ (ImageSource, SpriteSheet, from_png and from_jpeg -
     image_source_png.rs and image_source_jpeg.rs, thin calls to
-    codebrix-webgpu's decode_png / decode_jpeg - and the picture-pixels form),
+    codebrix-webgpu's decode_png / decode_jpeg - the picture-pixels form,
+    and live_picture.rs - LivePicture and its upload bookkeeping),
     src/effects/ (DrawingMask, DrawingEffects, DrawingFrameOperations, and
     surface_finish.rs: SurfaceFinish, CanvasWeave, the finish's pass data
     and CPU mirrors of the weave and the shading),
@@ -1429,12 +1471,17 @@ tests; do not run cargo in its folder). In addition:
     WipeEdge -, and their tests drawing_session_looks_tests.rs),
     and src/rendering/ (CanvasCalibration;
     VectorScene, the low-level door the session records into; AnimationLayer
-    with its control handle and RenderStats; picture_target.rs -
+    with its control handle and RenderStats; offscreen_renderer.rs -
+    OffscreenRenderer, the renderer without a canvas: core/mod.rs's
+    FrameOutput is what a draw needs of a frame, given by a canvas frame or by
+    the application's texture; picture_target.rs -
     PictureTarget, the canvas frame number every AnimationLayer publishes and
     the late-read rule; DebugOverlay; INTERNAL: scene_look.rs - where the
     looks are applied as the session records -, cpu_clock.rs - the one
     measuring clock) with the INTERNAL renderer core in src/rendering/core/
-    (texture_ledger.rs among it: what is uploaded and the residency sweep).
+    (texture_ledger.rs among it: what is uploaded and the residency sweep;
+    gpu_timer.rs: the opt-in pass timestamps behind RenderStats::gpu_ms;
+    target_window.rs: the content-sized targets' window and rule).
 
 TEXT BLOCKS, PATH QUERIES, COMBINED BINDINGS, FORMATIONS AND SAFE AREAS HAVE
 TWO HALVES: their CALCULATION (the layout engine, reveals, staggers, captions,
@@ -1452,7 +1499,8 @@ numbers.
     offscreen layer); an outlined or merged block draws its clusters' outlines
     as paths (OUTSIDE placement: the stroke in a layer of its own, the glyphs
     cut out destination-out, then the fill). merge_overlaps keeps each
-    cluster's simplified outline in a cache shared by clones and pieces.
+    cluster's simplified outline in a cache shared by clones and pieces,
+    made when merging is switched on, never while drawing.
   - CAPTIONS: draw_captions is an AnimatedShape rebuilt from the presenter's
     placed captions at each time (the presenter caches its layouts and
     placements). Against the frame by default; the safe-area guide is the
@@ -1608,9 +1656,12 @@ one copy, so the paint, the strokes and the water draw the same noise.
     from the transform's scale (rounded up to a quarter octave) and cached
     under the elements' hash, the stroke style and that scale step, so a
     shape that moves, turns or scales a little reuses its fan. A draw that
-    misses two frames running (a morph, a trim) is no longer stored. A cached
-    fan unused for 90 frames is evicted, or at once when the cache holds
-    three times one frame's use. A FIXED-WIDTH stroke
+    misses two frames running (a morph, a trim) is no longer stored until
+    its key repeats at that draw's position (geometry that has settled is
+    stored again). Fans are kept within a byte budget (32 MiB,
+    CACHE_BUDGET_BYTES in build.rs), the least recently used dropped first,
+    never one used in the frame just built; nothing is dropped for age
+    alone. A FIXED-WIDTH stroke
     (VectorScene::stroke_fixed_width) is expanded in the reference space (the
     session's calibration x camera), so its fan is keyed by the shape AS
     TRANSFORMED: a still element reuses it, a moving one is stroked every
@@ -1621,8 +1672,10 @@ one copy, so the paint, the strokes and the water draw the same noise.
     offscreen target), unless the group holds a non-normal group (an
     isolation pre-pass keeps those offscreen); a group of one draw puts its
     alpha into the paint; any other group is drawn into an offscreen 4x
-    target (canvas-sized, one per nesting level, made on first use and again
-    after a resize, cleared only where used; groups nest 3 deep, deeper ones
+    target (canvas-sized, one per nesting level - the target window's size
+    and place when content-sized targets are opted in, rendering/core/
+    target_window.rs -, made on first use and again after a resize or a
+    change of the window's size, cleared only where used; groups nest 3 deep, deeper ones
     are drawn as clips and counted "unsupported" in RenderStats) and
     composited per pixel (the mean of the 4 samples): fixed-function
     blending for the compose modes, and for a MIX mode a copy of the whole
@@ -1644,7 +1697,24 @@ one copy, so the paint, the strokes and the water draw the same noise.
     sampling, pad / repeat / reflect per axis.
   - THE FINAL STEP. The main 4x target is averaged onto the host's view over
     the drawn area. The layer never clears the view and draws over what the
-    layers below drew. Every pipeline is made once per target format
+    layers below drew.
+  - THE TARGET WINDOW (rendering/core/target_window.rs, with the
+    builder-level tests in tests_target_window.rs; opt-in through
+    set_content_sized_targets, off by default): every internal target - the
+    level targets and their stencils, the mix backdrop, the effect textures,
+    the height record, the checkpoints - is the window's size; off, the
+    window is the canvas every frame and every mapping reduces bit for bit
+    to the canvas one. The view uniform is 32 bytes: the window's size and
+    origin, then the output's size; vs_main / vs_particle / vs_stroke map
+    through to_clip, fs_paint reads canvas_xy, and the final passes (the
+    canvas view, the readback, a picture target) draw through vs_final in
+    the output's coordinates. The window's origin is a multiple of 16 (the
+    coarsest effect level), so effect texels stay aligned. The grow, slide
+    and shrink rule is WindowRule::next, host-tested. These shader changes
+    were validated with naga and drawn natively on Vulkan in both modes, but
+    like every shader change they must still be proved in the browsers that
+    matter (EVERY SHADER CHANGE IS PROVED IN A BROWSER above), in the
+    default mode first, together with the checkpoint cache's proof. Every pipeline is made once per target format
     (CanvasRenderer::prepare).
   - PICTURES. An ImageShape or SpriteShape is a rectangle filled with an image
     paint placed by its source rectangle (pad extend), with an optional TINT
@@ -1654,7 +1724,8 @@ one copy, so the paint, the strokes and the water draw the same noise.
   - THE RESIDENCY SWEEP (texture_ledger.rs, RESIDENCY; the decision is the
     host-tested sweep_choice). Pictures (ownership maps included), stroke
     sets' record buffers (and transitions'), and brush tips are swept EVERY
-    frame by one policy: anything not drawn for more than 120 frames goes,
+    frame by one policy (a live picture's texture is not: it belongs to its
+    LivePicture): anything not drawn for more than 120 frames goes,
     and while what is held but not drawn this frame weighs more than 16 MiB
     (per kind), the least recently drawn of the entries not drawn in the
     last two frames go first. So a scene that makes a new 1 MiB picture
@@ -1703,7 +1774,8 @@ one copy, so the paint, the strokes and the water draw the same noise.
     the set whose every stroke has ended; restoring it and drawing the
     strokes after it repeats exactly the blends of the whole draw. The KEY,
     worked out after the build, covers the set, tips, colour source, the
-    block apart from the time, the target level, the canvas size and
+    block apart from the time, the target level, the canvas size, the
+    target window's origin and size (the canvas itself by default) and
     everything encoded before the set in the frame (a picture target's or
     an application texture's water makes it unique to the frame). The rule
     (pixel for pixel the same frame) was proved in Chrome at top level, in

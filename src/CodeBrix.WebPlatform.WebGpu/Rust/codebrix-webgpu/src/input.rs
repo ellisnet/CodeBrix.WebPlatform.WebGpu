@@ -13,7 +13,8 @@ use dioxus::html::Modifiers;
 const PIXELS_PER_LINE: f64 = 16.0;
 const PIXELS_PER_PAGE: f64 = 400.0;
 
-/// One input event on the canvas.
+/// One input event on the canvas. Match the pointer events with `..`: they gain fields as the
+/// crate grows.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CanvasInput {
     /// A pointer (mouse button, pen or finger) went down on the canvas. The canvas captures the
@@ -35,6 +36,11 @@ pub enum CanvasInput {
         kind: PointerKind,
         /// The modifier keys held. Not in C#.
         modifiers: ModifierKeys,
+        /// The press's place in a series of quick presses at one place: 1 for a single press,
+        /// 2 for the second press of a double-click or a double tap, 3 for a triple (the canvas's
+        /// `tap_options` say how quick and how near, [`TapOptions`](crate::TapOptions)). Not in
+        /// C#.
+        tap_count: u32,
     },
     /// A pointer moved over the canvas (or anywhere, while captured).
     PointerMove {

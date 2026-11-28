@@ -14,7 +14,11 @@ use crate::RectangleF;
 /// [`WaterReflection`](crate::water::WaterReflection) is seen through (no C# equivalent). Its
 /// coordinates are the layer's DRAWING space: calibrated units under the camera at the layer's
 /// parallax (the layer's own transform does not move the water), so one field can serve a
-/// layer's refraction and another layer's reflection and both line up.
+/// layer's refraction and another layer's reflection and both line up. Opt in with
+/// `follows_layer` ([`WaterRefraction::follows_layer`](crate::water::WaterRefraction::follows_layer),
+/// [`WaterReflection::follows_layer`](crate::water::WaterReflection::follows_layer)) to place it
+/// in the layer's own space instead (its transform applied too): water pinned to a layer that
+/// scrolls with it.
 ///
 /// EXACT IN TIME with `Ripples`, `Picture` and a `Target` drawn from the session time: seeking
 /// shows exactly the water playing shows. NOT with a `Texture` that the application changes over

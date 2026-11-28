@@ -60,6 +60,20 @@ pub struct CanvasTarget {
     pub alpha_mode: wgpu::CompositeAlphaMode,
 }
 
+impl CanvasTarget {
+    /// The target of a texture that is NOT a canvas surface (Not in C#): a texture the
+    /// application owns and draws into with no canvas - a program with no window, or a drawing
+    /// kept in a texture of its own. `format` is the format of the views drawn into (and of the
+    /// pipelines' colour target); `surface_format` is the same format (there is no surface: the
+    /// texture is stored in it), and `alpha_mode` is `PreMultiplied` (the texture keeps the alpha
+    /// the layers write, premultiplied, as a transparent canvas's does). The blending convention
+    /// is unchanged: linear premultiplied colour, passes that load the view - so the application
+    /// clears the texture first, as the host clears a canvas.
+    pub fn offscreen(format: wgpu::TextureFormat) -> CanvasTarget {
+        CanvasTarget { format, surface_format: format, alpha_mode: wgpu::CompositeAlphaMode::PreMultiplied }
+    }
+}
+
 /// One frame to draw, the same for every layer of the canvas. The host has already recorded the
 /// clear of the target (to the canvas's clear colour) into `encoder`; each layer, in order,
 /// records render passes that LOAD `view` and draw over what is there; then the host submits the
@@ -197,7 +211,7 @@ impl PartialEq for RendererHandle {
 
 #[cfg(test)]
 mod tests {
-    use super::{CanvasFrame, CanvasRenderer, RendererHandle, SurfaceFailure};
+    use super::{CanvasFrame, CanvasRenderer, CanvasTarget, RendererHandle, SurfaceFailure};
     use crate::input::CanvasInput;
 
     struct Counting {
@@ -227,6 +241,17 @@ mod tests {
         let nested = handle.with(|_| inner.with(|r| r.input(&CanvasInput::KeyDown { key: "a".to_string() })));
         assert_eq!(nested, Some(None));
         assert_eq!(handle.with(|r| r.input(&CanvasInput::KeyUp { key: "a".to_string() })), Some(()));
+    }
+
+    #[test]
+    fn an_offscreen_target_draws_in_its_format_and_keeps_premultiplied_alpha() {
+        //Act
+        let srgb = CanvasTarget::offscreen(wgpu::TextureFormat::Rgba8UnormSrgb);
+        let float = CanvasTarget::offscreen(wgpu::TextureFormat::Rgba16Float);
+        //Assert
+        assert_eq!(srgb, CanvasTarget { format: wgpu::TextureFormat::Rgba8UnormSrgb, surface_format: wgpu::TextureFormat::Rgba8UnormSrgb, alpha_mode: wgpu::CompositeAlphaMode::PreMultiplied });
+        assert_eq!((float.format, float.surface_format), (wgpu::TextureFormat::Rgba16Float, wgpu::TextureFormat::Rgba16Float));
+        assert_ne!(srgb, CanvasTarget::offscreen(wgpu::TextureFormat::Bgra8UnormSrgb), "a layer is prepared again for another format");
     }
 
     #[test]

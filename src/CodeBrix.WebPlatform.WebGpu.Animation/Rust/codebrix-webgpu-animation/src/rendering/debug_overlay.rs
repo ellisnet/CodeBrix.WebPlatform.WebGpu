@@ -1,6 +1,8 @@
 //! `DebugOverlay`: the timecode, frame number and active cues on a translucent plate in a
 //! corner of a preview (C# `DebugOverlay`) - and `DebugOverlayCorner`, where it sits.
 
+use std::cell::RefCell;
+
 use kurbo::{Affine, RoundedRect};
 use peniko::{Brush, Fill};
 
@@ -57,6 +59,24 @@ pub struct DebugOverlay {
     pub text_color: Color,
     /// The plate's colour, its alpha its opacity (default black at 150 of 255).
     pub plate_color: Color,
+    /// The lines shaped for the last read-out, kept so that a line is shaped again only when
+    /// its text (or the font, size or colour) changes.
+    shaped: RefCell<ShapedLines>,
+}
+
+/// The overlay's shaped lines and what they were shaped with.
+#[derive(Clone, Debug, Default)]
+struct ShapedLines {
+    /// The registry, its font count, the family, the size's bits and the colour.
+    with: Option<(FontRegistry, usize, Option<String>, u32, Color)>,
+    /// Each line's text and its shape.
+    lines: Vec<(String, TextShape)>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Lines the overlay has shaped (tests).
+    pub(crate) static OVERLAY_LINES_SHAPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl DebugOverlay {
@@ -79,6 +99,7 @@ impl DebugOverlay {
             text_size: 0.0,
             text_color: DebugOverlay::DEFAULT_TEXT_COLOR,
             plate_color: DebugOverlay::DEFAULT_PLATE_COLOR,
+            shaped: RefCell::new(ShapedLines::default()),
         }
     }
 
@@ -147,13 +168,31 @@ impl DebugOverlay {
         let line_height = size * 1.3;
         let pad = size * 0.45;
         let margin = size * 0.6;
-        let mut texts = Vec::with_capacity(lines.len());
+        // Each line shaped once: a line whose text is the same as last time's keeps its shape.
+        let mut shaped = self.shaped.borrow_mut();
+        let with = Some((fonts.clone(), fonts.count(), self.family_name.clone(), size.to_bits(), self.text_color));
+        if shaped.with != with {
+            shaped.with = with;
+            shaped.lines.clear();
+        }
+        let mut kept = std::mem::take(&mut shaped.lines);
         for line in &lines {
+            if let Some(i) = kept.iter().position(|(text, _)| text == line) {
+                let text = kept.swap_remove(i);
+                shaped.lines.push(text);
+                continue;
+            }
+            #[cfg(test)]
+            OVERLAY_LINES_SHAPED.with(|n| n.set(n.get() + 1));
             match TextShape::new(line, 0.0, 0.0, size, fonts, TextShapeOptions { color: Some(self.text_color), family_name: self.family_name.clone(), ..TextShapeOptions::default() }) {
-                Ok(text) => texts.push(text),
-                Err(_) => return,
+                Ok(text) => shaped.lines.push((line.clone(), text)),
+                Err(_) => {
+                    shaped.lines.clear();
+                    return;
+                }
             }
         }
+        let texts: Vec<&TextShape> = shaped.lines.iter().map(|(_, text)| text).collect();
         let text_width = texts.iter().map(|t| t.width()).fold(0.0f32, f32::max);
         let plate_width = text_width + 2.0 * pad;
         let plate_height = lines.len() as f32 * line_height + 2.0 * pad - (line_height - size);
@@ -169,5 +208,50 @@ impl DebugOverlay {
             let at = Affine::translate(((left + pad) as f64, (top + pad + size * 0.8 + i as f32 * line_height) as f64));
             text.encode(scene, at, self.text_color, 1.0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::animation::EasingKind;
+
+    /// The lines overlays have shaped on this thread.
+    fn shaped() -> usize {
+        OVERLAY_LINES_SHAPED.with(|n| n.get())
+    }
+
+    /// An overlay's read-out at a time: its elements and the geometry keys of its fills.
+    fn record(overlay: &DebugOverlay, time: f64) -> (Vec<kurbo::PathEl>, Vec<u64>) {
+        let mut scene = VectorScene::new();
+        overlay.render(&mut scene, 1280, 720, time);
+        (scene.elements.clone(), scene.fill_keys())
+    }
+
+    #[test]
+    fn the_debug_overlay_shapes_a_line_only_when_its_text_changes() {
+        let Some(fonts) = crate::text::layout_tests::fonts() else { return };
+        //Arrange
+        let mut timeline = AnimationTimeline::new(10.0, 30.0).unwrap();
+        timeline.add_cue("intro", 0.0, 2.0, EasingKind::Linear).unwrap();
+        let mut overlay = DebugOverlay::new(Some(fonts), Some(timeline));
+        overlay.show_cues = true;
+        let start = shaped();
+        //Act
+        let first = record(&overlay, 1.5);
+        let still: Vec<_> = (0..5).map(|_| record(&overlay, 1.5)).collect();
+        let after_still = shaped();
+        let moved = record(&overlay, 1.6);
+        let after_move = shaped();
+        let fresh = record(&DebugOverlay { shaped: RefCell::new(ShapedLines::default()), ..overlay.clone() }, 1.6);
+        overlay.set_text_size(30.0).unwrap();
+        let after_fresh = shaped();
+        record(&overlay, 1.6);
+        //Assert
+        assert_eq!(after_still - start, 3, "three lines, shaped once");
+        assert!(still.iter().all(|f| *f == first), "the same read-out every frame");
+        assert_eq!(after_move - after_still, 2, "the time and frame lines changed, the cue line did not");
+        assert_eq!(moved, fresh, "kept lines draw as freshly shaped ones");
+        assert_eq!(shaped() - after_fresh, 3, "a new size shapes every line again");
     }
 }

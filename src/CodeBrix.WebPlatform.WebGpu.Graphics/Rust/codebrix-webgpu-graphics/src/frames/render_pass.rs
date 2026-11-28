@@ -4,7 +4,7 @@
 //! arguments.
 
 use crate::bundles::GpuRenderBundle;
-use crate::common::Color4;
+use crate::common::{Color4, RectangleF};
 use crate::context::GraphicsException;
 use crate::frames::indirect_args::check_indirect;
 use crate::frames::pass_attachments::pipeline_mismatch;
@@ -81,11 +81,13 @@ pub struct RenderPass<'a> {
     pass: wgpu::RenderPass<'a>,
     target: RenderTargetView,
     frame_id: u64,
+    /// The last viewport set through [`RenderPass::set_viewport`] (Not in C#).
+    viewport: Option<(RectangleF, DepthRange)>,
 }
 
 impl<'a> RenderPass<'a> {
     pub(crate) fn new(pass: wgpu::RenderPass<'a>, target: RenderTargetView, frame_id: u64) -> RenderPass<'a> {
-        RenderPass { pass, target, frame_id }
+        RenderPass { pass, target, frame_id, viewport: None }
     }
 
     /// The number of the frame the pass belongs to (C#: `Frame.Id`): the batching renderers
@@ -170,9 +172,18 @@ impl<'a> RenderPass<'a> {
         self.pass.draw_indexed(first_index..first_index + index_count, options.base_vertex, first_instance..first_instance + options.instance_count);
     }
 
-    /// Sets the viewport (C#: `SetViewport`).
+    /// Sets the viewport (C#: `SetViewport`). The pass remembers it ([`RenderPass::viewport`]).
     pub fn set_viewport(&mut self, x: f32, y: f32, width: f32, height: f32, depth: DepthRange) {
         self.pass.set_viewport(x, y, width, height, depth.min_depth, depth.max_depth);
+        self.viewport = Some((RectangleF::new(x, y, width, height), depth));
+    }
+
+    /// The last viewport set with [`RenderPass::set_viewport`] - the rectangle in target pixels and
+    /// the depth range - or None when none was set, so the pass draws over its whole target (Not
+    /// in C#). A viewport set on [`RenderPass::handle`] directly is not seen here. The
+    /// [`ToneMapper`](crate::ToneMapper) maps its source onto this rectangle.
+    pub fn viewport(&self) -> Option<(RectangleF, DepthRange)> {
+        self.viewport
     }
 
     /// Sets the scissor rectangle (C#: `SetScissorRect`).

@@ -138,7 +138,52 @@ impl SessionWipe {
     /// the second render (so a multiplied session blends with what is below the wipe, as it does
     /// when drawn alone).
     pub fn render_sessions(&self, scene: &mut VectorScene, width: u32, height: u32, first: (&DrawingSession, &SessionRenderOptions), second: (&DrawingSession, &SessionRenderOptions)) {
+        self.render_sessions_with(scene, width, height, first, second, false);
+    }
+
+    /// [`render_sessions`](SessionWipe::render_sessions), each session CULLED to the part of the
+    /// canvas where it shows (Not in C#; opt in): its [`SessionRenderOptions::cull`] is set to
+    /// the box around where the wipe shows it (the soft band included) - within the cull it
+    /// already had, if any - so the elements of the side that is wiped away are not encoded.
+    /// The picture is the same as `render_sessions`'s; only the work differs.
+    pub fn render_sessions_culled(&self, scene: &mut VectorScene, width: u32, height: u32, first: (&DrawingSession, &SessionRenderOptions), second: (&DrawingSession, &SessionRenderOptions)) {
+        self.render_sessions_with(scene, width, height, first, second, true);
+    }
+
+    /// The boxes (canvas pixels) where the first and the second render show inside `area`.
+    fn side_areas(&self, area: Rect) -> (Rect, Rect) {
+        let p = self.fraction();
+        if p <= 0.0 {
+            return (area, Rect::ZERO);
+        }
+        if p >= 1.0 {
+            return (Rect::ZERO, area);
+        }
+        match self.edge_at(area) {
+            Edge::Line { angle, start, width, t_max, t_min, u_min, u_max } => {
+                let turn = Affine::rotate(angle);
+                let first = turn.transform_rect_bbox(Rect::new(start, u_min - 1.0, t_max + 1.0, u_max + 1.0));
+                let second = turn.transform_rect_bbox(Rect::new(t_min - 1.0, u_min - 1.0, start + width, u_max + 1.0));
+                (first.intersect(area), second.intersect(area))
+            }
+            Edge::Circle { center, inner, width } => {
+                let r = (inner + width).max(0.0);
+                (area, Rect::new(center.x - r, center.y - r, center.x + r, center.y + r).intersect(area))
+            }
+        }
+    }
+
+    fn render_sessions_with(&self, scene: &mut VectorScene, width: u32, height: u32, first: (&DrawingSession, &SessionRenderOptions), second: (&DrawingSession, &SessionRenderOptions), cull_sides: bool) {
         let area = RectangleF::new(0.0, 0.0, width as f32, height as f32);
+        let (first_cull, second_cull);
+        let (first, second) = if cull_sides {
+            let (a, b) = self.side_areas(Rect::new(0.0, 0.0, width as f64, height as f64));
+            first_cull = culled(first.1, a);
+            second_cull = culled(second.1, b);
+            ((first.0, &first_cull), (second.0, &second_cull))
+        } else {
+            (first, second)
+        };
         let (b, b_options) = second;
         let soft = self.fraction() > 0.0 && self.fraction() < 1.0 && self.softness > 0.0;
         // Through the wipe's group: the blend and opacity move onto it.
@@ -204,6 +249,16 @@ impl SessionWipe {
         scene.pop_layer();
         scene.pop_layer();
     }
+}
+
+/// Render options culled to `side` (canvas pixels), within the cull they already have.
+fn culled(options: &SessionRenderOptions, side: Rect) -> SessionRenderOptions {
+    let side = match options.cull {
+        Some(c) => side.intersect(Rect::new(c.x as f64, c.y as f64, c.right() as f64, c.bottom() as f64)),
+        None => side,
+    };
+    let side = if side.width() > 0.0 && side.height() > 0.0 { side } else { Rect::ZERO };
+    SessionRenderOptions { cull: Some(RectangleF::new(side.x0 as f32, side.y0 as f32, side.width() as f32, side.height() as f32)), ..options.clone() }
 }
 
 /// The band's ramp: white, fully opaque where the second render shows, smoothly to transparent

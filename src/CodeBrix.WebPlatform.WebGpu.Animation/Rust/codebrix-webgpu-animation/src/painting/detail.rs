@@ -5,6 +5,27 @@
 use crate::geometry::RectangleF;
 use crate::planes::{DrawingPlane, DrawingPlaneImage};
 
+/// The options of [`DetailMap::from_picture_edges_with`] (no C# equivalent).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EdgeDetailOptions {
+    /// How far the edge strength is blurred, picture pixels (a Gaussian sigma; 0 = none, the
+    /// default) - the `smoothing` of [`DetailMap::from_picture_edges`].
+    pub smoothing: f32,
+    /// The share of the picture's edges at or below the strength that maps to full detail, 0
+    /// (exclusive) to 1 - counting ONLY the pixels of edge strength above 0, after the smoothing
+    /// (flat pixels are not edges and are left out of the count): every
+    /// stronger pixel is clamped to 1. 1 (the default) maps only the largest edge to 1 - exactly
+    /// [`DetailMap::from_picture_edges`]; 0.9 maps the strongest tenth of the edges to full
+    /// detail, so mid-strength edges come out stronger.
+    pub full_detail_percentile: f32,
+}
+
+impl Default for EdgeDetailOptions {
+    fn default() -> EdgeDetailOptions {
+        EdgeDetailOptions { smoothing: 0.0, full_detail_percentile: 1.0 }
+    }
+}
+
 /// Detail maps (no C# equivalent): a detail map is a [`DrawingPlane`] of 0..1 (1 = the most
 /// detail) laid over a rectangle of calibrated units. Make one from a picture's edges, from a
 /// layer's mask (`session.export_layer_mask(..)` blurred: a face painted carefully), or combine
@@ -18,8 +39,25 @@ impl DetailMap {
     /// `smoothing` pixels (a Gaussian sigma; 0 = none), divided by its largest value (a flat
     /// picture gives 0 everywhere). Detail where forms change. The error says what is wrong.
     pub fn from_picture_edges(picture: &DrawingPlaneImage, smoothing: f32) -> Result<DrawingPlane, String> {
+        DetailMap::from_picture_edges_with(picture, &EdgeDetailOptions { smoothing, full_detail_percentile: 1.0 })
+    }
+
+    /// The edge strength of a picture, 0..1, as [`from_picture_edges`](DetailMap::from_picture_edges)
+    /// makes it, with options (no C# equivalent): divided by the strength at a PERCENTILE of the
+    /// picture's edges instead of by the largest, every value above it clamped to 1 - so a
+    /// picture whose strongest edge stands far above the rest still gets detail along its
+    /// mid-strength edges. The percentile counts ONLY the pixels whose edge strength is above 0
+    /// (after the smoothing): flat pixels are not edges, so a mostly flat picture still gets a
+    /// usable threshold (counting them would put it at 0). A full-detail percentile of 1 (the
+    /// default) is exactly
+    /// `from_picture_edges`. The error says which option is unusable.
+    pub fn from_picture_edges_with(picture: &DrawingPlaneImage, options: &EdgeDetailOptions) -> Result<DrawingPlane, String> {
+        let (smoothing, percentile) = (options.smoothing, options.full_detail_percentile);
         if !smoothing.is_finite() || smoothing < 0.0 {
             return Err("The smoothing must be a finite number of pixels, 0 or more.".to_string());
+        }
+        if !(percentile > 0.0 && percentile <= 1.0) {
+            return Err("The full-detail percentile must be above 0 and at most 1 (1 maps only the largest edge to full detail; 0.9 the strongest tenth of the edges).".to_string());
         }
         let luminance = luminance_plane(picture)?;
         let (gx, gy) = sobel(&luminance);
@@ -28,9 +66,9 @@ impl DetailMap {
         if smoothing > 0.0 {
             plane.gaussian_blur(smoothing)?;
         }
-        let largest = plane.data().iter().fold(0.0f32, |m, v| m.max(*v));
-        if largest > 0.0 {
-            plane.multiply(1.0 / largest);
+        let full = if percentile >= 1.0 { plane.data().iter().fold(0.0f32, |m, v| m.max(*v)) } else { edge_percentile(plane.data(), percentile) };
+        if full > 0.0 {
+            plane.multiply(1.0 / full);
             plane.clamp(0.0, 1.0)?;
         } else {
             plane.fill(0.0);
@@ -47,6 +85,18 @@ impl DetailMap {
         }
         bilinear(plane.data(), plane.width() as usize, plane.height() as usize, destination, x, y)
     }
+}
+
+/// The edge strength at a percentile (0 exclusive to 1) of the values above 0, nearest rank: the
+/// smallest value at least that share of them is at or below. 0 when no value is above 0.
+pub(crate) fn edge_percentile(values: &[f32], percentile: f32) -> f32 {
+    let mut edges: Vec<f32> = values.iter().copied().filter(|v| *v > 0.0).collect();
+    if edges.is_empty() {
+        return 0.0;
+    }
+    let rank = ((percentile as f64 * edges.len() as f64).ceil() as usize).clamp(1, edges.len()) - 1;
+    let (_, value, _) = edges.select_nth_unstable_by(rank, |a, b| a.total_cmp(b));
+    *value
 }
 
 /// Bilinear sampling of a row-major grid laid over a rectangle, between cell centres, clamped

@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-use kurbo::{Affine, PathEl, Shape, Stroke};
+use kurbo::{Affine, BezPath, PathEl, Shape, Stroke};
 use peniko::{BlendMode, Brush, Fill, ImageBrush, ImageData, ImageQuality, ImageSampler};
 
 use crate::effects::effect_sizes::EffectParams;
@@ -145,6 +145,56 @@ impl VectorScene {
         let path = start..self.elements.len() as u32;
         let brush = self.push_brush(brush);
         self.items.push(Item::Fill { rule: style, transform, brush, brush_transform, path, key, tint: None });
+    }
+
+    /// Fills a path whose geometry key the caller keeps ([`shape_key`](VectorScene::shape_key) of
+    /// the same path): recorded as [`fill`](VectorScene::fill) records it, without hashing it
+    /// again (a kept text block's outline batches).
+    pub(crate) fn fill_keyed(&mut self, style: Fill, transform: Affine, brush: &Brush, brush_transform: Option<Affine>, path: &BezPath, key: u64) {
+        if let Some(look) = self.take_paint_look() {
+            self.fill_in_look(&look, style, transform, brush, brush_transform, path);
+            self.look = Some(look);
+            return;
+        }
+        self.record_fill_cached(style, transform, brush, brush_transform, path.elements(), key);
+    }
+
+    /// [`stroke_with_style`](VectorScene::stroke_with_style) of a path whose geometry key the
+    /// caller keeps ([`shape_key`](VectorScene::shape_key) of the same path): a width that scales
+    /// is recorded without hashing the path again; a fixed width is keyed by the path as
+    /// transformed, so it is hashed as before.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn stroke_with_style_keyed(&mut self, style: &PathStrokeStyle, transform: Affine, reference: Affine, brush: &Brush, brush_transform: Option<Affine>, path: &BezPath, key: u64) {
+        if style.is_fixed_width() {
+            self.stroke_fixed_width(&style.to_kurbo(), transform, reference, brush, brush_transform, path);
+            return;
+        }
+        let stroke = style.to_kurbo();
+        if let Some(look) = self.take_paint_look() {
+            self.stroke_in_look(&look, &stroke, transform, None, brush, brush_transform, path);
+            self.look = Some(look);
+            return;
+        }
+        if !(stroke.width > 0.0) {
+            return;
+        }
+        let start = self.elements.len() as u32;
+        self.elements.extend_from_slice(path.elements());
+        let path = start..self.elements.len() as u32;
+        let brush = self.push_brush(brush);
+        self.strokes.push(stroke);
+        let stroke = (self.strokes.len() - 1) as u32;
+        self.items.push(Item::Stroke { stroke, transform, brush, brush_transform, path, key });
+    }
+
+    /// The geometry key a shape is recorded under (the hash [`fill`](VectorScene::fill) and
+    /// [`stroke`](VectorScene::stroke) make of its elements), for the keyed fills and strokes.
+    pub(crate) fn shape_key(shape: &impl Shape) -> u64 {
+        let mut hash = Hasher::new();
+        for el in shape.path_elements(SHAPE_TOLERANCE) {
+            hash.element(&el);
+        }
+        hash.finish()
     }
 
     /// Strokes a shape (kurbo's stroke: width, joins, caps, miter limit, dashes). The stroke is

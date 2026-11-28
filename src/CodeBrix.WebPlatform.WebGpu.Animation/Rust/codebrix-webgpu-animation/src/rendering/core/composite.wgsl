@@ -12,15 +12,18 @@ fn resolve(tex: texture_multisampled_2d<f32>, c: vec2<i32>) -> vec4<f32> {
 // A group put onto the target below, times the group's alpha (the fixed-function blend state
 // does the compose). Per pixel - the mean of the group's 4 samples, as the final step does - not
 // per sample: a per-sample composite costs four times the fragment work over the group's area.
+// The level targets share the frame's window: a fragment's position is the same texel in both.
 @fragment
 fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     return resolve(layer_tex, vec2<i32>(in.position.xy)) * paints[in.paint].extra.x;
 }
 
-// The main 2D target onto the host's single-sampled view: the mean of its 4 samples.
+// The main 2D target onto the host's single-sampled view: the mean of its 4 samples. The output
+// pixel (drawn by vs_final, canvas coordinates) reads the target at the pixel less the window's
+// origin.
 @fragment
 fn fs_final(in: VsOut) -> @location(0) vec4<f32> {
-    return resolve(layer_tex, vec2<i32>(in.position.xy));
+    return resolve(layer_tex, vec2<i32>(in.position.xy - view.size.zw));
 }
 
 // ---- From vello 0.12.0, vello_shaders/shader/shared/blend.wgsl ----

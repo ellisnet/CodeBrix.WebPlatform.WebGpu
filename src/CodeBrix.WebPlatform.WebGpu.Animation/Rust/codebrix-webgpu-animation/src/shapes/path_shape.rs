@@ -212,8 +212,9 @@ impl PathShape {
         }
     }
 
-    /// Records the fill, then the stroke; `drawing` is the session's drawing-units-to-canvas
-    /// transform, the space a fixed-width stroke is expanded in.
+    /// Records the fill, then the stroke; `drawing` is the space a fixed-width stroke is
+    /// expanded in: the session's drawing-units-to-canvas transform, or the CSS pixel for a
+    /// stroke in CSS pixels.
     pub(crate) fn encode(&self, scene: &mut VectorScene, transform: Affine, drawing: Affine, inherited: Color, opacity: f32) {
         let drawn = if self.is_trimmed() { Some(self.get_drawn_geometry()) } else { None };
         let geometry = drawn.as_ref().unwrap_or(&self.geometry);

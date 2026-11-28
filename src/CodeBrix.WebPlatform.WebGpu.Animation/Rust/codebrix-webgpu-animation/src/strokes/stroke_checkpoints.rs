@@ -5,8 +5,8 @@
 //! THE RULE IT KEEPS. Every frame is still a function of the time passed in, pixel for pixel: a
 //! frame drawn from a checkpoint is IDENTICAL, on the same GPU, to the frame drawn with every
 //! stroke at its progress. That holds because
-//! - a checkpoint is the draw's own multisampled target (every sample, 16 bytes per canvas
-//!   pixel), copied at the point of the stroke draw: restoring it and drawing the strokes after
+//! - a checkpoint is the draw's own multisampled target (every sample, 16 bytes per pixel of the
+//!   renderer's targets), copied at the point of the stroke draw: restoring it and drawing the strokes after
 //!   it replays exactly the blending the whole draw would do, in the same order;
 //! - it holds only a PREFIX of the set (in paint order) whose every stroke is WHOLE at the frame's
 //!   time (`end <= time`, compared exactly as the shader compares it): a whole stroke draws the
@@ -15,7 +15,9 @@
 //! - it is used only under the SAME KEY: the same set, tips and colour source, the same draw
 //!   block apart from the time (the element's device matrix, opacity, head softness, the fixed
 //!   anchors, the colour pickup and the layer's impasto), the same canvas size and target level,
-//!   and EVERYTHING drawn before the set in the frame (every operation, vertex, paint, picture
+//!   the same place and size of the renderer's targets (their target window: always the canvas
+//!   by default; the drawing's box when they are sized to it, opted in with
+//!   `set_content_sized_targets(true)`), and EVERYTHING drawn before the set in the frame (every operation, vertex, paint, picture
 //!   and ramp the renderer encoded before it) the same. Any difference is another key: the draw
 //!   is drawn whole from the first stroke (and a new checkpoint made once the key holds still).
 //!
@@ -34,7 +36,10 @@
 //! frame; at most `capacity` per key (the one farthest from the new one gives up its texture).
 //!
 //! MEMORY. One checkpoint is the multisampled colour target: [`StrokeCheckpoints::BYTES_PER_PIXEL`]
-//! (16) bytes per canvas pixel - 14.7 MB at 1280 x 720, 59 MB at 2560 x 1440. The renderer keeps
+//! (16) bytes per pixel of the renderer's targets - by default the canvas's pixels (14.7 MB at
+//! 1280 x 720, 59 MB at 2560 x 1440); with targets sized to the drawing (opt-in), the pixels of
+//! the drawing's box instead, so a small painting on a large canvas costs in proportion to
+//! itself. The renderer keeps
 //! the checkpoints by the texture ledger's policy (rendering/core/texture_ledger.rs
 //! `CHECKPOINT_RESIDENCY`): one not used for 120 frames goes, and while the checkpoints not used
 //! this frame weigh more than 128 MiB the least recently used go first.
@@ -53,8 +58,11 @@ use std::collections::HashMap;
 ///
 /// THE DEFAULTS: a checkpoint every 2,000 whole strokes, at most 4 per draw. The spacing bounds
 /// the strokes drawn per frame above a checkpoint (up to `spacing` plus those being painted); a
-/// set with fewer whole strokes than `spacing` makes none. MEMORY: 16 bytes per canvas pixel per
-/// checkpoint ([`StrokeCheckpoints::bytes_at`]: 14.7 MB at 1280 x 720, 59 MB at 2560 x 1440).
+/// set with fewer whole strokes than `spacing` makes none. MEMORY: 16 bytes per pixel of the
+/// renderer's targets per checkpoint - the canvas's pixels by default
+/// ([`StrokeCheckpoints::bytes_at`]: 14.7 MB at 1280 x 720, 59 MB at 2560 x 1440), the drawing's box
+/// with targets sized to the drawing (opt-in:
+/// [`AnimationLayerControl::set_content_sized_targets`](crate::rendering::AnimationLayerControl::set_content_sized_targets)).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StrokeCheckpoints {
     /// Whole strokes between two checkpoints (checkpoints hold 1, 2, 3 ... times this many
@@ -71,11 +79,12 @@ impl Default for StrokeCheckpoints {
 }
 
 impl StrokeCheckpoints {
-    /// The bytes one checkpoint takes per canvas pixel: the renderer's multisampled colour
-    /// target, 4 samples of 4 bytes.
+    /// The bytes one checkpoint takes per pixel of the renderer's targets (the canvas's pixels by
+    /// default): the multisampled colour target, 4 samples of 4 bytes.
     pub const BYTES_PER_PIXEL: usize = 16;
 
-    /// The GPU bytes of one checkpoint on a canvas of `width` x `height` device pixels.
+    /// The GPU bytes of one checkpoint on targets of `width` x `height` device pixels (by default
+    /// the canvas's size; with targets sized to the drawing, the drawing's box).
     pub fn bytes_at(width: u32, height: u32) -> usize {
         width as usize * height as usize * StrokeCheckpoints::BYTES_PER_PIXEL
     }
@@ -189,7 +198,7 @@ pub(crate) struct CheckpointCache {
 impl CheckpointCache {
     /// The plan of one draw: `key` (see the module's text), `whole` = the frame's whole prefix
     /// (strokes `0..whole` have all ended), `options`, the frame number, and the bytes a
-    /// checkpoint takes at the canvas size.
+    /// checkpoint takes at the targets' size (the canvas's by default).
     pub(crate) fn step(&mut self, key: u64, whole: u32, options: StrokeCheckpoints, frame: u64, bytes: usize) -> CheckpointStep {
         let stable = self.seen.get(&key).is_some_and(|f| *f + 1 >= frame);
         self.seen.insert(key, frame);
@@ -245,7 +254,8 @@ impl CheckpointCache {
         gone
     }
 
-    /// Forgets everything (the canvas size changed): the slots whose textures go.
+    /// Forgets everything (the canvas size, or the size of the renderer's targets, changed): the
+    /// slots whose textures go.
     pub(crate) fn clear(&mut self) -> Vec<usize> {
         let gone = self.slots.iter().enumerate().filter(|(_, s)| s.is_some()).map(|(i, _)| i).collect();
         self.slots.clear();

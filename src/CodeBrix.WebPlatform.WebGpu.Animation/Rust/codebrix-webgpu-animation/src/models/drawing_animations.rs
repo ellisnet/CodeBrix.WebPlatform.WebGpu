@@ -267,7 +267,7 @@ pub(crate) fn check_binding(target: &BindingTarget, property: AnimatedProperty, 
                 },
                 (P::Color, "color") => match element.map(|e| e.kind()) {
                     Some(ShapeKind::Group(_)) => Ok(()),
-                    _ => Err("Color can only be bound on a group (its content colour).".to_string()),
+                    _ => Err("Color can only be bound on a group (its content colour): put the shape in a group (DrawingGroup), add the group, and bind the group's Color.".to_string()),
                 },
                 (P::RevealFraction | P::RevealCount, "float") => match element.map(|e| e.kind()) {
                     Some(ShapeKind::TextBlock(_)) => Ok(()),

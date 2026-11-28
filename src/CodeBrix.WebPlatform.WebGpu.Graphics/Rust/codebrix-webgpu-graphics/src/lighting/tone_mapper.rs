@@ -6,7 +6,7 @@
 
 use glam::{Mat3, Vec3, Vec4};
 
-use crate::common::Color4;
+use crate::common::{Color4, RectangleF};
 use crate::context::{GraphicsContext, GraphicsException};
 use crate::frames::{DrawOptions, GraphicsFrame, RenderPass};
 use crate::models::pbr_data::needs_shader_encoding;
@@ -56,17 +56,51 @@ impl ToneMapOperator {
     }
 }
 
-/// The tone-map uniforms (32 bytes; C#: `ToneMapUniforms`).
+/// The tone-map uniforms (48 bytes; C#: `ToneMapUniforms`, 32 bytes: the viewport row is Not in
+/// C#).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ToneMapUniforms {
+    /// Exposure, operator number, shader sRGB encoding (1 or 0), preserve alpha (1 or 0).
     params: Vec4,
+    /// The source's width and height, then 1 / the target's width and height (C#'s row; the
+    /// shader reads `viewport` instead of its second half).
     source: Vec4,
+    /// The rectangle the source is mapped onto, in target pixels: its left and top edges, then
+    /// 1 / its width and height - the pass's viewport, or the whole target (0, 0 and the same
+    /// reciprocals as `source.zw`, so the shader's arithmetic is exactly C#'s) when none is set.
+    viewport: Vec4,
 }
 
-const UNIFORM_SIZE: u64 = 32;
+impl ToneMapUniforms {
+    /// The uniforms of one tone-map draw: the tone mapper's exposure, operator and
+    /// preserve-alpha setting, the source's and the target's sizes in pixels, whether the shader
+    /// encodes sRGB, and the pass's viewport (None: the whole target).
+    fn new((exposure, operator, preserve_alpha): (f32, ToneMapOperator, bool), source: (u32, u32), target: (u32, u32), encode: bool, viewport: Option<RectangleF>) -> ToneMapUniforms {
+        let target_reciprocal = (1.0 / target.0.max(1) as f32, 1.0 / target.1.max(1) as f32);
+        let reciprocal = |size: f32| if size > 0.0 { 1.0 / size } else { 0.0 };
+        let viewport = match viewport {
+            Some(rectangle) => Vec4::new(rectangle.x, rectangle.y, reciprocal(rectangle.width), reciprocal(rectangle.height)),
+            None => Vec4::new(0.0, 0.0, target_reciprocal.0, target_reciprocal.1),
+        };
+        ToneMapUniforms {
+            params: Vec4::new(exposure, operator as u32 as f32, if encode { 1.0 } else { 0.0 }, if preserve_alpha { 1.0 } else { 0.0 }),
+            source: Vec4::new(source.0 as f32, source.1 as f32, target_reciprocal.0, target_reciprocal.1),
+            viewport,
+        }
+    }
+
+    /// The texture coordinate the fragment shader samples at a fragment's position in target
+    /// pixels (the shader's arithmetic on the CPU, for tests).
+    #[cfg(test)]
+    fn source_uv(&self, position: glam::Vec2) -> glam::Vec2 {
+        (position - self.viewport.truncate().truncate()) * glam::Vec2::new(self.viewport.z, self.viewport.w)
+    }
+}
+
+const UNIFORM_SIZE: u64 = 48;
 const _: () = assert!(std::mem::size_of::<ToneMapUniforms>() == UNIFORM_SIZE as usize);
-// SAFETY: #[repr(C)]; two Vec4, no padding (size asserted above); any f32 bits are valid.
+// SAFETY: #[repr(C)]; three Vec4, no padding (size asserted above); any f32 bits are valid.
 unsafe impl bytemuck::Zeroable for ToneMapUniforms {}
 // SAFETY: as above; Copy and 'static.
 unsafe impl bytemuck::Pod for ToneMapUniforms {}
@@ -144,6 +178,12 @@ impl ToneMapper {
     /// sprites in the same pass (C#: `Apply(renderPass, source)`). The pass's depth, if any, is
     /// neither tested nor written; `source` must not be the pass's own target. A source of another
     /// size is scaled with linear filtering.
+    ///
+    /// THE VIEWPORT (Not in C#, which maps the source onto the whole target and lets a viewport
+    /// cut it): when a viewport was set on the pass ([`RenderPass::set_viewport`], read back with
+    /// [`RenderPass::viewport`]), the WHOLE source is mapped onto that rectangle - an inset (a
+    /// second view in a corner) is tone mapped in place: set the inset's viewport, then call this.
+    /// Without a viewport, the result is exactly as before (the whole target).
     pub fn apply_in_pass(&mut self, pass: &mut RenderPass<'_>, source: &GpuTexture) -> Result<(), GraphicsException> {
         if source.sample_count() > 1 {
             return Err(GraphicsException::new("The tone mapper reads a resolved texture, and this source is multisampled; give it the HeadlessRenderTarget's color() (what its passes resolve into), not multisampled_color()."));
@@ -159,10 +199,7 @@ impl ToneMapper {
             self.slot = 0;
         }
         let target = pass.target().clone();
-        let data = ToneMapUniforms {
-            params: Vec4::new(self.exposure, self.operator as u32 as f32, if needs_shader_encoding(target.color_format()) { 1.0 } else { 0.0 }, if self.preserve_alpha { 1.0 } else { 0.0 }),
-            source: Vec4::new(source.width() as f32, source.height() as f32, 1.0 / target.width().max(1) as f32, 1.0 / target.height().max(1) as f32),
-        };
+        let data = ToneMapUniforms::new((self.exposure, self.operator, self.preserve_alpha), (source.width(), source.height()), (target.width(), target.height()), needs_shader_encoding(target.color_format()), pass.viewport().map(|(rectangle, _)| rectangle));
         let offset = self.slot * SLOT_SIZE;
         self.uniforms.write_value(&data, offset)?;
         self.slot += 1;
@@ -254,9 +291,10 @@ impl ToneMapper {
 
 #[cfg(test)]
 mod tests {
-    use glam::Vec3;
+    use glam::{Vec2, Vec3, Vec4};
 
-    use super::{ToneMapOperator, ToneMapper};
+    use super::{ToneMapOperator, ToneMapUniforms, ToneMapper};
+    use crate::common::RectangleF;
 
     fn near(actual: f32, expected: f32, tolerance: f32) {
         assert!((actual - expected).abs() <= tolerance, "{actual} is not within {tolerance} of {expected}");
@@ -326,6 +364,43 @@ mod tests {
         let numbers: Vec<u32> = ToneMapOperator::ALL.iter().map(|o| *o as u32).collect();
         assert_eq!(numbers, vec![0, 1, 2, 3, 4]);
         assert_eq!(ToneMapOperator::KhronosPbrNeutral.name(), "KhronosPbrNeutral");
+    }
+
+    #[test]
+    fn without_a_viewport_the_uniforms_are_the_whole_targets_as_before() {
+        // A 1280 x 720 source onto a 640 x 360 target: C#'s row, and the viewport row with the
+        // same reciprocals, so the shader's uv is exactly position * (1 / target size).
+        let uniforms = ToneMapUniforms::new((2.0, ToneMapOperator::Reinhard, true), (1280, 720), (640, 360), false, None);
+        assert_eq!(uniforms.params, Vec4::new(2.0, 2.0, 0.0, 1.0));
+        assert_eq!(uniforms.source, Vec4::new(1280.0, 720.0, 1.0 / 640.0, 1.0 / 360.0));
+        assert_eq!(uniforms.viewport, Vec4::new(0.0, 0.0, 1.0 / 640.0, 1.0 / 360.0));
+        let position = Vec2::new(321.5, 17.5);
+        assert_eq!(uniforms.source_uv(position), position * Vec2::new(uniforms.source.z, uniforms.source.w));
+        assert_eq!(uniforms.source_uv(Vec2::new(640.0, 360.0)), Vec2::ONE);
+        // A target of no size does not divide by zero.
+        assert_eq!(ToneMapUniforms::new((1.0, ToneMapOperator::AcesFitted, false), (4, 4), (0, 0), true, None).viewport, Vec4::new(0.0, 0.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn with_a_viewport_the_whole_source_is_mapped_onto_its_rectangle() {
+        // An inset of 200 x 100 at (400, 50) on a 640 x 360 target.
+        let inset = RectangleF::new(400.0, 50.0, 200.0, 100.0);
+        let uniforms = ToneMapUniforms::new((1.0, ToneMapOperator::AcesFitted, false), (800, 400), (640, 360), true, Some(inset));
+        assert_eq!(uniforms.params.z, 1.0);
+        assert_eq!(uniforms.source, Vec4::new(800.0, 400.0, 1.0 / 640.0, 1.0 / 360.0), "C#'s row is unchanged");
+        assert_eq!(uniforms.viewport, Vec4::new(400.0, 50.0, 1.0 / 200.0, 1.0 / 100.0));
+        // The rectangle's corners are the source's corners, its centre the source's centre.
+        assert_eq!(uniforms.source_uv(Vec2::new(400.0, 50.0)), Vec2::ZERO);
+        assert_eq!(uniforms.source_uv(Vec2::new(600.0, 150.0)), Vec2::ONE);
+        assert_eq!(uniforms.source_uv(Vec2::new(500.0, 100.0)), Vec2::splat(0.5));
+        // The first pixel's centre samples the source half a pixel of the rectangle in.
+        assert_eq!(uniforms.source_uv(Vec2::new(400.5, 50.5)), Vec2::new(0.5 / 200.0, 0.5 / 100.0));
+        // A viewport of the whole target gives the same numbers as none.
+        let whole = ToneMapUniforms::new((1.0, ToneMapOperator::AcesFitted, false), (800, 400), (640, 360), true, Some(RectangleF::new(0.0, 0.0, 640.0, 360.0)));
+        assert_eq!(whole, ToneMapUniforms::new((1.0, ToneMapOperator::AcesFitted, false), (800, 400), (640, 360), true, None));
+        // An empty rectangle (WebGPU draws nothing in it) gives no infinity.
+        let empty = ToneMapUniforms::new((1.0, ToneMapOperator::AcesFitted, false), (8, 8), (640, 360), true, Some(RectangleF::new(10.0, 10.0, 0.0, 0.0)));
+        assert_eq!(empty.viewport, Vec4::new(10.0, 10.0, 0.0, 0.0));
     }
 
     #[test]

@@ -84,13 +84,16 @@ mod context;
 mod drag;
 mod errors;
 mod frame_loop;
+mod idle;
 mod images;
 mod input;
+mod layer_time;
 mod layers;
 pub mod math;
 mod page_compose;
 mod renderer;
 mod sizing;
+mod taps;
 mod time_points;
 mod unavailable;
 
@@ -104,6 +107,7 @@ pub use images::{decode_image, decode_jpeg, decode_png, DecodedImage, MAX_IMAGE_
 pub use input::{CanvasInput, ModifierKeys, PointerButton, PointerButtons, PointerKind};
 pub use layers::CanvasLayers;
 pub use renderer::{CanvasFrame, CanvasRenderer, CanvasTarget, FrameInfo, RendererHandle, SurfaceFailure};
+pub use taps::TapOptions;
 pub use time_points::TimePoints;
 pub use unavailable::WebGpuUnavailable;
 

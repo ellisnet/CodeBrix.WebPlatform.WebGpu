@@ -185,3 +185,107 @@ fn the_safe_area_overlay_draws_over_the_layers_in_groups_of_its_own() {
     assert_eq!(k.matches('L').count(), 3, "the layer, the mask, the ring: {k}");
     assert!(k.ends_with("FFFFP"), "the ring's four bands: {k}");
 }
+
+/// The work text blocks have done on this thread: (merged outlines made, batches assembled).
+fn block_work() -> (usize, usize) {
+    crate::shapes::text_block_shape::TEXT_BLOCK_WORK.with(|w| w.get())
+}
+
+/// A session's recording: its elements and the geometry keys of its fills.
+fn recording(s: &DrawingSession) -> (Vec<kurbo::PathEl>, Vec<u64>) {
+    let mut scene = VectorScene::new();
+    s.render(&mut scene, 1000, 500);
+    (scene.elements.clone(), scene.fill_keys())
+}
+
+#[test]
+fn merging_is_done_when_it_is_switched_on_and_a_still_block_is_assembled_once() {
+    let Some(mut s) = session() else { return };
+    //Arrange
+    let layout = s.layout_text("merged outlines, kept", 40.0, None, None).unwrap();
+    let ink = layout.clusters().iter().filter(|c| c.has_ink()).count();
+    let mut block = TextBlockShape::new(layout, 0.0, 0.0, None).unwrap();
+    let before = block_work();
+    block.set_merge_overlaps(true);
+    let merged = block_work();
+    let pieces = block.create_pieces(TextUnit::Word);
+    s.draw_shape(block.clone());
+    //Act
+    let first = recording(&s);
+    let frames: Vec<_> = (0..5).map(|_| recording(&s)).collect();
+    for piece in pieces {
+        s.draw_shape(piece);
+    }
+    recording(&s);
+    //Assert
+    assert_eq!(merged.0 - before.0, ink, "every cluster with ink merged when merging was switched on");
+    assert_eq!(block_work().0, merged.0, "no merging while drawing, the pieces' included");
+    assert_eq!(block_work().1 - merged.1, 1 + 3, "the block assembled once, then each piece once");
+    assert!(frames.iter().all(|f| *f == first), "every frame records the same");
+    let outline = block.get_outline();
+    let outline = outline.bez_path().elements();
+    assert_eq!(&first.0[first.0.len() - outline.len()..], outline, "after the layer's box: the merged outlines, in text order");
+}
+
+#[test]
+fn a_kept_batch_records_the_same_paths_and_keys_as_a_fresh_block() {
+    let Some(mut s) = session() else { return };
+    //Arrange: an outlined block, centred and outside, drawn twice by one shape and once by a
+    //fresh one; and the key a plain fill of the same path gets.
+    let layout = s.layout_text("Outline me", 40.0, None, None).unwrap();
+    let style = PathStrokeStyle::new(3.0, PathStrokeStyleOptions::default()).unwrap();
+    let options = TextBlockStrokeOptions { stroke_color: Some(Color::BLACK), fill_color: Some(Color::WHITE), fill: None };
+    let make = || {
+        let mut block = TextBlockShape::with_stroke(layout.clone(), 0.0, 0.0, Some(style.clone()), options.clone()).unwrap();
+        block.set_stroke_placement(TextStrokePlacement::Outside);
+        block
+    };
+    let block = make();
+    s.draw_shape(block.clone());
+    //Act
+    recording(&s);
+    let kept = recording(&s);
+    let mut fresh = session().unwrap();
+    fresh.draw_shape(make());
+    let mut plain = VectorScene::new();
+    let outline = block.get_outline();
+    plain.fill(peniko::Fill::NonZero, kurbo::Affine::IDENTITY, &peniko::Brush::Solid(Color::WHITE.to_peniko(1.0)), None, outline.bez_path());
+    //Assert
+    assert_eq!(kept, recording(&fresh));
+    assert_eq!(kept.1[0], plain.fill_keys()[0], "the kept key is the hash a fill makes");
+    assert_eq!(kinds(&s), "LLSLFPPFP");
+}
+
+#[test]
+fn a_reveal_change_assembles_the_batches_again_and_draws_what_it_shows() {
+    let Some(mut s) = session() else { return };
+    //Arrange
+    let layout = s.layout_text("abcd efgh", 40.0, None, None).unwrap();
+    let style = PathStrokeStyle::new(2.0, PathStrokeStyleOptions::default()).unwrap();
+    let make = || TextBlockShape::with_stroke(layout.clone(), 0.0, 0.0, Some(style.clone()), TextBlockStrokeOptions { fill_color: Some(Color::WHITE), ..TextBlockStrokeOptions::default() }).unwrap();
+    let id = s.draw_shape(make());
+    s.animations_mut().bind(id, AnimatedProperty::RevealFraction, track(&[(0.0, 0.0), (1.0, 1.0)])).unwrap();
+    let at = |s: &mut DrawingSession, time: f64| {
+        s.set_time(time);
+        let before = block_work().1;
+        let drawn = recording(s);
+        (drawn, block_work().1 - before)
+    };
+    //Act
+    let (half, assembled_half) = at(&mut s, 0.5);
+    let (half_again, assembled_again) = at(&mut s, 0.5);
+    let (whole, assembled_whole) = at(&mut s, 1.0);
+    let fresh_at = |fraction: f32| {
+        let mut block = make();
+        block.apply_reveal_fraction(fraction);
+        let mut fresh = session().unwrap();
+        fresh.draw_shape(block);
+        recording(&fresh)
+    };
+    //Assert
+    assert_eq!((assembled_half, assembled_again, assembled_whole), (1, 0, 1));
+    assert_eq!(half, half_again);
+    assert!(whole.0.len() > half.0.len(), "more is shown");
+    assert_eq!(half, fresh_at(0.5), "what a fresh block shows at the same reveal");
+    assert_eq!(whole, fresh_at(1.0));
+}

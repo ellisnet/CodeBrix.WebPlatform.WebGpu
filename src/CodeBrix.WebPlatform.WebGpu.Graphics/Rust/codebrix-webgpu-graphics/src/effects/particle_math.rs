@@ -1,12 +1,15 @@
 //! The particle system's arithmetic on the CPU (Not in C#): the seeded random numbers, the
-//! emitter sampling, one integration step, the spawn count of a step and the look over a
-//! particle's life - the same formulas as the particle step shader (`particles.wgsl`; the
-//! integer random bits exactly, the floating-point results to each GPU's own precision), so that
-//! they are tested on the host. Keep the two in step.
+//! emitter sampling, one integration step, the spawn count of a step, its split across the
+//! emitters and the search of a spawned slot's emitter, and the look over a particle's life - the
+//! same formulas as the particle step shader (`particles.wgsl`; the integer random bits exactly,
+//! the floating-point results to each GPU's own precision), so that they are tested on the host.
+//! Keep the two in step.
 
 #[cfg(test)]
 use glam::{Vec3, Vec4};
 
+#[cfg(test)]
+use crate::effects::glow_drawing::GlowInstance;
 #[cfg(test)]
 use crate::effects::particle_system::{EmitterShape, ParticleSettings};
 
@@ -97,6 +100,58 @@ pub(crate) fn spawn_count(carried: f64, rate: f32, dt: f32, burst: u32, capacity
     (count, total - whole, 0)
 }
 
+/// One emitter's share of a step's spawn range (Not in C#): the emitter's index, its first order
+/// in the range (the counts of the emitters before it, a prefix sum) and its count (never 0).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SpawnRange {
+    pub(crate) emitter: usize,
+    pub(crate) first: u32,
+    pub(crate) count: u32,
+}
+
+/// Splits a step's spawn range across the emitters by their counts, in emitter order: each
+/// emitter with particles gets the next `count` orders. The whole range is at most `capacity`:
+/// when the emitters together ask for more, the later emitters' counts are cut (the first
+/// emitters keep theirs). Emitters with nothing to spawn get no range, so the shader's search
+/// finds only emitters that spawn.
+pub(crate) fn split_spawns(counts: &[u32], capacity: u32) -> Vec<SpawnRange> {
+    let mut ranges = Vec::new();
+    let mut first = 0u32;
+    for (emitter, &count) in counts.iter().enumerate() {
+        let count = count.min(capacity - first);
+        if count > 0 {
+            ranges.push(SpawnRange { emitter, first, count });
+            first += count;
+        }
+    }
+    ranges
+}
+
+/// The CPU twin of the shader's `find_emitter`: the index of the last range whose first order is
+/// at most `order` (a binary search of the firsts), so the range that holds `order`.
+#[cfg(test)]
+pub(crate) fn find_emitter(firsts: &[u32], order: u32) -> usize {
+    let (mut low, mut high) = (0usize, firsts.len());
+    while low < high {
+        let middle = (low + high) / 2;
+        if firsts[middle] <= order {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    low.max(1) - 1
+}
+
+/// What the shader's spawn of the slot at order `order` of the step's range reads from its
+/// emitter's range: the emitter, the order within it and its count.
+#[cfg(test)]
+pub(crate) fn spawn_slot(ranges: &[SpawnRange], order: u32) -> (usize, u32, u32) {
+    let firsts: Vec<u32> = ranges.iter().map(|range| range.first).collect();
+    let range = ranges[find_emitter(&firsts, order)];
+    (range.emitter, order - range.first, range.count)
+}
+
 /// One step's spawned particles as the live-particle bound keeps them (Not in C#): when the step
 /// ended in simulated time, how many it spawned, and the longest life any of them can have.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -138,6 +193,20 @@ pub(crate) fn over_life(settings: &ParticleSettings, t: f32) -> (f32, Vec3, f32)
     let fade = settings.fade_out.clamp(0.0, 1.0);
     let x = if fade > 0.0 { ((1.0 - t) / fade).clamp(0.0, 1.0) } else { 1.0 };
     (size.max(0.0), color.max(Vec3::ZERO), opacity.clamp(0.0, 1.0) * x * x * (3.0 - 2.0 * x))
+}
+
+/// The CPU twin of the glow-instance record the step writes for a slot: a live particle's
+/// position and size, its colour and opacity over its life, and intensity 1 with its VELOCITY in
+/// the pulse's yzw (the glow shader reads no pulse for particles; the stretch reads the velocity);
+/// a dead or never-born slot all zeros (a collapsed quad).
+#[cfg(test)]
+pub(crate) fn instance_record(particle: &ParticleState, settings: &ParticleSettings) -> GlowInstance {
+    let alive = particle.velocity_life.w > 0.0 && particle.position_age.w < particle.velocity_life.w;
+    if !alive {
+        return GlowInstance::default();
+    }
+    let (size, color, opacity) = over_life(settings, particle.position_age.w / particle.velocity_life.w);
+    GlowInstance { position_size: particle.position_age.truncate().extend(size), color: color.extend(opacity), pulse: Vec4::new(1.0, particle.velocity_life.x, particle.velocity_life.y, particle.velocity_life.z) }
 }
 
 /// One particle as the step leaves it: position and age, velocity and lifetime.
@@ -309,6 +378,56 @@ mod tests {
         assert_eq!(spawn_count(0.0, 1000.0, 1.0, 50, 64).0, 64);
         // Paused: nothing spawns and the burst waits.
         assert_eq!(spawn_count(0.25, 30.0, 0.0, 7, 100), (0, 0.25, 7));
+    }
+
+    #[test]
+    fn a_steps_spawns_are_split_across_the_emitters_by_a_prefix_sum() {
+        let ranges = split_spawns(&[3, 0, 2, 0, 0, 5], 100);
+        assert_eq!(ranges, vec![SpawnRange { emitter: 0, first: 0, count: 3 }, SpawnRange { emitter: 2, first: 3, count: 2 }, SpawnRange { emitter: 5, first: 5, count: 5 }]);
+        // One emitter: the whole range is its, as it always was.
+        assert_eq!(split_spawns(&[7], 100), vec![SpawnRange { emitter: 0, first: 0, count: 7 }]);
+        assert!(split_spawns(&[0, 0], 100).is_empty(), "nothing to spawn: no ranges");
+        // Over the capacity: the later emitters are cut.
+        assert_eq!(split_spawns(&[6, 6, 6], 10), vec![SpawnRange { emitter: 0, first: 0, count: 6 }, SpawnRange { emitter: 1, first: 6, count: 4 }]);
+        assert_eq!(split_spawns(&[20, 3], 10), vec![SpawnRange { emitter: 0, first: 0, count: 10 }]);
+    }
+
+    #[test]
+    fn every_spawned_slot_finds_its_emitter_from_the_prefix() {
+        let counts: Vec<u32> = (0..48).map(|i| (i * 7 % 5) as u32).collect();
+        let ranges = split_spawns(&counts, 4096);
+        let total: u32 = ranges.iter().map(|range| range.count).sum();
+        assert_eq!(total, counts.iter().sum::<u32>());
+        let firsts: Vec<u32> = ranges.iter().map(|range| range.first).collect();
+        for order in 0..total {
+            // The binary search agrees with a plain walk through the ranges.
+            let plain = ranges.iter().position(|range| range.first <= order && order < range.first + range.count).expect("a range holds it");
+            assert_eq!(find_emitter(&firsts, order), plain, "order {order}");
+            let (emitter, within, count) = spawn_slot(&ranges, order);
+            assert_eq!(emitter, ranges[plain].emitter);
+            assert!(within < count && count == counts[emitter]);
+        }
+        assert_eq!(find_emitter(&[0], 0), 0);
+        assert_eq!(find_emitter(&[0], 9), 0);
+        // Emitter 0 alone: each slot is its own order of the one range, as before.
+        let single = split_spawns(&[5], 100);
+        for order in 0..5 {
+            assert_eq!(spawn_slot(&single, order), (0, order, 5));
+        }
+    }
+
+    #[test]
+    fn the_instance_record_carries_the_velocity_in_the_pulse() {
+        let settings = ParticleSettings::default();
+        let particle = ParticleState { position_age: Vec4::new(1.0, 2.0, 3.0, 0.5), velocity_life: Vec4::new(-1.0, 4.0, 0.25, 2.0) };
+        let record = instance_record(&particle, &settings);
+        let (size, color, opacity) = over_life(&settings, 0.25);
+        assert_eq!(record.position_size, Vec4::new(1.0, 2.0, 3.0, size));
+        assert_eq!(record.color, color.extend(opacity));
+        assert_eq!(record.pulse, Vec4::new(1.0, -1.0, 4.0, 0.25), "intensity 1, then the velocity");
+        let dead = ParticleState { position_age: Vec4::new(1.0, 2.0, 3.0, 2.5), velocity_life: Vec4::new(-1.0, 4.0, 0.25, 2.0) };
+        assert_eq!(instance_record(&dead, &settings), GlowInstance::default());
+        assert_eq!(instance_record(&ParticleState::default(), &settings), GlowInstance::default(), "never born");
     }
 
     #[test]

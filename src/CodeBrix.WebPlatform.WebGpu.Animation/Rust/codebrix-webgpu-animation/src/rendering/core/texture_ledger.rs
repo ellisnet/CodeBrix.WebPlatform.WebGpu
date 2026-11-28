@@ -18,6 +18,12 @@
 //! them for 120 to 180 frames), while pictures that are drawn - every frame, or every other frame
 //! - stay. Stroke sets' checkpoints follow the same rule with a budget of their own
 //! (`CHECKPOINT_RESIDENCY`).
+//!
+//! LIVE PICTURES ([`LivePicture`](crate::images::LivePicture)) are NOT in the ledger: their texture
+//! is the live picture's own (one per device, made at its first draw there with the whole picture,
+//! then sent only the regions written since), so it is never swept and is released with the live
+//! picture. Their writes are counted apart ([`count_live`]: `live_picture_writes` and
+//! `live_picture_write_bytes`, never `image_uploads`), by the renderer that sends them.
 
 use std::collections::HashMap;
 
@@ -305,6 +311,13 @@ pub(crate) fn count(stats: &mut crate::rendering::RenderStats, image: &FrameImag
     }
 }
 
+/// A live picture's writes sent this frame (into [`RenderStats`](crate::rendering::RenderStats)'
+/// live-picture counts).
+pub(crate) fn count_live(stats: &mut crate::rendering::RenderStats, regions: &[crate::images::PixelRegion]) {
+    stats.live_picture_writes += regions.len();
+    stats.live_picture_write_bytes += regions.iter().map(|r| r.bytes()).sum::<usize>();
+}
+
 /// What a frame's pictures upload, decided as gpu.rs decides it (host tests of the rules).
 #[cfg(test)]
 pub(crate) fn plan(ledger: &mut TextureLedger, images: &[FrameImage], frame: u64) -> crate::rendering::RenderStats {
@@ -314,4 +327,25 @@ pub(crate) fn plan(ledger: &mut TextureLedger, images: &[FrameImage], frame: u64
         count(&mut stats, image, upload);
     }
     stats
+}
+
+#[cfg(test)]
+mod tests {
+    use super::count_live;
+    use crate::images::PixelRegion;
+    use crate::rendering::RenderStats;
+
+    #[test]
+    fn live_writes_are_counted_apart_from_picture_uploads() {
+        //Arrange
+        let mut stats = RenderStats::default();
+        let regions = [PixelRegion { x: 0, y: 0, width: 10, height: 10 }, PixelRegion { x: 5, y: 5, width: 2, height: 3 }];
+        //Act
+        count_live(&mut stats, &regions);
+        count_live(&mut stats, &[]);
+        //Assert
+        assert_eq!(stats.live_picture_writes, 2);
+        assert_eq!(stats.live_picture_write_bytes, 400 + 24);
+        assert_eq!((stats.image_uploads, stats.image_upload_bytes), (0, 0), "not a picture upload");
+    }
 }

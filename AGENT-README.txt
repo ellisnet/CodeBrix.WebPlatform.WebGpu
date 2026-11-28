@@ -111,7 +111,9 @@ THE DEPENDENCY RULE OF THE THREE PACKAGES
 THE RULES THAT HOLD FOR ALL THREE
     * WebGPU ONLY. There is no WebGL fallback and no native backend in the
       crates: a browser without WebGPU gets no adapter, and the frontend
-      shows a clear "WebGPU is not available in this browser" message.
+      shows a clear "WebGPU is not available in this browser" message. (A
+      program outside the browser switches a native backend on itself: see
+      DRAWING WITHOUT A CANVAS.)
     * LOW-LEVEL wgpu ACCESS ALWAYS STAYS AVAILABLE. A frontend may always use
       the `wgpu` API directly, beside anything built on it:
       `codebrix-webgpu` hands out the device, the queue, the surface and
@@ -510,7 +512,9 @@ GETTING A DEVICE, AND THE "NOT AVAILABLE" MESSAGE.
         that probe asks for an adapter itself, so the browser asks twice
         (Chrome then warns twice). The one request covers every case: no
         `navigator.gpu`, WebGPU switched off, or no adapter handed out all
-        give GpuUnavailable::NoAdapter.
+        give GpuUnavailable::NoAdapter. Chrome without WebGPU logs "No
+        available adapters." to the console for each adapter request: it is
+        the browser's message, not an error of the application.
     GpuContext::request_with(&adapter_options, &device_descriptor)
         The same with the application's own wgpu::RequestAdapterOptions and
         wgpu::DeviceDescriptor (features, limits); a device the adapter will
@@ -583,7 +587,8 @@ WebGPU'S ERRORS: ONE HANDLER PER DEVICE, ANY NUMBER OF READERS.
 
 THE CANVAS HOST.
     WebGpuCanvas { context, layers, clock, clear_color, transparent,
-                   class, style, id, label, suppress_context_menu }
+                   class, style, id, label, suppress_context_menu,
+                   interactive, idle_when_paused, tap_options }
         A Dioxus `canvas` that becomes a wgpu surface when it is mounted,
         draws its layers every animation frame and hands them its pointer,
         wheel and key input. It carries NO styling and no CSS class of its
@@ -599,9 +604,37 @@ THE CANVAS HOST.
         with `suppress_context_menu` (default true) a right-click opens no
         browser context menu over it, so that middle- and right-button
         drags reach the layers; false keeps the browser's menu.
-        `context`, `layers` and `clock` are taken when the canvas is
-        mounted: keep each in the page (use_hook) and change the layers
-        through their handle.
+        WHEN THE PROPERTIES ARE READ: `context`, `layers`, `transparent`
+        and `clear_color` are taken when the canvas element is MOUNTED, and
+        `clock` at the component's first render; passing others later
+        changes nothing. Keep each in the page (use_hook) and change the
+        layers through their handle: drawing AND input use the layers taken
+        at mount. Changing `interactive` replaces the canvas element: the
+        host starts again on the new one, taking `context`, `layers`,
+        `transparent` and `clear_color` as that render passes them (a new
+        surface; every layer is prepared again). Every other property
+        follows a change on a live canvas: `class`, `style`, `id`, `label`,
+        `suppress_context_menu` and `tap_options` from the next event,
+        `idle_when_paused` from the next frame.
+    A DECORATIVE CANVAS (not in C#): `interactive: false` (default true)
+        takes the canvas out of the page's interaction - no focus (no
+        tabindex), no touch-action change, no pointer, wheel or key
+        listeners (the layers get no input), and `pointer-events: none` on
+        its style object, so clicks, scrolling and touches reach the page
+        beneath. For an ornament laid over the page's content.
+    IDLING WHILE PAUSED (not in C#): by default every animation frame is
+        drawn, also while the clock is paused. With `idle_when_paused: true`
+        a paused canvas draws only when the frame would show something new -
+        the first frame, a new displayed size or pixel ratio, a layer added,
+        removed, moved or given a time scale, layers.request_redraw(), a
+        seek or resume of the clock or a named point defined, moved or
+        removed, an input event on the canvas, a frame the surface could not
+        give, and once after the page was hidden - and
+        otherwise records, submits and presents nothing (the browser keeps
+        the last picture). Call layers.request_redraw() after changing what
+        a layer draws in any other way while paused (a session the page
+        edits, a picture that finished loading, a testing readback that
+        needs further frames). A running clock draws every frame as before.
 
     A RENDERER (a layer) implements the trait CanvasRenderer:
         fn prepare(&mut self, context: &GpuContext, target: &CanvasTarget) {}
@@ -637,6 +670,16 @@ THE CANVAS HOST.
     kind, modifiers }, PointerUp { x, y, pointer_id, button, buttons, kind,
     modifiers }, Wheel { delta_x, delta_y } (CSS pixels, positive y towards
     the visitor), KeyDown { key }, KeyUp { key } (the browser's key names).
+    PointerDown also has tap_count (not in C#): 1 for a single press, 2 for
+    the second press of a double-click or a double tap, 3 for a triple. A
+    press continues the previous press's series when it follows within
+    tap_options.interval_ms (default 500), within tap_options.mouse_distance
+    CSS pixels of it for a mouse (default 5) or touch_distance for a finger
+    or pen (default 24), with the same kind of pointer and button, and with
+    no other pointer down (a pinch's second finger starts no double tap):
+        CanvasInput::PointerDown { tap_count: 2, .. } => // a double-click
+        WebGpuCanvas { tap_options: TapOptions { interval_ms: 350.0,
+                       ..TapOptions::default() }, .. }
     Coordinates are the canvas's CSS pixels. Every pointer (a mouse button, a
     pen, each finger on a touch screen) has its own pointer_id, and each
     one's dx and dy are its own distances, so a layer can follow two fingers
@@ -675,6 +718,20 @@ LAYERS AND THE CLOCK.
             and sized before its first frame; one removed is no longer drawn;
             adding a layer that is there moves it. CanvasLayers::single(h)
             for one layer.
+        layers.set_time_scale(&h, 2.0) -> bool / time_scale(&h)
+            (not in C#) one layer's own time scale against the clock (default
+            1; false for a layer not in the list): its frame's time, delta
+            and previous_time - and so the named points it reaches - run at
+            that rate, while the other layers keep the clock's time (the ride
+            of a scene sped up, the forest around it at the clock's pace). Its
+            time is the scale times the clock's while the scale is unchanged,
+            so a seek shows what playing shows; a change of the scale goes on
+            from the layer's time at its last frame, without a jump. Pausing
+            the clock stops every layer. Moving a layer keeps its scale;
+            removing it forgets it.
+        layers.request_redraw()
+            one more frame of a canvas that idles while paused (see THE
+            CANVAS HOST, IDLING WHILE PAUSED).
 
     THE LAYER CONTRACT, which the host keeps for every canvas:
       * Each frame the HOST clears the target to `clear_color` (default
@@ -733,7 +790,8 @@ LAYERS AND THE CLOCK.
                                     a clock of its own
         clock.pause() / resume() / toggle() -> bool (now paused) /
         is_paused()                 paused: the time stands still, delta 0,
-                                    frames are still drawn and counted;
+                                    frames are still drawn and counted
+                                    (unless the canvas idles while paused);
                                     resumed: the time goes on from where it
                                     stood (the pause is not counted)
         clock.set_speed(s) / speed()   1 real time, 0.5 half, 2 double
@@ -773,6 +831,52 @@ LAYERS AND THE CLOCK.
     A name that is not defined gives None and false; check
     frame.points.contains(name) where a misspelt name must not pass
     silently.
+
+DRAWING WITHOUT A CANVAS (not in C#): a program with no window (stills, a
+test that reads its pixels back), or a drawing kept in a texture of its own.
+    CanvasTarget::offscreen(format)
+        The target of a texture that is not a canvas surface: `format` for
+        the views and the pipelines, surface_format the same, alpha_mode
+        PreMultiplied. The convention does not change: linear premultiplied
+        colour, passes that LOAD - so YOU clear the texture first, in a pass
+        of your own, as the host clears a canvas.
+    ANIMATION: OffscreenRenderer::new(&gpu, format) once (it keeps its
+        pipelines, buffers and pictures); per picture: clear the texture,
+        record the scene (session.render_with_background(&mut scene, w,
+        h)), then renderer.render(&gpu, &mut encoder, &view, w, h, &scene)
+        -> RenderStats; submit the encoder and read the texture yourself.
+    GRAPHICS: ctx.begin_frame_on(&target.view()) (its own encoder;
+        frame.submit()) or ctx.begin_frame_with_encoder_on(&mut encoder,
+        &view) (you submit): frame.target() is that target, so code written
+        for a canvas layer's begin_render_pass(..) draws into it unchanged.
+        Clear it in the first pass (Some(colour)): nothing else has.
+    REUSING A CANVAS LAYER'S CODE (a CanvasFrame needs a surface and cannot
+        be made offscreen): keep the drawing in a browser-free core that
+        takes an encoder and a view (or a GraphicsFrame), the time and the
+        size, with a thin CanvasRenderer over it that only hands the core the
+        CanvasFrame's parts; a native program calls the same core with its
+        own texture.
+    OUTSIDE THE PLATFORM'S VENDORED BUILD (a native tool in a Cargo
+        workspace of its own): name the crates by path (their folders in a
+        frontend's materialized vendor folder). The Graphics and Animation
+        crates name codebrix-webgpu by its exact version, which is on no
+        registry, so the workspace's Cargo.toml needs
+            [patch.crates-io]
+            codebrix-webgpu = { path = ".../codebrix-webgpu-<version>" }
+        The crate set carries only wgpu's `webgpu` backend: name wgpu
+        yourself, at the crates' exact version, with a native backend on
+        (features ["std", "wgsl", "vulkan"], for example; cargo unifies
+        features within the workspace, and that backend's crates come from
+        crates.io), open the device yourself and wrap it:
+        GpuContext::from_parts(instance, adapter, device, queue), then
+        GraphicsContext::wrap_gpu_context(&gpu). dioxus and web-sys are still
+        compiled (costing build time only).
+    NATIVELY A BUFFER MAPPING NEEDS device.poll: after map_async, call
+        device.poll(wgpu::PollType::wait_indefinitely()) before reading (a
+        browser answers the mapping by itself). Read a picture back by
+        copying its texture into a buffer (rows padded to 256 bytes) and
+        mapping it; the Animation crate's testing readback hands nothing
+        outside a browser.
 
 IMAGES: PNG AND JPEG FILES TO PIXELS (not in C#).
     decode_png(&bytes)   -> Result<DecodedImage, String>
@@ -915,12 +1019,14 @@ for line, by these rules:
       ..SceneLighting::default() }`) and match enum variants with `..`, and
       such code keeps compiling. Types that have gained fields this way:
       SceneLighting (local_lights, sun_shadows, spot_shadows),
-      ModelRenderStats (its shadow, level-of-detail and light counts),
-      ModelMaterial (emissive_vertex_color; build it with
+      WaterSurface (mask, flow), SunShadowSettings (cascades,
+      cascade_reach, cascade_split_weight, cascade_blend), ModelRenderStats
+      (its shadow, level-of-detail and light counts, and the opaque and
+      blended halves' draw and instance counts), ModelMaterial (emissive_vertex_color; build it with
       ModelMaterial::new(index, name) and set fields), ModelInstance and
       OrbitController (made by their constructors, so only code that names
       every field is touched), and codebrix-webgpu's CanvasInput pointer
-      events (button, buttons, kind, modifiers).
+      events (button, buttons, kind, modifiers; PointerDown's tap_count).
     * C# PROPERTIES WITH A SETTER: a pub field on a plain value (Camera,
       SceneLighting, OrbitCamera's target and yaw), or a getter and a
       `set_*` method where C# clamps or tracks changes (OrbitCamera's pitch and
@@ -1126,7 +1232,10 @@ FRAMES, AND THE CANVAS: THE GRAPHICS ARE A LAYER.
     Outside the canvas: context.begin_frame() (an encoder of its own;
     frame.submit()), begin_frame_with_encoder(&mut encoder) (the caller
     submits), begin_render_pass_to(&target, ..) for a RenderTargetView of a
-    texture (texture.as_render_target(), .with_depth(&depth)).
+    texture (texture.as_render_target(), .with_depth(&depth)). Not in C#:
+    begin_frame_on(&target) and begin_frame_with_encoder_on(&mut encoder,
+    &target) give the frame that target as its OWN, so begin_render_pass(..)
+    draws into it as on a canvas frame (DRAWING WITHOUT A CANVAS).
     RenderPass: set_pipeline, set_bind_group(index, &group),
     set_bind_group_with_offsets, set_vertex_buffer(slot, &buffer,
     BufferRange::default()), set_index_buffer(&buffer, format, range),
@@ -1136,7 +1245,8 @@ FRAMES, AND THE CANVAS: THE GRAPHICS ARE A LAYER.
     multi_draw_indexed_indirect, execute_bundle(&bundle),
     execute_bundles(&[..]), set_blend_constant(color),
     set_stencil_reference(r), push_debug_group / pop_debug_group /
-    insert_debug_marker, set_viewport, set_scissor_rect, end(); handle()
+    insert_debug_marker, set_viewport (viewport() reads it back; not in C#),
+    set_scissor_rect, end(); handle()
     for wgpu's own pass. set_pipeline CHECKS the pipeline against the pass's
     target (colour format, depth format, sample count) and PANICS with a
     message that names the difference and the fix (a mismatch would
@@ -1167,7 +1277,8 @@ THE BUILT-IN SHADERS (codebrix_webgpu_graphics::shaders).
     GraphicsDemo sample's "Shaders" scene does that and shows the messages.
     The crate's own shaders beyond the C# library's are listed apart:
     EffectShaders::all() (glow, bloom, particles) and WaterShaders::all()
-    (the wave field, the water surface, its scene capture); a page that
+    (the wave field, the water surface, the surface for the sun's cascades -
+    SURFACE_CASCADED -, its scene capture); a page that
     compiles every shader compiles those too. Chrome refuses some WGSL that
     other compilers (naga) accept - a texture sample or a derivative inside
     a branch, a float literal at f32's limit - so prove a shader of your own
@@ -1576,7 +1687,29 @@ MODELS: MODEL DATA, MODEL, INSTANCES AND THE MODEL RENDERER.
     texture goes into both MetallicRoughness and Occlusion). Both need the
     ONLY HANDLE of the model: call them right after loading, before any
     create_instance, clone or draw - otherwise they return an error that says
-    so (instances and the renderer would not see a later change). The data types
+    so (instances and the renderer would not see a later change).
+    ANIMATED MODEL TEXTURES (not in C#) live on the renderer, which owns the
+    materials' GPU state, so the model may be shared:
+    - renderer.set_material_texture_transform(&model, Some(i) | None,
+      ModelTextureKind::BaseColor | .., Affine2)? sets that slot's
+      texture-coordinate transform in place. For a river scrolling and
+      turning: Affine2::from_translation(Vec2::new(t * speed, 0.0)) *
+      Affine2::from_angle(a). It replaces the file's KHR_texture_transform;
+      compose with slot.transform_affine() to keep it, or pass that alone to
+      restore it.
+    - renderer.set_material_texture_override(&model, material, kind,
+      Some(&texture) | None)? makes the slot sample another texture, or its
+      own again with None. For a flipbook, pass an AnimatedTexture's
+      get_frame_texture(t) each frame. The renderer keeps a bind group per
+      texture combination (the last thirty-two) and holds those textures,
+      so going round a flipbook's frames makes no new groups.
+    Both work only on a slot that already has a texture; otherwise (and for
+    a material index out of range) they return an error. The material is
+    named by the model (any handle) and its index, so every instance of that
+    model in that renderer changes; another model, even from the same file,
+    does not. To animate instances differently, load the model once per
+    look. Set one value per material per frame, before the frame's first
+    begin. forget(&model) drops the changes. The data types
     keep the C# names: ModelMesh, ModelPrimitive (material: Option<usize>
     into materials(), None = the default material), ModelMorphTarget,
     ModelMaterial (MaterialAlphaMode Opaque/Mask/Blend), ModelTextureSlot
@@ -1661,11 +1794,14 @@ MODELS: MODEL DATA, MODEL, INSTANCES AND THE MODEL RENDERER.
     halves of the last pair; last_culled_instance_count(),
     last_shadow_draw_call_count(), last_local_light_count() and
     last_shadowed_spotlight_count() the same pair; frame_stats() ->
-    ModelRenderStats { draw_calls, instances, culled_instances,
+    ModelRenderStats { draw_calls, opaque_draw_calls, blended_draw_calls,
+    instances, opaque_instances, blended_instances, culled_instances,
     shadow_passes, shadow_draw_calls, culled_lods, fading_lods,
     local_lights, shadowed_spotlights } over every pair of the current
     frame (the counts summed; the two light counts the most any pair
-    chose). Read it after the frame's last pair.
+    chose). Read it after the frame's last pair. draw_calls and instances
+    are the sums of the opaque half (end_opaque) and the blended half
+    (end_blended).
     It shades with the crate's PBR shader: base colour, metallic-roughness,
     normal, occlusion and emissive maps, vertex colours, texture transforms,
     unlit, the alpha modes, double-sided, mirroring, GPU skinning and morph
@@ -1739,6 +1875,15 @@ LOADING glTF MODELS (not in C#: the desktop library reads the file itself).
     GltfDocument::parse(&bytes)? checks the whole document and reads no
         buffer or image yet; is_binary(), warnings(), extensions_used(),
         extensions_required().
+        node_extras(node) -> Option<String> (not in C#): a node's extras,
+        such as an exporter's custom properties, as compact JSON text
+        (members in alphabetical order); None for a node without extras or
+        a node that is not there. node is the glTF node index, which is
+        ModelNode::index, so document.node_extras(model.nodes()[i].index)
+        lines up with the model's nodes. The document then keeps its JSON
+        for as long as it lives, unless the file has no extras at all, so
+        drop it after building the models. Extras that are not an object (a
+        string, a number) are read too.
     document.external_files(base_address, images) -> Vec<GltfExternalFile
         { kind: GltfFileKind::Buffer | Image, index, uri, address }>: every
         buffer, then every image, whose URI is not a data: URI. `address` is
@@ -1769,7 +1914,11 @@ LOADING glTF MODELS (not in C#: the desktop library reads the file itself).
     keep ONE set for the models of a scene that are loaded at different
     times. Images inside a model file (data: URIs, .glb buffer views), and
     external images loaded with no base address, are not shared. One image
-    used as colour and as data is two textures (sRGB and linear). Two
+    used as colour and as data is two textures (sRGB and linear). An image
+    shared this way is decoded once, at the size of the FIRST add that
+    brings it: a later add naming the same address with another
+    max_texture_size gets that texture as it is (the shared texture's key
+    is the address, the colour space and mipmaps). Two
     primitives that name the same accessors for every attribute and morph
     target (one mesh with two materials) store their vertices once
     (share_vertex_data; never for primitives whose normals or tangents are
@@ -1909,7 +2058,7 @@ the skybox ignore them).
         SunShadowSettings::covering(min, max)   on, over that region
     "The sun" is the KEY light (light_direction, light_color,
     light_intensity); the additional directional lights never cast. ONE
-    region, ONE map, NO cascades: outside the box nothing is in the sun's
+    region and, by default, ONE map: outside the box nothing is in the sun's
     shadow, and a texel is the box's width over the map size, so keep the
     box as small as the scene allows (the box given to frame_box is a good
     one). Casters between the box and the sun still cast into it. Map
@@ -1917,6 +2066,22 @@ the skybox ignore them).
     the samples averaged per pixel (1 a hard edge, 4, 9, 16, 25); strength
     0..1 how much of the sun's light the shadow takes (ambient and
     image-based light are never shadowed).
+    CASCADES (cascades 1, the default: the one map above, exactly):
+        SunShadowSettings::covering(min, max).with_cascades(4, 400.0)
+        { cascades: 1, cascade_reach: f32::INFINITY,
+          cascade_split_weight: 0.7, cascade_blend: 0.1 }   (the defaults)
+    With 2 to SunShadowSettings::MAX_CASCADES (4) cascades the camera's view
+    is cut in depth out to cascade_reach (INFINITY: as far as the region)
+    and each slice gets a map of its own, map_size each, fitted round it
+    inside the region: sharp near the camera, coarser far off, no sun shadow
+    beyond the reach. The region still bounds the shadow, as above.
+    cascade_split_weight 0 cuts in equal steps, 1 in equal ratios;
+    cascade_blend (0..0.5) is the share of each slice over which it blends
+    into the next (0 a hard switch; the last fades out towards the reach).
+    The maps move in whole texels and keep their size as the camera turns,
+    so edges do not crawl. Each cascade is one more shadow pass and one more
+    map of memory. sun_shadow_map() hands on the last cascade, which covers
+    the whole view out to the reach.
     SPOTLIGHT SHADOWS: SpotLight::casts_shadows (with_shadows(true)) and
     SceneLighting::spot_shadows: SpotShadowSettings { map_size: Size1024,
     softness: 9, strength: 1.0 }. At most SceneLighting::
@@ -2134,10 +2299,14 @@ IMAGE-BASED LIGHTING, THE SKYBOX, THE HDR PATH AND TONE MAPPING.
     ON A CANVAS LAYER the HDR path is two passes in the frame: the scene into
     the HDR target (cleared, with its own depth), then a pass on the canvas
     frame that LOADS (begin_render_pass(None, None)) and tone maps over the
-    whole canvas. apply_in_pass maps the source onto the target pixel for
-    pixel and ignores a viewport: for an INSET (a small second view), tone
-    map into an 8-bit texture of the inset's size with apply, then draw that
-    texture with a SpriteBatch where it belongs. The tone-mapped scene is opaque, so layers BELOW it are
+    whole canvas. apply_in_pass maps the whole source onto the pass's
+    viewport (not in C#, where a viewport cuts the mapping). With no
+    viewport set, that is the whole target, pixel for pixel. For an INSET
+    (a small second view), set the inset's rectangle on the canvas pass with
+    pass.set_viewport(x, y, w, h, DepthRange::default()), then tone map the
+    inset's HDR target into it. pass.viewport() -> Option<(RectangleF,
+    DepthRange)> reads back the last viewport set through the pass.
+    The tone-mapped scene is opaque, so layers BELOW it are
     covered; put 2D layers above it - or keep its alpha:
     DRAWING ON THE PAGE WITH THE GRAPHICS CRATE (models over the page, HDR on):
         WebGpuCanvas { transparent: true, .. } with no frame in the styling;
@@ -2607,6 +2776,24 @@ EFFECTS: FRAME TIMINGS, GLOW, BLOOM AND PARTICLES (not in C#).
     soft-particle depth read). add outside begin/end is ignored and reported
     by the next end. On the HDR path a glow brighter than the bloom
     threshold blooms.
+    ORIENTED GLOWS: glows.add_oriented(&glow, facing) with GlowFacing::Camera
+    (what add draws) or GlowFacing::Fixed { right, up }: the glow lies or
+    stands fixed in the scene, spanning right and up times half its size, so
+    unit axes give a glow as wide as a camera-facing one and longer axes
+    stretch it (the round falloff becomes an ellipse; the texture's top is
+    at the end of up). GlowFacing::flat(normal, aspect) builds the axes:
+    flat(Vec3::Y, 1.0) lies round on the ground, flat(Vec3::Z, 3.0) stands
+    upright three times as tall as wide. Seen from both sides; edge-on it
+    vanishes. The oriented glows of a pair are one more instanced draw after
+    the camera-facing ones (last_draw_call_count 2).
+    THE NEAR FADE: glows.set_near_fade(Some(GlowNearFade { start, end }))
+    (default 0.5 and 2; None, the layer's default, never fades; near_fade()
+    reads it) fades every glow as the camera comes close: untouched from end
+    glow sizes away (the camera's distance from the centre divided by the
+    size), gone at start, a smooth step between - so a glow the camera is
+    inside does not wash over the view. One setting for the camera-facing
+    and the oriented glows alike: a glow lying on the ground under the
+    camera fades too.
     BLOOM (the HDR path only): bright things get a soft, wide halo.
         let mut bloom = graphics.create_bloom_renderer()?;
         bloom.settings = BloomSettings { threshold: 1.2, intensity: 1.0,
@@ -2654,8 +2841,11 @@ EFFECTS: FRAME TIMINGS, GLOW, BLOOM AND PARTICLES (not in C#).
     THE CLOCK: a delta of 0 (paused, the first frame, the frame after a
     seek) simulates and spawns nothing; the speed scales the delta; a delta
     above max_step is simulated as max_step (a tab brought back does not
-    spawn a minute of particles). The same seed and the same deltas, emitter
-    changes and bursts give the same particles on one GPU. Spawns are
+    spawn a minute of particles): a step is min(delta, max_step), default
+    0.1 s, so an application that drives a system with a scaled delta (a
+    sped-up clock, or a layer's time scale) must raise max_step, or the
+    particles run slower than the clock. The same seed and the same deltas,
+    emitter changes and bursts give the same particles on one GPU. Spawns are
     spread through a step along the emitter's path from its last position,
     so a moving emitter leaves a trail - and a BURST right after moving the
     emitter is smeared along that path too: move it in one step and burst in
@@ -2664,6 +2854,30 @@ EFFECTS: FRAME TIMINGS, GLOW, BLOOM AND PARTICLES (not in C#).
     collisions; one update per frame; a seek does NOT rewind them (a page
     opened at ?t=12 shows them as just after loading); each frame draws the
     whole capacity, so choose it to fit about rate x the longest life.
+    MORE EMITTERS: system.add_emitter(emitter)? returns its index;
+    emitter_at(i), emitter_at_mut(i), remove_emitter(i)? (not 0; later
+    indices move down), emitter_count(), burst_from(i, count)?; at most
+    ParticleSystem::MAX_EMITTERS. system.emitter is emitter 0. Every emitter
+    has its own place, shape, rate, bursts, speeds and lives and leaves its
+    own trail; the settings, capacity and drawing are shared, so many
+    sources of one kind of particle cost one compute step and one draw. When
+    the emitters together spawn more than the capacity in a step, the later
+    emitters' share is cut. A system with one emitter behaves as before.
+    LIT PARTICLES: system.draw_lit(&mut pass, &camera, &lighting)? draws
+    them in the scene's light: colour times the ambient plus the key light
+    times a half-Lambert term on a normal facing the camera, the whole
+    scaled by the lighting's exposure as the model renderer's output is. The
+    ambient is the hemisphere (ambient_color, ambient_ground_color,
+    ambient_up) under AmbientLighting::Hemisphere and the flat ambient_color
+    under Environment (no environment light is read); additional and local
+    lights and shadows are not applied. draw is unchanged.
+    STRETCHED PARTICLES: system.set_stretch(Some(ParticleStretch { factor,
+    max })) (default 0.05 and 4; None, the default, keeps them round;
+    stretch() reads it) draws each particle longer along its motion on the
+    screen: the size plus the distance moved in factor seconds, at most max
+    sizes, the width unchanged (the texture's horizontal along the motion).
+    A still particle, or one coming straight at the camera, stays round. It
+    works with draw_lit too.
     The effects' shaders are EffectShaders::all() (THE BUILT-IN SHADERS).
     The GraphicsDemo sample's "Glow and bloom" and "Particles" scenes and
     its frame-timings panel use all of this (frontends/graphics/src/demos/).
@@ -2769,7 +2983,8 @@ WATER (not in C#).
     WaterSurface::MAX_GRID), field None (Some(WaterField::of(&field)): view,
     the field's size, height_scale 1, displace true), open_waves None,
     detail (WaterDetail: fine ripples for the normals - strength,
-    wavelength, speed, seed), look (WaterLook). field_point(&ray) (where a
+    wavelength, speed, seed), look (WaterLook), mask None and flow
+    Vec2::ZERO (both below). field_point(&ray) (where a
     ray meets the still water, in field units - for stirring),
     to_field(..), to_world(..), height_at(x, z, t) and normal_at(x, z, t)
     (the water level plus the OPEN-WATER waves only; the wave field's
@@ -2782,6 +2997,52 @@ WATER (not in C#).
     local_light_highlights true, receives_shadows true, soft_shore 0.12,
     sheen WaterSheen (strength 0 = OFF; above 0 a thin-film rainbow sheen
     on the slopes, with scale, drift, slope_gain and height_gain).
+    A SHAPED SURFACE (a round pool, a pond; not in C#): WaterSurface { mask:
+    Some(graphics.create_water_mask(&WaterCoverage::ellipse(128, 128,
+    3.0))?), ..pond }. A WaterMask { view, threshold, coverage } is a
+    coverage picture over the rectangle, laid as the wave field is, read
+    from its RED channel with a linear filter: at or below its threshold
+    (default 0, kept to 0..0.99) nothing is drawn, neither colour nor depth;
+    above it the water fades in over the scene behind it, full at coverage
+    1. WaterCoverage is the CPU grid (0 to 255 per cell, as the picture
+    holds it; at most WaterCoverage::MAX_CELLS a side): new (all water),
+    from_fn(columns, rows, |u, v| ..), ellipse(columns, rows, feather) (the
+    largest ellipse whose fade fits in the rectangle), polygon(columns,
+    rows, &outline, feather) (corners in 0..1, u along local X, v along
+    local Z, the even-odd rule; WaterSurface::to_mask maps a world point
+    there); get / set / sample(uv) / cells(); feather is in cells, so make
+    the cells square on the surface. Your own picture:
+    WaterMask::of_view(&view) (no CPU coverage: the CPU answers count the
+    whole rectangle as water). With CPU coverage, field_point is None where
+    there is no water, and opacity_at(x, z) says how much water is drawn
+    there (0 off the rectangle); height_at and normal_at consult neither.
+    The wave field and the open-water waves still run under the whole
+    rectangle.
+    FLOWING WATER (a river, a channel; not in C#): WaterSurface { flow:
+    Vec2::new(0.8, 0.0), ..river } (world units per second along x and z)
+    carries the detail ripples, the caustic net and the sheen's bands
+    downstream, exact in time and without a jump however long the page
+    runs. The wave field and the open-water waves do not flow (the field is
+    fixed to the surface and its shores; the open-water waves travel at
+    their own speeds). The flow is one velocity for the whole surface: no
+    flow around objects. A flow that is not finite counts as zero.
+    A SKY IN THE WATER UNDER HEMISPHERE LIGHTING (not in C#):
+    water.set_reflection_environment(Some(&sky_map)) (reflection_environment()
+    reads it) makes the off-screen part of the reflection sample that
+    environment's prefiltered cube whatever the ambient mode (turned and
+    scaled by the lighting's environment_rotation and
+    environment_intensity); the water's own light stays the hemisphere's.
+    Under environment ambient lighting the water then reads both from this
+    map (it binds one cube). None (the default) reflects the lighting's
+    environment, or the hemisphere. It is a setting of the renderer, not of
+    WaterFrame.
+    With the sun's CASCADES (SunShadowSettings::with_cascades), the water's
+    glints and caustics pick between the cascades as the models do, so the
+    shadow on the water near the camera is as sharp as on the models.
+    SunShadowMap::cascades() -> Option<&SunShadowCascades> (count,
+    view_axis, blend, splits, matrices, depth_biases, normal_offsets; None
+    for the single map) has every cascade's numbers for a receiver of your
+    own; the map's fields remain the last cascade's.
     WHAT A WATER PIXEL IS: the scene behind it, shifted by the waves'
     normal (refraction, falling back to the unshifted view where the shifted
     point lies in front of the water) and tinted by the real depth to the
@@ -2807,8 +3068,10 @@ WATER (not in C#).
     off-screen, behind the camera or hidden falls back to the environment;
     the water is not reflected in itself; a reflection can be cut off
     raggedly at an object's edge); no spotlight shadows on the water (only
-    the sun's); a surface, not a fluid (no splashes, spray, foam, breaking
-    waves or flow); the camera above the water; screen-space refraction
+    the sun's); a surface, not a fluid (no splashes, spray, foam or breaking
+    waves; a flow carries the detail of the whole surface one way, not
+    around objects); level water only (no slopes or falls); the camera
+    above the water; screen-space refraction
     (nothing beyond the screen's edge); caustics only through the water; a
     finite plane. The shaders are WaterShaders::all() (THE BUILT-IN
     SHADERS). The GraphicsDemo sample's "Water pond" and "Water lake" scenes
@@ -2966,7 +3229,9 @@ PUTTING IT ON A CANVAS
 
   AnimationLayer::new takes a closure that records each frame's drawing into a VectorScene (emptied
   for it); AnimationLayer::for_session draws a shared session as it is; AnimationLayer::to_picture
-  draws into a picture other layers read instead of onto the canvas (PICTURE TARGETS below).
+  draws into a picture other layers read instead of onto the canvas (PICTURE TARGETS below). Without
+  a canvas, rendering::OffscreenRenderer draws a scene into a texture of the application's own (not
+  in C#; DRAWING WITHOUT A CANVAS, in the codebrix-webgpu part).
   AnimationLayer::control().stats() gives the last frame's RenderStats (no C# equivalent): the
   renderer's counters (draws, culled, cache hits and misses, offscreen and folded groups, draw
   calls, passes, unsupported, effects and effect passes), what was uploaded this frame
@@ -2982,6 +3247,33 @@ PUTTING IT ON A CANVAS
   browsers coarsen performance.now() (to 0.1 ms or more unless the page is cross-origin isolated),
   so read an average over many frames, not one frame; where performance is missing they read 0.
   Before the layer is prepared every counter is 0 (record_ms is still measured).
+  GPU TIME (no C# equivalent): control.set_gpu_timing(true) times the layer's work on the GPU, from
+  the beginning of its first render pass to the end of its last; stats().gpu_ms is then the latest
+  result, from a frame a few frames old (the browser hands results back asynchronously; nothing
+  waits). It needs the device feature TIMESTAMP_QUERY: ask for it with PageGpuOptions {
+  optional_features: wgpu::Features::TIMESTAMP_QUERY, .. } through set_page_gpu_options; where the
+  browser does not grant it, gpu_ms stays None and control.gpu_timing_supported() is false (false
+  too until the layer is prepared) - never an error. control.gpu_timing() reads the switch. Off (the
+  default) the layer records its passes exactly as without it. OffscreenRenderer has the same switch
+  (set_gpu_timing, gpu_timing, gpu_timing_supported); call encoder_submitted() after each
+  queue.submit, then read gpu_ms() (natively after device.poll). Browsers coarsen timestamps: read
+  an average.
+  CONTENT-SIZED TARGETS (no C# equivalent; OPT-IN, off by default):
+  control.set_content_sized_targets(true) / content_sized_targets() (the same on OffscreenRenderer),
+  from the next frame on. Off, the renderer's own offscreen targets - a 4x colour target and stencil
+  per nesting level (20 bytes a pixel each), the mix modes' backdrop copy, the effect textures, a
+  finished layer's height record, the stroke checkpoints - are canvas-sized, and the layer draws
+  exactly as it always has. On, they cover the drawing's box grown by its effects' reach (rounded
+  out to 16 pixels, with a little slack): use it for a small drawing on a large canvas, where memory
+  and fill work then go in proportion to the drawing. THE TARGETS are kept while the drawing stays
+  inside them, slide with it, are made again at least half as large again when it outgrows them, and
+  are made smaller only after it has used a quarter of them or less for 120 frames in a row; content
+  far apart makes one large box. WHAT IT COSTS: a drawing that fills the canvas draws exactly as
+  with canvas-sized targets, but otherwise pixels on stroke-set edges and filtered water samples can
+  differ slightly (float rounding) from the canvas-sized rendering; stroke checkpoints belong to the
+  targets' place, so a checkpointed painting is drawn whole once more when the targets move or
+  change size. The output - the canvas, a picture target's picture, an OffscreenRenderer's view -
+  keeps its size and place.
 
 C# TO RUST, SIDE BY SIDE (the porting rule: C# type names kept; members snake_case; the same argument
 order; C# default arguments are option structs with Default; where C# throws, Rust returns Result or
@@ -3061,11 +3353,14 @@ Option and the error says what to do; Drop for Dispose)
   major version does not change for it. Write every struct literal of an options type with
   `..Default::default()` (`SessionRenderOptions { include_background: true, ..Default::default() }`)
   and such code keeps compiling. Types that have gained fields this way: SessionRenderOptions (blend,
-  opacity, paint, effects, authored_layers, refraction - and it is no longer Copy: clone it to use it
-  twice), PathStrokeStyleOptions (width_mode), the SVG scene's SvgStroke (non_scaling) and SvgPathNode
-  (non_scaling_stroke), and RenderStats (its timings and its upload, stroke, checkpoint and ripple
-  counters). Enums gain variants the same way: DrawingNoiseKind has a third kind, Caustics, so an
-  exhaustive `match` on it needs a third arm.
+  opacity, paint, effects, authored_layers, refraction, pixel_ratio, cull - and it is no longer Copy:
+  clone it to use it twice), PathStrokeStyleOptions (width_mode), the SVG scene's SvgStroke
+  (non_scaling) and SvgPathNode (non_scaling_stroke), WaterRefraction and WaterReflection
+  (follows_layer; build them with `..WaterRefraction::new(source)` / `..WaterReflection::new(line)`),
+  and RenderStats (its timings, gpu_ms, and its upload, live-picture, stroke, checkpoint and ripple
+  counters). Enums gain variants the same way: DrawingNoiseKind has a third kind, Caustics,
+  StrokeWidthMode a third mode, CssPixels, and BoundTrack a BoolFn, so an exhaustive `match` on them
+  needs the new arm.
 
 TEXT: FONTS FROM BYTES, NEVER FROM THE SYSTEM
   Text is drawn as filled glyph outlines in fonts a FontRegistry holds. A font is registered from the
@@ -3160,7 +3455,8 @@ TEXT: FONTS FROM BYTES, NEVER FROM THE SYSTEM
 THE DEBUG OVERLAY (C# DebugOverlay)
   A preview aid: the timecode, "frame N / COUNT" and, if asked, the active cues on a translucent plate
   in a corner, in output pixels, drawn LAST over the session; off until set. It fails soft (draws
-  nothing) with no usable font.
+  nothing) with no usable font. Each line is shaped only when its text changes (or the overlay's
+  fonts, size or colour).
   C#                                                  Rust
   var overlay = new DebugOverlay(fonts, timeline)     let mut overlay = DebugOverlay::new(Some(fonts.clone()), Some(timeline.clone()));
       { ShowCues = true,                              overlay.show_cues = true;
@@ -3196,8 +3492,11 @@ GRADIENTS AND FADES
   opacity fades that layer alone (as its own group); an element's opacity multiplies its paint.
   Where the renderer differs from NoSkia: groups composite in linear light (the canvas host's
   convention), so a half-faded colour over another looks a little lighter than NoSkia's sRGB
-  arithmetic; the gradient's own interpolation is NoSkia's. A fade of the WHOLE session, background
-  included, and a blend mode for it are render options (RENDER-TIME LOOKS below).
+  arithmetic; the gradient's own interpolation is NoSkia's. Because the blending is in linear light,
+  a gradient whose alpha falls linearly to 0 ends in a visible edge: ease the alpha towards 0 with
+  more stops (for example five stops, the alpha easing out) for a clean fade. A fade of the WHOLE
+  session, background included, and a blend mode for it are render options (RENDER-TIME LOOKS
+  below).
 
 DRAWING ON THE PAGE (an animation that floats on the web page)
   A session drawn as a LAYER leaves its BACKGROUND OUT BY DEFAULT: DrawingSession::render and
@@ -3231,6 +3530,12 @@ RENDER-TIME LOOKS: BLEND, OPACITY, PAINT, EFFECTS, AND WIPES BETWEEN RENDERS (no
     overlay and the debug overlay are drawn over the picture, never blended or faded. A blended or
     faded session is one offscreen group (one level of the nesting allowance, THE COST OF EFFECTS
     AND MASKS below); default options draw exactly what they drew before.
+  - BLEND MODES PER LAYER AND PER ELEMENT (set on the layer or the element, not a render option):
+    layer.set_blend_mode(SessionBlendMode::Multiply) / with_blend_mode(..) / blend_mode(), and the
+    same three on a shape (DrawingShape), Normal by default. A layer is already a group, so its blend
+    costs nothing more, except with effects (one more level). A blended element is drawn whole into
+    one group put down in its mode at its opacity: one nesting level (two with effects) and a
+    backdrop copy each, so use it for a few elements, not thousands. A matte layer ignores its blend.
   - PAINT: paint: SessionPaint - AsAuthored (the default), Line(LinePaint), or Flat. LinePaint::new(
     stroke_style, color) is the line drawing's stroke and colour; .with_fill(paper) fills every shape
     with one colour UNDER its outline, so nearer shapes hide the lines behind them.
@@ -3260,6 +3565,13 @@ RENDER-TIME LOOKS: BLEND, OPACITY, PAINT, EFFECTS, AND WIPES BETWEEN RENDERS (no
   - EXCEPTIONS: authored_layers: a layer whose name is listed is drawn exactly as authored - paint,
     effects and finish - whatever paint and effects say.
   - refraction: the whole session seen through water (WATER below).
+  - CULLING: SessionRenderOptions { cull: Some(rect), .. } (canvas pixels; None by default) leaves
+    out every element that cannot draw inside the rectangle. The test is conservative (bounds grown
+    by strokes, effects and water, a reflection's mirror image included; groups are tested child by
+    child), so nothing that shows inside it is lost; what lies outside it may be incomplete, so use
+    it for a canvas that shows only that part. SVG and Lottie documents, stroke sets and particles
+    are always drawn. SessionWipe::render_sessions_culled draws the same picture as render_sessions
+    with each session culled to where it shows.
       let ink = LinePaint::new(PathStrokeStyle::new(2.0, PathStrokeStyleOptions { width_mode: StrokeWidthMode::Fixed,
           ..Default::default() })?, Color::from_rgb(30, 30, 40)).with_fill(Color::from_rgb(250, 248, 240));
       session.render_with(scene, w, h, &SessionRenderOptions { paint: SessionPaint::Line(ink.clone()), effects: false,
@@ -3329,13 +3641,16 @@ THE ANIMATION MODEL: TRACKS, BINDINGS, TRANSFORMS, GROUPS, TIME WINDOWS, CAMERA,
     BindingTarget::layer("Name") or BindingTarget::Camera; the track a FloatTrack, PointTrack,
     ColorTrack, BoolTrack, or BoundTrack::float_fn / point_fn (C#'s Func<double, T> overloads) /
     color_fn (no C# equivalent; it binds wherever a ColorTrack does - a layer's or group's Color,
-    Tint, GlowColor, ShadowColor - and is evaluated at the binding's time on every set_time). The
+    Tint, GlowColor, ShadowColor - and is evaluated at the binding's time on every set_time) /
+    bool_fn (no C# equivalent: BoundTrack::bool_fn(|t| t < 2.0) binds wherever a bool track binds -
+    a layer's IsVisible - without keyframes). The
     property and track are checked against the target when the binding is made (C#'s
     ArgumentException is the Err, saying what the target takes). bind_callback(|t| ..) is C#'s
     Bind(Action<double>); remove(&binding), clear(), apply(t) (C# Animations.Apply).
   - DrawingTransform (translation, rotation in degrees clockwise, scale_x / scale_y, anchor): scaled
     and rotated about the anchor, then moved - C#'s matrix. On an element (set_transform /
-    with_transform) and on a layer (set_transform). get_bounds() / get_transformed_bounds() are C#'s
+    with_transform) and on a layer (set_transform). To move an element along its OWN rotated axes,
+    nest it in a DrawingGroup that carries the rotation and move the element inside the group. get_bounds() / get_transformed_bounds() are C#'s
     bounds (the outline grown by half the stroke where stroked).
   - DrawingGroup: children in the group's coordinates; one transform, one opacity (below 1 the group
     is drawn whole, then faded - its children never show through each other), a content colour for
@@ -3459,6 +3774,15 @@ PATHS: DRAW-ON, MOTION ALONG A PATH, MORPH
   drawing's space, so its cached outline belongs to the shape AS TRANSFORMED - a still element
   reuses it every frame, but one whose own transform changes (moving, turning, scaling) is stroked
   again every frame; a scaling stroke keeps reusing its outline while it moves.
+  STROKES IN CSS PIXELS (no C# equivalent): StrokeWidthMode::CssPixels, the third mode, gives a
+  width in CSS pixels of the page, width x pixel_ratio device pixels whatever the calibration, the
+  camera and the element's scaling: a hairline of 1 stays one CSS pixel on a 2x screen. Dashes are
+  in CSS pixels too. Pass the ratio each frame: SessionRenderOptions { pixel_ratio:
+  frame.info.pixel_ratio, ..Default::default() } (default 1; a value that is not a positive number
+  counts as 1). Path shapes and text blocks' outlines honour it, and so does the line look: a
+  LinePaint whose stroke is in CSS pixels draws one CSS-pixel line weight over the whole drawing,
+  whatever its zoom. is_fixed_width() is true for it as for Fixed (it means "not
+  ScalesWithElement"); its cost is a fixed-width stroke's.
 
   SKETCHED LINES (no C# equivalent). geometry.sketch(&SketchOptions)? takes a path and returns a
   ROUGHENED path - an ordinary PathGeometry, usable with everything (stroke it, fill it, trim it for
@@ -3517,7 +3841,9 @@ TEXT BLOCKS, REVEALS, STAGGERS, CAPTIONS, TEXT ALONG A PATH
   over the same layout, to move, stagger or send along a path one by one. merge_overlaps merges each
   glyph's overlapping contours (path combining, below) before it is filled and outlined.
   A filled block draws every glyph from the renderer's geometry cache; an outlined or merged block
-  draws its clusters' outlines as paths each frame.
+  draws its clusters' outlines as paths, kept from frame to frame while the reveal shows the same
+  clusters. merge_overlaps does its merging when it is switched on (do it when the page loads, not
+  in a frame).
 
   STAGGERS: session.animations_mut().bind_stagger(&ids, Some(&StaggerOptions {...}))? binds, per
   element, its opacity, position, scale and rotation tracks (C#'s order), each element starting a
@@ -3602,6 +3928,16 @@ PATH COMBINING AND PATH QUERIES
   DIFFERENCE FROM NoSkia: the same AREAS, but the contours' start points, directions and order come
   from i_overlay - a draw-on (trim) or a morph of a COMBINED path starts elsewhere than in NoSkia; the
   dashes of to_stroke_outline are cut by kurbo's dash iterator.
+  POINT REDUCTION (no C# equivalent): reduce_points(tolerance) gives the same path with fewer
+  points: in each run of straight lines a point is dropped when it lies within the tolerance
+  (calibrated units) of the line that replaces it. Use it on paths of straight runs that will be
+  drawn small - combined, inflated and deflated results (polygons of lines) and flattened paths:
+  their points are fixed in calibrated units and do not coarsen with the drawing. A path of CURVES
+  (a sketch() result is cubics, a circle) loses nothing: flatten(tol)? it first and build the
+  polylines back into a PathGeometry of lines (PathGeometryBuilder, from each polyline's
+  get_points() and is_closed()). Curves and their end points, each contour's start point and the fill rule are kept; a
+  closed contour keeps at least a triangle; a tolerance that is not a positive number changes
+  nothing. Not simplify, which removes overlaps.
   QUERIES (C#'s arithmetic exactly, on the flattened path): contains(point, tol)?,
   distance_to_edge(point, tol)?, get_signed_distance(point, tol)? (negative inside),
   get_nearest_point(point, tol)? (an error for an empty geometry, where C# throws), distance(&other,
@@ -3696,6 +4032,12 @@ LAYER VISIBILITY
   at its keys): bind(BindingTarget::layer("Hint"), AnimatedProperty::IsVisible, bools)?. A hidden
   layer is not drawn and not checked for safe areas; its bindings still apply. A HIDDEN MATTE STILL
   MASKS: a layer named by DrawingMask::from_layer cuts its masked layer whether it is shown or not.
+  LAYER TIME WINDOWS (no C# equivalent): layer.set_time_window(Some(start), Some(end)) /
+  with_time_window, as an element's (start_time(), end_time() read it): the layer is drawn, checked
+  against safe areas and exported (the hard-edged mask, ownership maps) only from start until before
+  end; layer.is_visible_at(t) is its
+  visibility and its window together. A matte layer ignores its window, as it ignores its
+  visibility.
 
 SVG DOCUMENTS: PARTS, AND THE DOCUMENT'S OWN ANIMATION (SMIL, CSS)
   The crate takes an SVG document's TEXT or BYTES from anywhere - a call to the backend through the
@@ -3716,7 +4058,17 @@ SVG DOCUMENTS: PARTS, AND THE DOCUMENT'S OWN ANIMATION (SMIL, CSS)
   The element has the element properties of every shape (transform, opacity - the drawing fades as
   one -, time window, effects, bounds = the fitted box; Slice = the destination). Its part bindings
   and the document's own animations are evaluated at the SESSION'S TIME each frame; drawing never
-  changes the shape (session.get_svg_mut(id) reaches it to change parts or bindings later).
+  changes the shape (session.get_svg_mut(id) reaches it to change parts or bindings later). COST:
+  the element at an opacity below 1, and every group of the document with an alpha below 1 or a
+  blend mode, is drawn through an offscreen layer - one nesting level each (THE COST OF EFFECTS AND
+  MASKS); a group holding a single fill or stroke in normal blending takes its alpha into the paint
+  instead.
+  THE SESSION'S REPORTS (no C# equivalent): session.set_reports_document_warnings(true) puts the
+  warnings of every SVG and Lottie document the session draws into its reports
+  (session.take_reports()), once each, the first time it is drawn, prefixed "SVG document: " or
+  "Lottie document: " (off by default: read DrawingSvg::report / DrawingLottie::report yourself;
+  reports_document_warnings() reads the switch). session.add_report(message) adds a message of the
+  application's own; like the session's, a message is reported once in the session's life.
   C#                                                  Rust
   var svg = new DrawingSvg(); svg.FromSvg(markup)     let svg = Arc::new(DrawingSvg::from_svg(&markup, &options)?);
       / svg.Load(stream)                                  / DrawingSvg::load(&bytes, &options)?   (-> Result; UTF-8, no .svgz)
@@ -4218,6 +4570,11 @@ PLANNING A PAINTING: DIRECTION FIELDS, DETAIL MAPS, STROKE LAYOUT, THE PAINTING 
     length) -> (angle, bend) (a stroke that curves with the field), trace(start, step, steps).
   - DETAIL MAPS: DetailMap::from_picture_edges(&picture, smoothing)? is a plain DrawingPlane of 0..1
     (how much edge there is); DetailMap::sample(&plane, destination, x, y).
+    DetailMap::from_picture_edges_with(&picture, &EdgeDetailOptions { smoothing,
+    full_detail_percentile: 0.9 })? divides by the strength at that share of the picture's edges
+    instead of by the strongest, every stronger edge clamped to 1, so mid-strength edges get detail
+    too; only pixels with some edge count (flat pixels are left out), and 1 (the default) is
+    from_picture_edges. The percentile must be above 0 and at most 1.
   - STROKE LAYOUT: StrokeLayout::fill(&area, &field, Some((&detail, destination)), &|x, y| colour,
     &StrokeLayoutOptions { sizes, jitter: 0.33, angle_jitter: 6.0, seed: 1 })? -> one Vec of records
     per SIZE BAND, in each band's fill order. StrokeSize::new(length, width, spacing) (min_detail 0,
@@ -4284,7 +4641,16 @@ LIVE COLOUR SOURCES AND PICTURE TARGETS (strokes::StrokeColor, rendering::Pictur
   nothing (unless own_weight is 1). Picking costs nothing per stroke on the CPU; on the GPU a few
   samples per stroke vertex. LIMITS: the mean of a few point samples, not the exact area mean of
   DrawingOwnershipMap::get_mean_colors; picked EVERY frame (to pick once and keep, use a still
-  Picture); CPU and GPU agree within float rounding, not bit for bit. The sources:
+  Picture); CPU and GPU agree within float rounding, not bit for bit.
+  OWN WEIGHTS PER STROKE: strokes of one set can lean towards their own colour by different amounts:
+  set.with_own_weights(weights)? takes one weight per stroke, in the set's order (0..1; 1 by
+  default), and makes a new set. Each stroke then mixes by the pickup's own_weight TIMES its own
+  weight, so give the pickup own_weight 1 to use the strokes' weights as they are (with own_weight 0
+  they change nothing). The weights are kept in 8 bits (0 and 1 exact); set.own_weight(i) reads one
+  back (None past the last stroke). A painting timeline's schedule sorts the strokes, so give weights
+  after it, computed from each record: set.records().iter().map(|r| ...).collect(). In a
+  stroke-level transition a pair's weight travels with it from its first stroke's to its second's; a
+  stroke painting off or on keeps its own. The sources:
   - StrokeColorSource::Picture(ImageSource): one of the frame's pictures (uploaded once per picture).
   - StrokeColorSource::Target(PictureTarget): another session's drawing, made THIS FRAME:
       let target = PictureTarget::new(640, 360)?;                 // 1..=8192 each side
@@ -4319,6 +4685,18 @@ LIVE COLOUR SOURCES AND PICTURE TARGETS (strokes::StrokeColor, rendering::Pictur
     washed out, when it is drawn as a picture. Such a source is only as exact under seeking as the
     application makes it (a video seeks as the application seeks it; a simulation cannot be rewound).
   The GraphicsDemo sample's "live-pickup" scene shows all three sources, a 3D scene among them.
+  LIVE PICTURES (images::LivePicture; no C# equivalent): a picture whose pixels change in place.
+  LivePicture::new(w, h)? is transparent (each side at most LivePicture::MAX_SIZE);
+  live.write(&rgba)? replaces it and live.write_region(Rectangle::new(x, y, w, h), &rgba)? replaces
+  a part (straight-alpha RGBA, as ImageSource::from_rgba; a region outside the picture is refused
+  with a message and nothing is written); size(), to_rgba(). live.image_source() is a stand-in that
+  goes wherever a picture goes - ImageShape::new, a stroke pickup's StrokeColorSource::Picture, a
+  water picture - and draws from the live picture's ONE texture per device, into which only the
+  regions written since its last draw are sent before the draw; it draws exactly as an ImageSource
+  of the same pixels. Keep the LivePicture while it is shown (its stand-in does not keep it alive);
+  its texture is released with it, never swept, and its writes are counted in
+  stats().live_picture_writes / live_picture_write_bytes. For a video frame the application copies
+  into its own texture, StrokeColorSource::Texture(ExternalPicture) needs no live picture.
 
 THE SURFACE FINISH: CANVAS WEAVE AND PAINT THICKNESS, LIT (effects::SurfaceFinish; no C# equivalent)
   A layer drawn as a painted surface - the canvas's weave and the thickness of the paint, lit from
@@ -4333,14 +4711,17 @@ THE SURFACE FINISH: CANVAS WEAVE AND PAINT THICKNESS, LIT (effects::SurfaceFinis
   layer.surface_finish() reads it; set it again each frame to move the light (get_layer_mut).
   WHAT HAS THICKNESS: only the layer's STROKE SETS (each stroke's tip height x coverage x load x
   opacity x impasto, piling up where strokes overlap; a stroke without a tip is a flat plateau);
-  shapes, pictures and ownership maps on a finished layer show only the weave. The weave is in the
+  shapes, pictures and ownership maps on a finished layer show only the weave. The finish lights
+  every fine feature of a tip's height, so ridges and speckles in a tip's height show as
+  scratch-like lines: give tips that will be lit smooth height domes. The weave is in the
   LAYER's coordinates (it stays put on the painting and scales with the zoom) and fades out where its
   threads would be narrower than about two device pixels; thick paint hides it. Flat areas keep their
   colour, to rounding. The finish shows only where the layer drew.
   HOW IT COMPOSES: it rides the layer's effect group - a layer with effects, frame operations, a
   transition or water takes no further nesting level; a plain layer takes one. The LINE and FLAT looks
   draw no finish (an authored layer keeps it), and effects off drops it. COST: the layer's stroke
-  sets are drawn a second time each frame (into a height record of 2 bytes per canvas pixel), plus a
+  sets are drawn a second time each frame (into a height record of 2 bytes per pixel of the
+  renderer's targets: the canvas's, or the drawing's box with content-sized targets), plus a
   few texture reads per pixel of the layer. LIMITS: the height ignores clips and masks (a stroke
   clipped by a mask still raises relief at the mask's edge); a finished layer inside a wipe inside a
   blended session uses all three nesting levels.
@@ -4354,8 +4735,10 @@ A STILL PAINTING FROM ITS CHECKPOINTS (strokes::StrokeCheckpoints; no C# equival
       if let Some(why) = shape.checkpoint_refusal() { /* show it: this shape can never use them */ }
   THE RULE IT KEEPS: every frame drawn with the cache is IDENTICAL, pixel for pixel on the same GPU, to
   the frame drawn with every stroke at its progress. OFF BY DEFAULT (None): each checkpoint costs 16
-  bytes per canvas pixel of GPU memory (StrokeCheckpoints::bytes_at(width, height);
-  BYTES_PER_PIXEL), memory the crate cannot weigh for the application, and it pays only for a large
+  bytes per pixel of the renderer's targets (StrokeCheckpoints::bytes_at(width, height);
+  BYTES_PER_PIXEL) - the canvas's by default; the drawing's box with set_content_sized_targets(true)
+  (PUTTING IT ON A CANVAS), where a checkpoint belongs to the targets' place: when they move or
+  change size the painting is drawn whole once and checkpointed again there - memory the crate cannot weigh for the application, and it pays only for a large
   painting that holds still. StrokeCheckpoints { spacing: whole strokes between checkpoints, capacity:
   checkpoints kept per draw }; validate()?.
   WHEN THE CACHE IS USED - all of these, otherwise the set is simply drawn whole:
@@ -4468,6 +4851,13 @@ WATER: THE RIPPLE FIELD, CAUSTICS, REFRACTION AND REFLECTION (module water; no C
   the camera at the layer's parallax; the layer's own transform does not move the water - so one
   field can serve one layer's refraction and another layer's reflection and both line up (a click's
   calibrated position is where its drop lands). source.validate()? checks it.
+  WATER THAT FOLLOWS ITS LAYER: WaterRefraction { follows_layer: true,
+  ..WaterRefraction::new(source) } and WaterReflection { follows_layer: true,
+  ..WaterReflection::new(line) } place the water and the waterline in the layer's own space (its
+  transform too), so a layer scrolled by its transform carries its ripples along; by default (false)
+  the layer's transform does not move the water. A layer has one water space: when its refraction
+  and reflection disagree, the ripples follow the refraction's flag and the waterline the
+  reflection's. The flag does nothing on SessionRenderOptions::refraction.
   REFRACTION - a layer (or a whole session) seen THROUGH the water:
       session.get_layer_mut("Floor").unwrap().set_refraction(Some(WaterRefraction {
           glints: Some(WaterGlints::default()), caustics: Some(CausticLight::default()),
@@ -4523,15 +4913,18 @@ THE COST OF EFFECTS AND MASKS (one frame budget for the 3D and 2D layers)
     offscreen target, the resolve and the composite at full resolution - is what a full-canvas
     effect costs most; small elements cost in proportion to their box. Measured costs of a
     full-canvas blur are in the repository's MAINTAINER-README (THE RENDERER'S EFFECT PASSES).
-  - A mask "inside a path" is a stencil clip (nearly free); "outside a path" and a layer matte draw
-    the content offscreen and composite the mask over it (one offscreen group each).
+  - A mask "inside a path" is a stencil clip (nearly free); "outside a path", a layer matte and a
+    plane mask draw the content into an offscreen group and composite the mask into it through a
+    second offscreen group nested inside it: two offscreen levels (on a layer, or a group already
+    drawn as a group of its own, the first is that group).
   - Effects nest at most three offscreen levels deep (with groups and masks); deeper ones are drawn
     without their effects and counted in RenderStats::unsupported. What takes a level: a blended or
     faded session (render options) one; a soft wipe one for its second render (shared with that
     session's blend in render_sessions); a stroke set below full opacity one; a layer's surface
     finish, refraction and reflection none of their own - they ride the layer's effect group (one
-    level for a plain layer). So a finished, refracted layer of a blended session inside a wipe uses
-    all three, and any further group inside it is drawn as a clip and counted.
+    level for a plain layer); a mask DrawingMask::inside none (a stencil clip); an outside mask, a
+    matte or a plane mask two (above). So a finished, refracted layer of a blended session inside a
+    wipe uses all three, and any further group inside it is drawn as a clip and counted.
   - THE CANVAS SIZE MULTIPLIES THE COST OF OFFSCREEN WORK. On a high-density screen (device pixel
     ratio 2: a 1280 x 720 canvas is 2560 x 1440 pixels) a frame with tens of offscreen groups - mix
     modes, masks, blurs, Plus-composited groups - can take 30 to 50 ms on an integrated GPU, where the
@@ -4553,15 +4946,26 @@ WHAT THE RENDERER DOES AND COSTS (so an application can plan)
   - Flattened and stroked outlines are CACHED in the shape's own space: a shape that only moves,
     turns or scales a little costs no re-flattening; a shape whose geometry changes every frame (a
     morph, a trim, a boiling sketch) is re-flattened every frame, and so is a FIXED-WIDTH stroke whose
-    element moves (it is stroked in the drawing's space).
+    element moves (it is stroked in the drawing's space). A shape whose geometry stops changing is
+    cached again from its second still frame. Cached outlines are kept within a memory budget, the
+    least recently used dropped first, so an element hidden for a while is not flattened again when
+    it shows. The budget is 32 MiB unless set: control.set_geometry_cache_budget(bytes) /
+    geometry_cache_budget() (no C# equivalent; the same on OffscreenRenderer). A smaller budget holds
+    less memory but flattens again what it dropped when it is drawn again (CPU time when a scene with
+    many shapes, much text or many scale steps comes back to what it showed); a larger one keeps
+    more of a long, varied scene ready; 0 keeps only what the last frame drew. Nothing drawn changes.
+  - THE FRAME'S COST: the number of tessellated vertices (RenderStats::vertices), not the number of
+    draws, is the best predictor of the renderer's frame time. Boolean path results (PATH
+    COMBINING) are dense polygons - PathGeometry::reduce_points and a larger combine tolerance cut
+    them - and a merged path cannot be culled piecewise.
   - Stroke sets are ONE instanced draw each, with their records uploaded once; brush tips and
     pictures are uploaded once. Everything uploaded is swept every frame by one rule with a byte
     budget (PICTURES AND SPRITES).
   - Shapes that do not overlap are drawn in one batch.
   - A group (push_layer) with normal blending and full alpha costs nothing (it is only its clip); a
     group of one draw puts its alpha into that draw; other groups are drawn offscreen and composited.
-    A group with a MIX mode (Multiply, Screen, ... Luminosity) copies the canvas-sized target below it
-    first: these are the expensive ones - use them on a few groups, not hundreds.
+    A group with a MIX mode (Multiply, Screen, ... Luminosity) copies the target below it
+    (canvas-sized; the drawing's size with set_content_sized_targets(true)) first: these are the expensive ones - use them on a few groups, not hundreds.
   - Mix modes blend sRGB-encoded values (as the W3C formulas and NoSkia do); normal blending happens
     in linear light (the canvas host's convention). Translucent overlaps therefore look a little
     lighter than NoSkia's.
@@ -4722,8 +5126,9 @@ LOTTIE ANIMATIONS (module lottie)
 WHAT HAS NO EQUIVALENT (and what to do instead)
   - The freehand-stroke and pointer members of DrawingSession (PointerPressed, UndoLastStroke, the
     active stroke): not part of this package (interactive drawing tools are out of its scope).
-  - ExportPng / ExportJpeg / ExportImage / FrameSequenceRenderer: none - the package draws in real time
-    for the browser window only.
+  - ExportPng / ExportJpeg / ExportImage / FrameSequenceRenderer: none - the crate writes no files. A
+    program draws a frame into a texture of its own with OffscreenRenderer and encodes it itself
+    (DRAWING WITHOUT A CANVAS, in the codebrix-webgpu part).
   - ExportPixels: none for applications. (The crate keeps an asynchronous readback for its own tests;
     it is not an application feature.)
   - FontRegistry.RegisterFont(path) and (stream): none - register the bytes (the crate reads no
@@ -5071,7 +5476,8 @@ COMMON PITFALLS TO AVOID
       transform only, not its parents': put the stroke shape at the same
       level as the elements it follows.
     * Using a MIX blend mode (Multiply, Screen, ... Luminosity) on many
-      groups. Each such group copies the canvas-sized target below it; use
+      groups. Each such group copies the target below it (canvas-sized
+      unless set_content_sized_targets(true)); use
       them on a few groups, not hundreds.
     * Taking the WebGpu package with CodeBrix.WebPlatform packages of
       another version. The Core pin is exact: NuGet reports a conflict, or the
@@ -5185,8 +5591,9 @@ COMMON PITFALLS TO AVOID
 WHAT THIS PACKAGE DOES NOT DO
 =============================
 
-    * No WebGL and no native (desktop) backends; the crates are for a
-      WebGPU-capable browser only.
+    * No WebGL and no native (desktop) backends: the crate set carries
+      WebGPU for the browser only (a native program brings a native wgpu
+      backend itself - DRAWING WITHOUT A CANVAS).
     * No JavaScript of its own and no pre-compiled WebAssembly: the crates
       are compiled into the application's own WebAssembly file.
     * `codebrix-webgpu` does not hide `wgpu`: a renderer draws with the
@@ -5195,9 +5602,9 @@ WHAT THIS PACKAGE DOES NOT DO
       platform's shared crate's job.
     * Nothing registers itself; nothing is downloaded at build time in the
       default crate mode.
-    * The animation crate draws in real time for the browser window only:
-      no export of images or frame sequences (see WHAT HAS NO EQUIVALENT in
-      THE codebrix-webgpu-animation CRATE).
+    * The animation crate writes no image files and no frame sequences (see
+      WHAT HAS NO EQUIVALENT in THE codebrix-webgpu-animation CRATE); its
+      OffscreenRenderer draws into a texture the application then reads.
     * The graphics crate fetches nothing and reads no file system: glTF
       files, PNG and JPEG files, model data, pixels and panoramas are bytes
       the application hands it. It decodes PNG and JPEG (through
@@ -5313,12 +5720,18 @@ QUICK REFERENCE CARD
         // { width, height, rgba }: straight RGBA8, rows top down
     CanvasInput::PointerMove { buttons, kind, modifiers, .. }  // match with ..
     WebGpuCanvas { suppress_context_menu: false, .. }  // keep the browser menu
+    CanvasInput::PointerDown { tap_count: 2, .. }      // double-click / tap
+    WebGpuCanvas { interactive: false, .. }    // decorative: no input at all
+    WebGpuCanvas { idle_when_paused: true, .. }; layers.request_redraw()
+    layers.set_time_scale(&h, 2.0)            // one layer at its own pace
+    CanvasTarget::offscreen(format)           // a texture that is no canvas
 
   FRONTEND Rust (codebrix_webgpu_graphics)
     GraphicsContext::wrap_gpu_context(&gpu)   // share the host's device
     ctx.create_*(.., label) / options structs // C# names, snake_case
     ctx.create_render_pipeline(&shader).with_*(..).build()
     ctx.begin_canvas_frame(frame, None)       // a LAYER of the host
+    ctx.begin_frame_on(&target.view())        // offscreen, its own target
     gf.begin_render_pass(None, None)          // None: load, never clear
     ctx.take_errors()                         // C# TakeErrors(); async:
     validate / build_checked / try_create_shader / buffer.read  .await
@@ -5405,6 +5818,8 @@ QUICK REFERENCE CARD
     PlaybackController::new(timeline).seek(frame.info.time)   // or advance(delta)
     AnimationLayer::new(|frame, scene| { session.set_time(frame.info.time);
         session.render(scene, frame.info.width, frame.info.height); })
+    OffscreenRenderer::new(&gpu, format).render(&gpu, &mut encoder, &view, w, h, &scene)
+        // no canvas: into a texture of yours, cleared by you first
     scene.fill / stroke / push_layer(blend, alpha, ..) / push_clip_layer / pop_layer
     let fonts = FontRegistry::new(); fonts.register_font(bytes, None)?   // bytes only, no system fonts
     DrawingSessionOptions { fonts: Some(fonts.clone()), .. }; session.draw_text(t, x, baseline, size, TextShapeOptions { .. })?

@@ -20,7 +20,8 @@
 //! - Pipelines: [`RenderPipelineBuilder`] with [`BlendPreset`], [`DepthPreset`], [`CullPreset`] and
 //!   [`VertexLayout`] (described element by element, or by a [`VertexType`]);
 //!   [`ComputePipelineBuilder`] and [`GpuComputePipeline`]; [`GpuPipelineLayout`].
-//! - Frames: [`GraphicsFrame`] (its own encoder, a borrowed one, or a canvas frame's) with its
+//! - Frames: [`GraphicsFrame`] (its own encoder, a borrowed one, or a canvas frame's; with a target
+//!   of its own without a canvas, [`GraphicsContext::begin_frame_on`]) with its
 //!   copies, clears and query resolves, [`RenderPass`] (with indirect draws - [`DrawIndirectArgs`],
 //!   [`DrawIndexedIndirectArgs`] - and bundles) and [`ComputePass`] ([`DispatchIndirectArgs`]).
 //! - Render bundles: [`RenderBundleBuilder`] records a [`GpuRenderBundle`] once; a pass replays it.
@@ -158,7 +159,7 @@ pub use drawing2d::{CircleOptions, SpriteBatch, SpriteBatchBeginOptions};
 pub use drawing3d::{AmbientLighting, Camera, DirectionalLight, LitMaterial, MaterialAlphaMode, MaterialOptions, Mesh, MeshData, MeshRenderer, MeshShapes, MeshVertex, OrbitCamera, OrbitController, OrbitLimits, ProjectionKind, SceneLighting};
 pub use drawing3d::{CanvasProjection, Ray};
 pub use context::{DepthTextureOptions, ErrorType, GraphicsContext, GraphicsContextOptions, GraphicsError, GraphicsException, RenderTextureOptions, RgbaTextureOptions, ShaderCompilationException, Texture2DOptions};
-pub use effects::{BloomRenderer, BloomSettings, EmitterShape, Glow, GlowBlend, GlowLayer, GlowPulse, ParticleEmitter, ParticleSettings, ParticleSystem, ParticleSystemOptions};
+pub use effects::{BloomRenderer, BloomSettings, EmitterShape, Glow, GlowBlend, GlowFacing, GlowLayer, GlowNearFade, GlowPulse, ParticleEmitter, ParticleSettings, ParticleStretch, ParticleSystem, ParticleSystemOptions};
 pub use frames::{BufferRange, ComputePass, ComputePassOptions, DepthRange, DispatchIndirectArgs, DrawIndexedIndirectArgs, DrawIndexedOptions, DrawIndirectArgs, DrawOptions, GraphicsFrame, RenderPass, RenderPassOptions};
 pub use gltf::{GltfDocument, GltfExternalFile, GltfFileKind, GltfLoadOptions, GltfModelSet};
 pub use images::{AnimatedTexture, AnimatedTextureOptions, AnimatedTextureStorage};
@@ -172,6 +173,8 @@ pub use shaders::{PbrFeatures, PbrShader, ShadowDepthShader};
 pub use visibility::CullVolume;
 pub use water::{CpuWaveField, GerstnerWave, GerstnerWaveRecord, OpenWaterWaves, WaveDrop, WaveEdge, WaveField, WaveFieldOptions, WaveMask, WaveRain, WaveStir, WaveWake};
 pub use water::{WaterCaustics, WaterDetail, WaterField, WaterFrame, WaterLook, WaterRenderStats, WaterRenderer, WaterSheen, WaterSurface};
+pub use water::{WaterCoverage, WaterMask};
+pub use models::SunShadowCascades;
 
 /// The `glam` crate (vectors, matrices, quaternions), the version `codebrix-webgpu` was built with.
 pub use codebrix_webgpu::glam;

@@ -7,12 +7,19 @@
 //! - words 4..7 (f32): width, bend, profile, load;
 //! - words 8..11 (f32): start, end, anchor blend, 0;
 //! - words 12..15 (u32): the colour as straight sRGB bytes `r | g << 8 | b << 16 | a << 24`,
-//!   `tip | flags << 16`, `anchor0 | anchor1 << 16`, the seed.
+//!   `tip | flags << 16 | (255 - own weight) << 24`, `anchor0 | anchor1 << 16`, the seed.
+//!
+//! WORD 13: the tip in bits 0..15, the flags in bits 16..23 (0 in a plain set), and in bits
+//! 24..31 255 MINUS the stroke's 8-bit own weight (`BrushStrokeSet::with_own_weights`; 255 = 1):
+//! a stroke of weight 1 - every stroke of a set without weights - packs 0 there, so such a set's
+//! records are exactly what they were before the weights existed. The shader reads the tip and
+//! the flags masked.
 //!
 //! A TRANSITION's draw binds two record buffers of the same length (group 2, bindings 0 and 1;
 //! strokes/brush_stroke_morph.rs `pack_variant`): slot k of both is one pair. In the TARGET
 //! records word 11 is the slot's delay under the spread (0..1) and word 13's flags say what the
-//! slot does (0 travels, 1 paints off, 2 paints on). A plain set binds its records at both.
+//! slot does (0 travels, 1 paints off, 2 paints on). A plain set binds its records at both. Both
+//! buffers carry each stroke's own weight (an arriving stroke's in both).
 //!
 //! THE DRAW BLOCK (one per stroke draw per frame, at a 256-byte-aligned dynamic offset of the
 //! frame's uniform buffer; `DRAW_HEADER_VEC4S` vec4 of header, then two vec4 per anchor):
@@ -31,7 +38,7 @@
 //! - then per anchor (a b c d), (e f 0 0).
 
 use crate::color::Color;
-use crate::strokes::BrushStrokeRecord;
+use crate::strokes::{BrushStrokeRecord, BrushStrokeSet};
 
 /// Bytes of one record in the GPU's storage buffer.
 pub(crate) const RECORD_BYTES: usize = 64;
@@ -84,7 +91,8 @@ pub(crate) fn pack_record(r: &BrushStrokeRecord) -> [u32; 16] {
     ]
 }
 
-/// Every record of a set, as the bytes of the one upload.
+/// Every record of a set, as the bytes of the one upload, every stroke at own weight 1 (a set
+/// without own weights; [`pack_set`] packs a set's own).
 pub(crate) fn pack_records(records: &[BrushStrokeRecord]) -> Vec<u8> {
     let mut out = Vec::with_capacity(records.len() * RECORD_BYTES);
     for r in records {
@@ -93,6 +101,39 @@ pub(crate) fn pack_records(records: &[BrushStrokeRecord]) -> Vec<u8> {
         }
     }
     out
+}
+
+/// Word 13's own-weight bits for an 8-bit own weight (255 = 1 packs 0).
+pub(crate) fn own_weight_word(bits: u8) -> u32 {
+    ((255 - bits) as u32) << 24
+}
+
+/// One record of a set as the GPU reads it, with the set's own weight for it.
+pub(crate) fn pack_set_record(set: &BrushStrokeSet, index: usize) -> [u32; 16] {
+    let mut words = pack_record(&set.records()[index]);
+    words[13] |= own_weight_word(set.own_weight_bits(index));
+    words
+}
+
+/// Every record of a set with its own weights, as the bytes of the one upload: byte for byte
+/// [`pack_records`] of its records for a set without own weights.
+pub(crate) fn pack_set(set: &BrushStrokeSet) -> Vec<u8> {
+    if !set.has_own_weights() {
+        return pack_records(set.records());
+    }
+    let mut out = Vec::with_capacity(set.len() * RECORD_BYTES);
+    for i in 0..set.len() {
+        for w in pack_set_record(set, i) {
+            out.extend_from_slice(&w.to_le_bytes());
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+/// strokes.wgsl `stroke_own_weight`: a stroke's own weight from its record's word 13.
+pub(crate) fn own_weight_of_word(word: u32) -> f32 {
+    crate::strokes::brush_stroke_set::own_weight_of(255 - (word >> 24) as u8)
 }
 
 #[cfg(test)]

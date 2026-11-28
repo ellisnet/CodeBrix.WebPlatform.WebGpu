@@ -179,3 +179,26 @@ fn clones_share_one_identity_and_sets_do_not() {
     assert!(std::ptr::eq(set.records().as_ptr(), clone.records().as_ptr()));
     assert_eq!(set.len(), 1);
 }
+
+#[test]
+fn own_weights_are_checked_one_per_stroke_and_make_a_new_set() {
+    //Arrange
+    let set = BrushStrokeSet::new(vec![record(), record(), record()]).unwrap();
+    //Act
+    let weighted = set.clone().with_own_weights(vec![0.0, 0.5, 1.0]).unwrap();
+    let too_few = set.clone().with_own_weights(vec![1.0]);
+    let outside = set.clone().with_own_weights(vec![0.0, 1.5, 1.0]);
+    let nan = set.clone().with_own_weights(vec![0.0, f32::NAN, 1.0]);
+    //Assert
+    assert_eq!((set.own_weight(0), set.own_weight(2), set.own_weight(3)), (Some(1.0), Some(1.0), None), "a set without weights: 1 for every stroke");
+    assert_eq!(weighted.own_weight(0), Some(0.0));
+    assert_eq!(weighted.own_weight(1), Some(128.0 / 255.0), "kept in 8 bits");
+    assert_eq!(weighted.own_weight(2), Some(1.0));
+    assert_ne!(weighted.id(), set.id(), "a new set: its own upload");
+    assert_ne!(weighted, set);
+    assert_eq!(weighted.records(), set.records());
+    assert_eq!(weighted.clone(), weighted);
+    assert!(too_few.unwrap_err().contains("the set has 3 strokes and 1 weights were given"));
+    assert!(outside.unwrap_err().contains("Own weight 1 of a stroke set must be a fraction, 0..1"));
+    assert!(nan.unwrap_err().contains("it is NaN"));
+}

@@ -3,6 +3,12 @@
 //! render and compute passes it begins (C#: `GraphicsFrame`, `RenderPassOptions`). The copies,
 //! clears, query resolves and debug groups are in `graphics_frame_commands.rs`.
 //!
+//! A FRAME WITH A TARGET OF ITS OWN WITHOUT A CANVAS (Not in C#):
+//! [`GraphicsContext::begin_frame_on`] and [`GraphicsContext::begin_frame_with_encoder_on`] give
+//! a frame on any [`RenderTargetView`] (a headless target, a texture of the application's) the
+//! target that a canvas frame has, so that code written for "the frame's own target"
+//! ([`GraphicsFrame::begin_render_pass`]) runs offscreen unchanged.
+//!
 //! MULTISAMPLING (Not in C#): a pass on a multisampled target ends by resolving into the target's
 //! resolve view; a frame begun with [`GraphicsContext::begin_canvas_frame_on`] on a 4-sample
 //! [`CanvasFrameTarget`] draws into the target's multisampled buffers and, when it is dropped,
@@ -52,7 +58,9 @@ enum FrameEncoder<'a> {
 
 /// One frame's recording (C#: `GraphicsFrame`): begin render passes, copy, then submit. Made by
 /// [`GraphicsContext::begin_frame`] (its own encoder, which it submits),
-/// [`GraphicsContext::begin_frame_with_encoder`] (an encoder the caller owns and submits), or
+/// [`GraphicsContext::begin_frame_with_encoder`] (an encoder the caller owns and submits), their
+/// twins with a target of the frame's own, [`GraphicsContext::begin_frame_on`] and
+/// [`GraphicsContext::begin_frame_with_encoder_on`] (Not in C#), or
 /// [`GraphicsContext::begin_canvas_frame`] (the canvas host's frame: the graphics are a LAYER
 /// that draws over what is there; the host submits and presents).
 ///
@@ -83,6 +91,26 @@ impl GraphicsContext {
     /// `BeginFrame(CommandEncoder)`).
     pub fn begin_frame_with_encoder<'a>(&self, encoder: &'a mut wgpu::CommandEncoder) -> GraphicsFrame<'a> {
         GraphicsFrame { context: self.clone(), encoder: Some(FrameEncoder::Borrowed(encoder)), target: None, id: self.next_frame_id(), canvas_resolve: None }
+    }
+
+    /// A frame with an encoder of its own whose OWN target is `target` (Not in C#): the frame a
+    /// canvas layer gets, without a canvas - [`GraphicsFrame::begin_render_pass`] draws into
+    /// `target` (its colour, its depth if it has one, resolving if it is multisampled) and
+    /// [`GraphicsFrame::target`] returns it, so a renderer written for a canvas frame's target
+    /// draws into a headless target or a texture of the application's unchanged. Submit it with
+    /// [`GraphicsFrame::submit`]. Unlike a canvas frame nothing has cleared the target: clear it
+    /// in the first pass (`clear_color: Some(..)`).
+    pub fn begin_frame_on(&self, target: &RenderTargetView) -> GraphicsFrame<'static> {
+        let encoder = self.device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("codebrix-webgpu-graphics frame") });
+        GraphicsFrame { context: self.clone(), encoder: Some(FrameEncoder::Owned(encoder)), target: Some(target.clone()), id: self.next_frame_id(), canvas_resolve: None }
+    }
+
+    /// [`GraphicsContext::begin_frame_on`] recording into an encoder the caller owns and submits
+    /// (Not in C#; the twin of [`GraphicsContext::begin_frame_with_encoder`]): for drawing into
+    /// `target` on an encoder shared with other work - another crate's renderer, the caller's own
+    /// copies and readback.
+    pub fn begin_frame_with_encoder_on<'a>(&self, encoder: &'a mut wgpu::CommandEncoder, target: &RenderTargetView) -> GraphicsFrame<'a> {
+        GraphicsFrame { context: self.clone(), encoder: Some(FrameEncoder::Borrowed(encoder)), target: Some(target.clone()), id: self.next_frame_id(), canvas_resolve: None }
     }
 
     /// A frame on a canvas host's frame (C#: `BeginFrame(IWebGpuTextureTarget, depth)`): it records
@@ -137,7 +165,8 @@ impl<'a> GraphicsFrame<'a> {
         matches!(self.encoder, Some(FrameEncoder::Owned(_)))
     }
 
-    /// The frame's own target, if it has one (a canvas frame's) (C#: `Target`).
+    /// The frame's own target, if it has one (a canvas frame's, or the target of
+    /// [`GraphicsContext::begin_frame_on`]) (C#: `Target`).
     pub fn target(&self) -> Option<&RenderTargetView> {
         self.target.as_ref()
     }
@@ -162,10 +191,7 @@ impl<'a> GraphicsFrame<'a> {
     /// Begins a render pass on `target` (None: the frame's own) with options (C#:
     /// `BeginRenderPass(target, clearColor, clearDepth, options)`).
     pub fn begin_render_pass_with_options(&mut self, target: Option<&RenderTargetView>, clear_color: Option<Color4>, clear_depth: Option<f32>, options: &RenderPassOptions) -> Result<RenderPass<'_>, GraphicsException> {
-        let target = match target.or(self.target.as_ref()) {
-            Some(target) => target.clone(),
-            None => return Err(GraphicsException::new("The frame has no target of its own; pass a RenderTargetView (begin_render_pass_to), or begin the frame on a canvas frame (begin_canvas_frame).")),
-        };
+        let target = pass_target(target, self.target.as_ref())?.clone();
         // A multisampled canvas layer's first pass clears (the layers below are not in its buffer).
         let first_layer_pass = match &mut self.canvas_resolve {
             Some(resolve) if !resolve.started && &resolve.multisampled_view == target.color_view() => {
@@ -254,6 +280,12 @@ impl<'a> GraphicsFrame<'a> {
     }
 }
 
+/// The target a render pass draws into: the one it is given, else the frame's own; Err, saying
+/// how to give the frame one, when there is neither.
+fn pass_target<'t, T>(given: Option<&'t T>, own: Option<&'t T>) -> Result<&'t T, GraphicsException> {
+    given.or(own).ok_or_else(|| GraphicsException::new("The frame has no target of its own; pass a RenderTargetView (begin_render_pass_to), begin the frame on a target (begin_frame_on, or begin_frame_with_encoder_on with an encoder of yours), or begin it on a canvas frame (begin_canvas_frame)."))
+}
+
 impl Drop for GraphicsFrame<'_> {
     /// A multisampled canvas layer lays its resolved picture over the canvas (premultiplied
     /// alpha), once, if the frame drew into it.
@@ -282,5 +314,33 @@ impl Drop for GraphicsFrame<'_> {
         pass.set_pipeline(&resolve.pipeline);
         pass.set_bind_group(0, &resolve.group, &[]);
         pass.draw(0..3, 0..1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pass_target;
+
+    #[test]
+    fn a_pass_draws_into_the_target_it_is_given_else_the_frames_own() {
+        //Arrange: the frame's own target, as begin_frame_on and the canvas frames set it
+        let (own, given) = ("the frame's own", "a pass's own");
+        //Act
+        let default_pass = pass_target(None, Some(&own));
+        let pass_to = pass_target(Some(&given), Some(&own));
+        let pass_to_without_own = pass_target(Some(&given), None);
+        //Assert
+        assert_eq!(default_pass.ok(), Some(&own));
+        assert_eq!(pass_to.ok(), Some(&given));
+        assert_eq!(pass_to_without_own.ok(), Some(&given));
+    }
+
+    #[test]
+    fn a_frame_without_a_target_says_how_to_give_it_one() {
+        let error = pass_target::<&str>(None, None).expect_err("no target");
+        let message = error.to_string();
+        for call in ["begin_render_pass_to", "begin_frame_on", "begin_frame_with_encoder_on", "begin_canvas_frame"] {
+            assert!(message.contains(call), "{call}: {message}");
+        }
     }
 }

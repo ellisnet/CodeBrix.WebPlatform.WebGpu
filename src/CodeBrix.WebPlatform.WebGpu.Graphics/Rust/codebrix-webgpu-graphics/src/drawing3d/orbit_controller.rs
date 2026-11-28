@@ -437,7 +437,7 @@ mod tests {
     use crate::drawing3d::{Camera, OrbitCamera, ProjectionKind};
 
     fn down(id: i32, x: f64, y: f64) -> CanvasInput {
-        CanvasInput::PointerDown { x, y, pointer_id: id, button: PointerButton::Primary, buttons: PointerButtons::PRIMARY, kind: PointerKind::Mouse, modifiers: ModifierKeys::NONE }
+        CanvasInput::PointerDown { x, y, pointer_id: id, button: PointerButton::Primary, buttons: PointerButtons::PRIMARY, kind: PointerKind::Mouse, modifiers: ModifierKeys::NONE, tap_count: 1 }
     }
 
     fn drag(id: i32, x: f64, y: f64) -> CanvasInput {
@@ -449,7 +449,7 @@ mod tests {
     }
 
     fn touch_down(id: i32, x: f64, y: f64) -> CanvasInput {
-        CanvasInput::PointerDown { x, y, pointer_id: id, button: PointerButton::Primary, buttons: PointerButtons::PRIMARY, kind: PointerKind::Touch, modifiers: ModifierKeys::NONE }
+        CanvasInput::PointerDown { x, y, pointer_id: id, button: PointerButton::Primary, buttons: PointerButtons::PRIMARY, kind: PointerKind::Touch, modifiers: ModifierKeys::NONE, tap_count: 1 }
     }
 
     fn touch_drag(id: i32, x: f64, y: f64) -> CanvasInput {

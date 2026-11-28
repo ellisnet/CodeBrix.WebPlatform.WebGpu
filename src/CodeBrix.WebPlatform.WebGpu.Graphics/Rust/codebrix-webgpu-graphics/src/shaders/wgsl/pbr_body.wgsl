@@ -27,15 +27,27 @@ struct FrameUniforms {
     ambient_up: vec4<f32>,
     environment: vec4<f32>,
     lights: array<Light, 8>,
-    // x: local light count; y: 1 when light 0 (the key light) casts the sun's shadow; z: the sun's normal offset.
+    // x: local light count; y: 1 when light 0 (the key light) casts the sun's shadow; z: the sun's normal offset (the
+    // first cascade's); w: the sun's cascades (0 or 1: the single map over the region).
     local: vec4<f32>,
-    // x: strength; y: samples per side; z: 1 / map size; w: depth bias.
+    // x: strength; y: samples per side; z: 1 / map size; w: depth bias (the first cascade's).
     sun_shadow: vec4<f32>,
     spot_shadow: vec4<f32>,
+    // The sun's view-projection (the first cascade's).
     sun_matrix: mat4x4<f32>,
     // Four view-projection matrices, four columns each (no array of matrices: see load_matrix).
     spot_matrices: array<vec4<f32>, 16>,
     local_lights: array<LocalLight, 16>,
+    // The sun's cascades (Not in C#; read when local.w is above 1): xyz the camera's view direction, the axis the
+    // cascades are cut along; w the blend band, a share of a slice's depth.
+    sun_view: vec4<f32>,
+    // The far end of each cascade, depth along sun_view.xyz from the camera.
+    sun_splits: vec4<f32>,
+    // Each cascade's depth bias and normal offset (the first's are also sun_shadow.w and local.z).
+    sun_biases: vec4<f32>,
+    sun_offsets: vec4<f32>,
+    // Cascades 1 to 3's view-projections, four columns each (cascade 0's is sun_matrix).
+    sun_cascade_matrices: array<vec4<f32>, 12>,
 };
 
 struct MaterialUniforms {
@@ -80,7 +92,8 @@ struct DrawUniforms {
 @group(0) @binding(2) var prefiltered_map: texture_cube<f32>;
 @group(0) @binding(3) var brdf_lut: texture_2d<f32>;
 @group(0) @binding(4) var environment_sampler: sampler;
-@group(0) @binding(5) var sun_shadow_map: texture_depth_2d;
+// One layer per cascade of the sun's shadow (one: the single map).
+@group(0) @binding(5) var sun_shadow_maps: texture_depth_2d_array;
 @group(0) @binding(6) var spot_shadow_maps: texture_depth_2d_array;
 @group(0) @binding(7) var shadow_sampler: sampler_comparison;
 
@@ -306,8 +319,8 @@ fn local_cone(cosine: f32, cos_inner: f32, cos_outer: f32) -> f32 {
 }
 
 // The light a shadow map lets through at `uv`, depth `depth`: the average of a square grid of filtered comparisons one
-// texel apart, `grid` per side (Not in C#).
-fn sun_shadow_light(uv: vec2<f32>, depth: f32) -> f32 {
+// texel apart, `grid` per side (Not in C#); `layer` the sun's cascade.
+fn sun_shadow_light(uv: vec2<f32>, layer: i32, depth: f32) -> f32 {
     let grid = i32(frame.sun_shadow.y);
     let texel = frame.sun_shadow.z;
     let start = -0.5 * f32(grid - 1);
@@ -315,7 +328,7 @@ fn sun_shadow_light(uv: vec2<f32>, depth: f32) -> f32 {
     for (var y = 0; y < grid; y++) {
         for (var x = 0; x < grid; x++) {
             let offset = vec2<f32>(start + f32(x), start + f32(y)) * texel;
-            sum += textureSampleCompareLevel(sun_shadow_map, shadow_sampler, uv + offset, depth);
+            sum += textureSampleCompareLevel(sun_shadow_maps, shadow_sampler, uv + offset, layer, depth);
         }
     }
     return sum / f32(grid * grid);
@@ -346,13 +359,63 @@ fn shadow_coordinates(clip: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(uv, ndc.z, select(-1.0, 1.0, inside));
 }
 
-// How much of the sun's light reaches a point (1 outside the covered region).
-fn sun_visibility(world: vec3<f32>, normal: vec3<f32>) -> f32 {
-    let at = shadow_coordinates(frame.sun_matrix * vec4<f32>(world + normal * frame.local.z, 1.0));
+// How much of the sun's light reaches a point through one cascade's map (1 outside it): cascade 0 with sun_matrix,
+// local.z and sun_shadow.w (the single map's numbers), the others with theirs.
+fn sun_cascade_visibility(cascade: u32, world: vec3<f32>, normal: vec3<f32>) -> f32 {
+    var matrix = frame.sun_matrix;
+    var offset = frame.local.z;
+    var bias = frame.sun_shadow.w;
+    if (cascade > 0u) {
+        let at4 = (cascade - 1u) * 4u;
+        matrix = mat4x4<f32>(frame.sun_cascade_matrices[at4], frame.sun_cascade_matrices[at4 + 1u], frame.sun_cascade_matrices[at4 + 2u], frame.sun_cascade_matrices[at4 + 3u]);
+        offset = frame.sun_offsets[cascade];
+        bias = frame.sun_biases[cascade];
+    }
+    let at = shadow_coordinates(matrix * vec4<f32>(world + normal * offset, 1.0));
     if (at.w < 0.0) {
         return 1.0;
     }
-    return mix(1.0, sun_shadow_light(at.xy, at.z - frame.sun_shadow.w), frame.sun_shadow.x);
+    return mix(1.0, sun_shadow_light(at.xy, i32(cascade), at.z - bias), frame.sun_shadow.x);
+}
+
+// The cascade for a point at `depth` along the camera's view (Not in C#; twin: lighting::shadows::cascade_pick): x the
+// first cascade whose far end is beyond the depth (-1 beyond the reach); y how much the next one weighs there, 0 before
+// the cascade's blend band (sun_view.w x its slice's depth, the first slice starting at 0), rising to 1 at its far end.
+fn cascade_pick(depth: f32, cascades: u32) -> vec2<f32> {
+    var start = 0.0;
+    for (var index = 0u; index < cascades; index++) {
+        let end = frame.sun_splits[index];
+        if (depth < end) {
+            let band = frame.sun_view.w * (end - start);
+            let weight = select(0.0, clamp((depth - (end - band)) / max(band, 1e-6), 0.0, 1.0), band > 0.0);
+            return vec2<f32>(f32(index), weight);
+        }
+        start = end;
+    }
+    return vec2<f32>(-1.0, 0.0);
+}
+
+// How much of the sun's light reaches a point (1 outside the covered region): the single map, or the cascade its depth
+// picks, blended into the next one in the cascade's band (the last one fades out to 1 towards the reach; 1 beyond it).
+fn sun_visibility(world: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let cascades = min(u32(frame.local.w), 4u);
+    if (cascades <= 1u) {
+        return sun_cascade_visibility(0u, world, normal);
+    }
+    let pick = cascade_pick(dot(world - frame.camera_position.xyz, frame.sun_view.xyz), cascades);
+    if (pick.x < 0.0) {
+        return 1.0;
+    }
+    let cascade = u32(pick.x);
+    let near = sun_cascade_visibility(cascade, world, normal);
+    if (pick.y <= 0.0) {
+        return near;
+    }
+    var next = 1.0;
+    if (cascade + 1u < cascades) {
+        next = sun_cascade_visibility(cascade + 1u, world, normal);
+    }
+    return mix(near, next, pick.y);
 }
 
 // How much of a spotlight's light reaches a point, from its layer of the spot shadow maps.

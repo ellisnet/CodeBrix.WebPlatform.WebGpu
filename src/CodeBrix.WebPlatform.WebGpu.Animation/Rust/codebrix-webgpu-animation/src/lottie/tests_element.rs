@@ -228,3 +228,44 @@ fn the_samples_feature_file_draws_parenting_a_trim_path_a_gradient_and_a_matte_w
     let a = 45f64.to_radians();
     assert!(near(p.x, 200.0 + 110.0 * a.cos(), 1e-6) && near(p.y, 150.0 + 110.0 * a.sin(), 1e-6), "{p:?}");
 }
+
+#[test]
+fn a_session_puts_a_drawn_documents_warnings_into_its_reports_once_when_asked() {
+    //Arrange
+    let lottie = Arc::new(load(include_str!("test_files/not_drawn.json")));
+    assert!(!lottie.report().is_empty());
+    let mut off = session();
+    off.draw_lottie(lottie.clone(), RectangleF::new(0.0, 0.0, 100.0, 100.0), DrawingLottieAspect::Meet, LottiePlayOptions::default()).unwrap();
+    let mut on = session();
+    on.set_reports_document_warnings(true);
+    on.draw_lottie(lottie.clone(), RectangleF::new(0.0, 0.0, 100.0, 100.0), DrawingLottieAspect::Meet, LottiePlayOptions::default()).unwrap();
+    on.draw_lottie(lottie.clone(), RectangleF::new(100.0, 0.0, 100.0, 100.0), DrawingLottieAspect::Meet, LottiePlayOptions::default()).unwrap();
+    //Act
+    render(&off);
+    let off_reports = off.take_reports();
+    render(&on);
+    let first = on.take_reports();
+    render(&on);
+    let second = on.take_reports();
+    //Assert
+    assert!(!off.reports_document_warnings() && on.reports_document_warnings());
+    assert!(off_reports.iter().all(|l| !l.starts_with("Lottie document: ")), "{off_reports:?}");
+    let expected: Vec<String> = lottie.report().iter().map(|l| format!("Lottie document: {l}")).collect();
+    let documents: Vec<String> = first.into_iter().filter(|l| l.starts_with("Lottie document: ")).collect();
+    assert_eq!(documents, expected, "each line once, though the document is drawn twice");
+    assert!(second.is_empty(), "{second:?}");
+}
+
+#[test]
+fn an_application_adds_its_own_messages_to_the_session_reports_once_each() {
+    //Arrange
+    let s = session();
+    //Act
+    s.add_report("The score could not be read: drawn without it.");
+    s.add_report("The score could not be read: drawn without it.".to_string());
+    let first = s.take_reports();
+    s.add_report("The score could not be read: drawn without it.");
+    //Assert
+    assert_eq!(first, vec!["The score could not be read: drawn without it.".to_string()]);
+    assert!(s.take_reports().is_empty(), "a message is reported once in the session's life");
+}

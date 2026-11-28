@@ -384,3 +384,66 @@ fn an_accessor_that_runs_past_its_data_leaves_its_primitive_out_with_a_message()
     let json = triangle_document("", "").replace("\"count\":3,\"type\":\"VEC3\"", "\"count\":3,\"type\":\"VEC2\"");
     assert!(build(&json).warnings(0)[0].contains("POSITION accessor with 2 components"));
 }
+
+/// Three nodes in a hierarchy: node 0 (a parent with extras of every JSON kind), node 1 (the
+/// mesh, without extras) and node 2 (extras null), for `node_extras`.
+const NODES_WITH_EXTRAS: &str = "\"nodes\":[{\"name\":\"gate\",\"children\":[1,2],\"extras\":{ \"zone\" : \"river\", \"speed\": 2.50, \"tags\":[\"a\", 1, true, null], \"nested\":{\"b\":1,\"a\":0} }},{\"name\":\"mesh\",\"mesh\":0},{\"name\":\"empty\",\"extras\":null}],\"scenes\":[{\"nodes\":[0]}],\"scene\":0";
+
+/// A triangle document whose node list is [`NODES_WITH_EXTRAS`].
+fn triangle_with_node_extras(buffer: &mut Buffer) -> String {
+    let positions = buffer.floats(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0], "VEC3");
+    let indices = buffer.u16s(&[0, 1, 2]);
+    format!("\"meshes\":[{{\"primitives\":[{{\"attributes\":{{\"POSITION\":{positions}}},\"indices\":{indices}}}]}}],{NODES_WITH_EXTRAS}")
+}
+
+#[test]
+fn node_extras_reads_each_nodes_extras_from_a_gltf_as_compact_json() {
+    let mut buffer = Buffer::default();
+    let rest = triangle_with_node_extras(&mut buffer);
+    let json = buffer.document(&rest);
+    let document = GltfDocument::parse(json.as_bytes()).unwrap();
+    // Whitespace gone, members in alphabetical order, numbers in the reader's spelling.
+    assert_eq!(document.node_extras(0).as_deref(), Some("{\"nested\":{\"a\":0,\"b\":1},\"speed\":2.5,\"tags\":[\"a\",1,true,null],\"zone\":\"river\"}"));
+    // A node without extras, a node with "extras": null, and nodes that do not exist.
+    assert_eq!(document.node_extras(1), None);
+    assert_eq!(document.node_extras(2), None);
+    assert_eq!(document.node_extras(3), None);
+    assert_eq!(document.node_extras(usize::MAX), None);
+    // Asked again: the same answer (from what the first call kept).
+    assert_eq!(document.node_extras(0), document.clone().node_extras(0));
+    // The extras line up with the model's nodes by the node index.
+    let mut set = GltfModelSet::new();
+    set.add(&document, "gate", None, &|_| None, &GltfLoadOptions::default()).unwrap();
+    let nodes = &set.data_set().models[0].nodes;
+    assert_eq!(nodes.iter().map(|n| (n.index, n.name.as_deref())).collect::<Vec<_>>(), vec![(0, Some("gate")), (1, Some("mesh")), (2, Some("empty"))]);
+    assert!(document.node_extras(nodes[0].index).unwrap().contains("\"zone\":\"river\""));
+}
+
+#[test]
+fn node_extras_reads_the_json_chunk_of_a_glb() {
+    let mut buffer = Buffer::default();
+    let rest = triangle_with_node_extras(&mut buffer);
+    let file = glb(&buffer.document_with_buffer("", &rest), Some(&buffer.bytes));
+    let document = GltfDocument::parse(&file).unwrap();
+    assert!(document.is_binary());
+    assert_eq!(document.node_extras(0).as_deref(), Some("{\"nested\":{\"a\":0,\"b\":1},\"speed\":2.5,\"tags\":[\"a\",1,true,null],\"zone\":\"river\"}"));
+    assert_eq!(document.node_extras(1), None);
+    assert_eq!(document.node_extras(7), None);
+    // Extras of other kinds than an object, and a member name spelt with an escape.
+    let text = buffer.document_with_buffer("", &rest).replace("{\"name\":\"mesh\",\"mesh\":0}", "{\"name\":\"mesh\",\"mesh\":0,\"\\u0065xtras\":\"plain text\"}").replace("\"extras\":null", "\"extras\":-3");
+    let document = GltfDocument::parse(&glb(&text, Some(&buffer.bytes))).unwrap();
+    assert_eq!((document.node_extras(1).as_deref(), document.node_extras(2).as_deref()), (Some("\"plain text\""), Some("-3")));
+}
+
+#[test]
+fn a_document_without_any_extras_keeps_no_copy_of_its_json() {
+    let document = GltfDocument::parse(triangle_document("", "").as_bytes()).unwrap();
+    assert!(document.json.is_none());
+    assert_eq!(document.node_extras(0), None);
+    // A document without nodes at all.
+    let mut buffer = Buffer::default();
+    buffer.floats(&[0.0; 3], "VEC3");
+    let document = GltfDocument::parse(buffer.document("\"extras\":{\"x\":1}").as_bytes()).unwrap();
+    assert!(document.json.is_some());
+    assert_eq!(document.node_extras(0), None);
+}

@@ -287,8 +287,8 @@ fn height_and_normal_pass_the_open_water_waves_through_and_ignore_rotation() {
 #[test]
 fn the_uniform_record_has_the_shaders_offsets() {
     use std::mem::offset_of;
-    assert_eq!(WATER_UNIFORM_SIZE, 2160);
-    assert_eq!(WATER_SLOT_SIZE, 2304);
+    assert_eq!(WATER_UNIFORM_SIZE, 2544);
+    assert_eq!(WATER_SLOT_SIZE, 2560);
     assert_eq!(offset_of!(WaterUniforms, inverse_view_projection), 64);
     assert_eq!(offset_of!(WaterUniforms, camera), 128);
     assert_eq!(offset_of!(WaterUniforms, surface), 256);
@@ -300,11 +300,26 @@ fn the_uniform_record_has_the_shaders_offsets() {
     assert_eq!(offset_of!(WaterUniforms, sun_shadow), 608);
     assert_eq!(offset_of!(WaterUniforms, waves), 624);
     assert_eq!(offset_of!(WaterUniforms, local_lights), 1136);
+    // The mask, reflection, flow and cascade fields follow the surface's own (naga's layout of
+    // `struct Water`: the same offsets, size 2544).
+    assert_eq!(offset_of!(WaterUniforms, mask), crate::water::water_math::WATER_SURFACE_PART);
+    assert_eq!(offset_of!(WaterUniforms, mask), 2160);
+    assert_eq!(offset_of!(WaterUniforms, reflection), 2176);
+    assert_eq!(offset_of!(WaterUniforms, flow), 2192);
+    assert_eq!(offset_of!(WaterUniforms, extra), 2208);
+    assert_eq!(offset_of!(WaterUniforms, sun_view), 2224);
+    assert_eq!(offset_of!(WaterUniforms, sun_splits), 2240);
+    assert_eq!(offset_of!(WaterUniforms, sun_biases), 2256);
+    assert_eq!(offset_of!(WaterUniforms, sun_offsets), 2272);
+    assert_eq!(offset_of!(WaterUniforms, sun_cascade_matrices), 2288);
     // The WGSL struct names the same fields in the same order.
     let wgsl = crate::shaders::WaterShaders::SURFACE;
-    let order = ["view_projection:", "inverse_view_projection:", "camera:", "viewport:", "key_direction:", "key_color:", "environment:", "ambient_sky:", "ambient_ground:", "ambient_up:", "surface:", "extent:", "field:", "field_extent:", "absorption:", "scattering:", "look:", "caustics:", "caustic_phase:", "detail_phase:", "detail_waves:", "sheen:", "sheen_phase:", "switches:", "counts:", "sun_matrix:", "sun_shadow:", "waves:", "local_lights:"];
+    let order = ["view_projection:", "inverse_view_projection:", "camera:", "viewport:", "key_direction:", "key_color:", "environment:", "ambient_sky:", "ambient_ground:", "ambient_up:", "surface:", "extent:", "field:", "field_extent:", "absorption:", "scattering:", "look:", "caustics:", "caustic_phase:", "detail_phase:", "detail_waves:", "sheen:", "sheen_phase:", "switches:", "counts:", "sun_matrix:", "sun_shadow:", "waves:", "local_lights:", "mask:", "reflection:", "flow:", "extra:", "sun_view:", "sun_splits:", "sun_biases:", "sun_offsets:", "sun_cascade_matrices:"];
     let start = wgsl.find("struct Water {").expect("the struct");
     let body = &wgsl[start..start + wgsl[start..].find("};").expect("its end")];
+    let cascaded = crate::shaders::WaterShaders::SURFACE_CASCADED;
+    let other = cascaded.find("struct Water {").expect("the struct");
+    assert_eq!(body, &cascaded[other..other + body.len()], "both variants share the struct");
     let mut at = 0;
     for name in order {
         let found = body[at..].find(&format!("    {name}")).unwrap_or_else(|| panic!("{name} in order"));
@@ -320,7 +335,7 @@ fn packing_writes_the_open_water_waves_the_look_and_the_switches() {
     let waves = OpenWaterWaves::from_wind(0.3, 5.0, 8, 2);
     let surface = WaterSurface { grid: 128, open_waves: Some(waves.clone()), look: WaterLook { caustics: Some(WaterCaustics { strength: 0.5, ..WaterCaustics::default() }), screen_reflections: false, ..WaterLook::default() }, ..WaterSurface::default() };
     let target = PackTarget { format: wgpu::TextureFormat::Rgba16Float, width: 800, height: 400 };
-    let (u, lights) = pack_uniforms(&camera, &lighting, Some(6), &surface, 12.5, None, target);
+    let (u, lights) = pack_uniforms(&camera, &lighting, Some(6), None, None, &surface, 12.5, None, target);
     assert_eq!(lights, 1);
     assert_eq!(u.counts[0], 8);
     let records = waves.records(12.5);
@@ -339,7 +354,7 @@ fn packing_writes_the_open_water_waves_the_look_and_the_switches() {
     assert!((u.inverse_view_projection * u.view_projection).abs_diff_eq(Mat4::IDENTITY, 1e-4));
     // An 8-bit linear target asks the shader to decode and encode.
     let target8 = PackTarget { format: wgpu::TextureFormat::Rgba8Unorm, width: 800, height: 400 };
-    let (u8, _) = pack_uniforms(&camera, &lighting, None, &surface, 0.0, None, target8);
+    let (u8, _) = pack_uniforms(&camera, &lighting, None, None, None, &surface, 0.0, None, target8);
     assert_eq!(u8.switches[3], 1);
     assert_eq!(u8.environment.x, 0.0, "the hemisphere");
 }

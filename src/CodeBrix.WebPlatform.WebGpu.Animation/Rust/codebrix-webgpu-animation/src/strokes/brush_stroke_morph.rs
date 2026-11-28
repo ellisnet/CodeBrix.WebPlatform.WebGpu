@@ -21,6 +21,9 @@
 //!   then on (each end is then drawn exactly as its painting is drawn alone).
 //! - At fraction 0 the transition draws exactly the first set, at 1 exactly the second (each
 //!   stroke is then its own record, not an interpolation).
+//! - A pair's OWN WEIGHT ([`BrushStrokeSet::with_own_weights`], used where the colours are
+//!   picked) travels linearly from its first stroke's to its second's with the pair's own
+//!   fraction, as the other numbers do; a stroke painting off or on keeps its own.
 
 use std::rc::Rc;
 
@@ -235,21 +238,35 @@ impl BrushStrokeMorph {
         order
     }
 
+    /// The two records of a slot as the GPU reads them, each with its set's own weight for it (a
+    /// stroke without a partner stands for both).
+    fn packed_ends(&self, p: &StrokePair) -> ([u32; 16], [u32; 16]) {
+        use crate::strokes::stroke_gpu::pack_set_record;
+        let a = p.from.map(|i| pack_set_record(&self.from, i as usize));
+        let b = p.to.map(|j| pack_set_record(&self.to, j as usize));
+        match (a, b) {
+            (Some(a), Some(b)) => (a, b),
+            (Some(a), None) => (a, a),
+            (None, Some(b)) => (b, b),
+            (None, None) => unreachable!("a slot holds a stroke"),
+        }
+    }
+
     /// The two record buffers of a variant as the GPU reads them (64 bytes a slot each, slot k
     /// of both is one pair): the first strokes (a stroke that arrives stands for itself), and the
-    /// targets - the second strokes with the slot's kind in word 13's high bits (1 leaves, 2
-    /// arrives) and its delay (the spread's 0..1) in word 11.
+    /// targets - the second strokes with the slot's kind in word 13's flags (bits 16..23: 1
+    /// leaves, 2 arrives) and its delay (the spread's 0..1) in word 11. Each record keeps its own
+    /// weight (word 13's top byte).
     pub(crate) fn pack_variant(&self, delays: &[f32], variant: u8) -> (Vec<u8>, Vec<u8>) {
-        use crate::strokes::stroke_gpu::{pack_record, RECORD_BYTES};
+        use crate::strokes::stroke_gpu::RECORD_BYTES;
         let order = self.variant_order(variant);
         let (mut first, mut second) = (Vec::with_capacity(order.len() * RECORD_BYTES), Vec::with_capacity(order.len() * RECORD_BYTES));
         for k in order {
             let p = &self.pairs[k as usize];
-            let (a, b) = self.ends(p);
-            for w in pack_record(&a) {
+            let (a, mut words) = self.packed_ends(p);
+            for w in a {
                 first.extend_from_slice(&w.to_le_bytes());
             }
-            let mut words = pack_record(&b);
             words[11] = delays.get(k as usize).copied().unwrap_or(0.0).to_bits();
             words[13] |= match p.kind() {
                 PairKind::Paired => 0,
@@ -277,6 +294,21 @@ fn dist(a: [f32; 3], b: [f32; 3]) -> f32 {
 /// in the spread's order) moves over (s d .. s d + 1 - s) of the whole. The GPU's formula.
 pub(crate) fn pair_fraction(fraction: f32, spread: f32, delay: f32) -> f32 {
     ((fraction - spread * delay) / (1.0 - spread).max(1e-6)).clamp(0.0, 1.0)
+}
+
+#[cfg(test)]
+/// A slot's own weight at its own fraction (the CPU mirror of strokes.wgsl's `own_w` in
+/// `vs_stroke`): `a`'s at 0 or below (and NaN), `b`'s at 1 or above, linear between; a stroke
+/// leaving keeps `a`'s, one arriving `b`'s.
+pub(crate) fn pair_own_weight(a: f32, b: f32, kind: PairKind, f: f32) -> f32 {
+    let f = if f.is_nan() { 0.0 } else { f };
+    match kind {
+        PairKind::Leaves => a,
+        PairKind::Arrives => b,
+        PairKind::Paired if f <= 0.0 => a,
+        PairKind::Paired if f >= 1.0 => b,
+        PairKind::Paired => a * (1.0 - f) + b * f,
+    }
 }
 
 /// What a slot draws at its own fraction (the CPU mirror of strokes.wgsl `morph_record`).

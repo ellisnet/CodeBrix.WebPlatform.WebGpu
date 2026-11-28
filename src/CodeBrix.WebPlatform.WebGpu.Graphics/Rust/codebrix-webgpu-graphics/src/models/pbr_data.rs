@@ -6,12 +6,12 @@ use glam::{Mat3, Mat4, Vec3, Vec4};
 
 use crate::drawing3d::{Camera, MaterialAlphaMode, SceneLighting};
 use crate::lighting::local_lights::LocalLight;
-use crate::lighting::shadows::{sample_grid, ShadowView};
+use crate::lighting::shadows::{sample_grid, ShadowView, SunCascades};
 use crate::models::{ModelMaterial, ModelMorphTarget, ModelPrimitive};
 use crate::pipelines::CullPreset;
 use crate::shaders::PbrFeatures;
 
-/// The frame uniforms of the model shader (1792 bytes; C#: `PbrFrameUniforms`, 400 bytes: the
+/// The frame uniforms of the model shader (2048 bytes; C#: `PbrFrameUniforms`, 400 bytes: the
 /// local lights and the shadows after the directional lights are Not in C#).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -24,20 +24,35 @@ pub(crate) struct PbrFrameUniforms {
     pub(crate) environment: Vec4,
     pub(crate) lights: [Vec4; 16],
     /// x: the local light count; y: 1 when light 0 (the key light) casts the sun's shadow; z: the
-    /// sun's normal offset (world units).
+    /// sun's normal offset (world units; the first cascade's); w: the sun's cascades, 0 or 1 for
+    /// the single map over the region.
     pub(crate) local: Vec4,
-    /// The sun's shadow: strength, samples per side, 1 / map size, depth bias.
+    /// The sun's shadow: strength, samples per side, 1 / map size, depth bias (the first
+    /// cascade's).
     pub(crate) sun_shadow: Vec4,
     /// The spotlights' shadows: as `sun_shadow`.
     pub(crate) spot_shadow: Vec4,
+    /// The sun's view-projection (the first cascade's).
     pub(crate) sun_matrix: Mat4,
     pub(crate) spot_matrices: [Mat4; 4],
     /// Four Vec4 per local light: position + 1 / range, colour x intensity + spot flag, axis +
     /// cos(outer), cos(inner) + shadow layer + normal offset per unit distance + 0.
     pub(crate) local_lights: [Vec4; 64],
+    /// The sun's cascades, read when `local.w` is above 1 (zero otherwise; Not in C#): the
+    /// camera's view direction (xyz, the axis the cascades are cut along) and the blend band (w,
+    /// a share of a slice's depth).
+    pub(crate) sun_view: Vec4,
+    /// The far end of each cascade (depth along `sun_view`).
+    pub(crate) sun_splits: Vec4,
+    /// Each cascade's depth bias (the first's is also `sun_shadow.w`).
+    pub(crate) sun_biases: Vec4,
+    /// Each cascade's normal offset, world units (the first's is also `local.z`).
+    pub(crate) sun_offsets: Vec4,
+    /// The view-projections of cascades 1 to 3 (cascade 0's is `sun_matrix`).
+    pub(crate) sun_cascade_matrices: [Mat4; 3],
 }
 
-pub(crate) const FRAME_UNIFORM_SIZE: u64 = 1792;
+pub(crate) const FRAME_UNIFORM_SIZE: u64 = 2048;
 const _: () = assert!(std::mem::size_of::<PbrFrameUniforms>() == FRAME_UNIFORM_SIZE as usize);
 /// The bytes between two frames' uniforms in the frame buffer: the size rounded up to the WebGPU
 /// dynamic-offset alignment.
@@ -78,6 +93,11 @@ impl PbrFrameUniforms {
             sun_matrix: Mat4::IDENTITY,
             spot_matrices: [Mat4::IDENTITY; 4],
             local_lights: [Vec4::ZERO; 64],
+            sun_view: Vec4::ZERO,
+            sun_splits: Vec4::ZERO,
+            sun_biases: Vec4::ZERO,
+            sun_offsets: Vec4::ZERO,
+            sun_cascade_matrices: [Mat4::IDENTITY; 3],
         };
         let mut count = 0;
         let mut add = |direction: Vec3, color: crate::Color4, intensity: f32| {
@@ -149,6 +169,30 @@ impl PbrFrameUniforms {
             let settings = &lighting.spot_shadows;
             self.spot_shadow = Vec4::new(settings.strength.clamp(0.0, 1.0), sample_grid(settings.softness) as f32, 1.0 / settings.map_size.texels() as f32, SPOT_DEPTH_BIAS);
         }
+    }
+
+    /// Writes the sun's cascades after [`PbrFrameUniforms::set_shadows`] wrote the first one's
+    /// view (Not in C#). One cascade writes nothing: the frame is the single map's, byte for byte.
+    /// More: their count (`local.w`), the camera's view direction and the blend band, their far
+    /// ends, each one's depth bias - the single map's times its texel over the single map's texel,
+    /// the same bias per texel (also into `sun_shadow.w` for the first) - and normal offset, and
+    /// the matrices of cascades 1 to 3.
+    pub(crate) fn set_sun_cascades(&mut self, cascades: &SunCascades) {
+        let count = cascades.views.len().min(4);
+        if count <= 1 {
+            return;
+        }
+        self.local.w = count as f32;
+        self.sun_view = cascades.forward.extend(cascades.blend);
+        self.sun_splits = Vec4::from_array(cascades.splits);
+        for (index, view) in cascades.views.iter().take(count).enumerate() {
+            self.sun_biases[index] = SUN_DEPTH_BIAS * cascades.texel_scales[index];
+            self.sun_offsets[index] = view.texel * NORMAL_OFFSET_TEXELS;
+            if index > 0 {
+                self.sun_cascade_matrices[index - 1] = view.view_projection;
+            }
+        }
+        self.sun_shadow.w = self.sun_biases.x;
     }
 }
 
@@ -389,8 +433,81 @@ mod tests {
         assert_eq!(frame.sun_shadow, Vec4::ZERO);
         assert!(frame.local_lights.iter().all(|v| *v == Vec4::ZERO));
         assert_eq!(std::mem::offset_of!(PbrFrameUniforms, local), 400);
-        assert_eq!(super::FRAME_SLOT_SIZE, 1792);
+        assert_eq!(super::FRAME_SLOT_SIZE, 2048);
         assert_eq!(super::FRAME_SLOT_SIZE % 256, 0);
+    }
+
+    #[test]
+    fn the_suns_cascades_follow_the_local_lights_in_the_wgsl_order() {
+        // The offsets of pbr_body.wgsl's FrameUniforms (a vec4 is 16 bytes, a mat4x4 64; checked
+        // against naga's layout of the struct): the fields before the cascades are where they were.
+        use std::mem::offset_of;
+        let offsets = [
+            offset_of!(PbrFrameUniforms, view_projection),
+            offset_of!(PbrFrameUniforms, camera_position),
+            offset_of!(PbrFrameUniforms, lights),
+            offset_of!(PbrFrameUniforms, local),
+            offset_of!(PbrFrameUniforms, sun_shadow),
+            offset_of!(PbrFrameUniforms, spot_shadow),
+            offset_of!(PbrFrameUniforms, sun_matrix),
+            offset_of!(PbrFrameUniforms, spot_matrices),
+            offset_of!(PbrFrameUniforms, local_lights),
+            offset_of!(PbrFrameUniforms, sun_view),
+            offset_of!(PbrFrameUniforms, sun_splits),
+            offset_of!(PbrFrameUniforms, sun_biases),
+            offset_of!(PbrFrameUniforms, sun_offsets),
+            offset_of!(PbrFrameUniforms, sun_cascade_matrices),
+        ];
+        assert_eq!(offsets, [0, 64, 144, 400, 416, 432, 448, 512, 768, 1792, 1808, 1824, 1840, 1856]);
+        assert_eq!(std::mem::size_of::<PbrFrameUniforms>(), 2048);
+        assert_eq!(super::FRAME_UNIFORM_SIZE, 2048);
+        // The WGSL declares the fields in this order, the matrices of cascades 1 to 3 as twelve
+        // columns (no array of matrices).
+        let body = crate::shaders::PbrShader::BODY;
+        let start = body.find("struct FrameUniforms {").expect("the frame struct");
+        let frame = &body[start..start + body[start..].find("};").expect("its end")];
+        let order = ["view_projection:", "camera_position:", "lights:", "local:", "sun_shadow:", "spot_shadow:", "sun_matrix:", "spot_matrices:", "local_lights:", "sun_view:", "sun_splits:", "sun_biases:", "sun_offsets:", "sun_cascade_matrices: array<vec4<f32>, 12>"];
+        let at: Vec<usize> = order.iter().map(|field| frame.find(field).unwrap_or_else(|| panic!("{field} in the WGSL"))).collect();
+        assert!(at.windows(2).all(|pair| pair[0] < pair[1]), "the WGSL order: {at:?}");
+    }
+
+    #[test]
+    fn one_cascade_leaves_the_frame_as_the_single_map_wrote_it_and_more_carry_their_numbers() {
+        use crate::lighting::shadows::sun_cascades;
+        use crate::lighting::SunShadowSettings;
+        let mut lighting = SceneLighting::default();
+        let camera = Camera { position: Vec3::new(3.0, 2.0, 40.0), target: Vec3::new(0.0, 0.0, 0.0), ..Camera::default() };
+        lighting.sun_shadows = SunShadowSettings::covering(Vec3::new(-200.0, -5.0, -200.0), Vec3::new(200.0, 30.0, 200.0));
+        let one = sun_cascades(&lighting.sun_shadows, lighting.light_direction, &camera, 1.5).unwrap();
+        let mut frame = PbrFrameUniforms::new(&camera, &lighting, 1.5);
+        frame.set_shadows(&lighting, one.views.first(), &[]);
+        let single = frame;
+        frame.set_sun_cascades(&one);
+        assert_eq!(bytemuck::bytes_of(&frame), bytemuck::bytes_of(&single), "one cascade: the single map's frame, byte for byte");
+        assert_eq!((frame.local.w, frame.sun_view, frame.sun_splits), (0.0, Vec4::ZERO, Vec4::ZERO));
+        assert_eq!(frame.sun_shadow.w, super::SUN_DEPTH_BIAS);
+        // Four cascades: their count, axis, band, ends, biases, offsets and matrices.
+        lighting.sun_shadows = lighting.sun_shadows.with_cascades(4, 300.0);
+        let four = sun_cascades(&lighting.sun_shadows, lighting.light_direction, &camera, 1.5).unwrap();
+        let mut frame = PbrFrameUniforms::new(&camera, &lighting, 1.5);
+        frame.set_shadows(&lighting, four.views.first(), &[]);
+        frame.set_sun_cascades(&four);
+        assert_eq!(frame.local.w, 4.0);
+        assert_eq!(frame.sun_view, four.forward.extend(0.1));
+        assert_eq!(frame.sun_splits.to_array(), four.splits);
+        assert_eq!(frame.sun_splits.w, 300.0);
+        assert_eq!(frame.sun_matrix, four.views[0].view_projection);
+        for cascade in 1..4 {
+            assert_eq!(frame.sun_cascade_matrices[cascade - 1], four.views[cascade].view_projection);
+        }
+        for cascade in 0..4 {
+            assert_eq!(frame.sun_biases[cascade], super::SUN_DEPTH_BIAS * four.texel_scales[cascade]);
+            assert_eq!(frame.sun_offsets[cascade], four.views[cascade].texel * 1.5);
+            assert!(four.texel_scales[cascade] > 0.0 && four.texel_scales[cascade] <= 1.0);
+        }
+        assert_eq!((frame.sun_shadow.w, frame.local.z), (frame.sun_biases.x, frame.sun_offsets.x), "the first cascade's numbers where the single map's were");
+        // The nearest cascade is the finest: the smallest bias and offset.
+        assert!(frame.sun_offsets.x < frame.sun_offsets.y && frame.sun_biases.x < frame.sun_biases.w);
     }
 
     #[test]

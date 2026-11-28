@@ -159,3 +159,22 @@ fn svg_text_is_laid_out_into_paths_with_a_supplied_font_and_reported_without_one
     let bounds = shape.get_part_bounds("label", 0.0).unwrap();
     assert!(bounds.x >= 9.0 && bounds.width > 60.0 && bounds.height > 10.0, "{bounds:?}");
 }
+
+#[test]
+fn a_session_asked_to_reports_a_drawn_svgs_warnings_once_with_a_prefix() {
+    //Arrange
+    let svg = Arc::new(DrawingSvg::from_svg(include_str!("test_files/parts.svg"), &DrawingSvgOptions::default()).unwrap());
+    let mut s = session();
+    s.set_reports_document_warnings(true);
+    s.draw_svg(&svg, DEST, DrawingSvgAspect::Meet);
+    //Act
+    kinds(&s);
+    let first = s.take_reports();
+    kinds(&s);
+    let second = s.take_reports();
+    //Assert
+    let expected: Vec<String> = svg.report().iter().map(|l| format!("SVG document: {l}")).collect();
+    assert!(!expected.is_empty());
+    assert_eq!(first.into_iter().filter(|l| l.starts_with("SVG document: ")).collect::<Vec<_>>(), expected);
+    assert!(second.is_empty(), "{second:?}");
+}

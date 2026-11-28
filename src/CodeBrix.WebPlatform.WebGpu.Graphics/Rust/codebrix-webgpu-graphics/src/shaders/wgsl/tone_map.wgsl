@@ -1,6 +1,8 @@
 struct Params {
     params: vec4<f32>,
     source: vec4<f32>,
+    // The rectangle the source is mapped onto: left, top, 1 / width, 1 / height (target pixels).
+    viewport: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> tone: Params;
@@ -61,7 +63,7 @@ fn pbr_neutral(input: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let uv = position.xy * tone.source.zw;
+    let uv = (position.xy - tone.viewport.xy) * tone.viewport.zw;
     let sampled = textureSampleLevel(hdr, hdr_sampler, uv, 0.0);
     // PRESERVE ALPHA (params.w): the source holds premultiplied colour; the curve is applied to
     // the straight colour and the result premultiplied again, so edges and see-through parts

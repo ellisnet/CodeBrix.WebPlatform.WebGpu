@@ -1,5 +1,6 @@
-//! `StrokeWidthMode`: whether a stroke's width scales with its element or stays fixed in the
-//! drawing's own units (Not in C#: NoSkia's strokes always scale with their element).
+//! `StrokeWidthMode`: whether a stroke's width scales with its element, stays fixed in the
+//! drawing's own units, or is given in CSS pixels (Not in C#: NoSkia's strokes always scale with
+//! their element).
 
 /// How a stroke's width (and its dashes) responds to the scaling of its element.
 ///
@@ -15,6 +16,15 @@
 ///   session's camera scale it as they scale everything. The dash pattern and dash offset
 ///   follow the width (drawing units), not the element. SVG's
 ///   `vector-effect="non-scaling-stroke"` is read as this mode.
+/// - [`CssPixels`](StrokeWidthMode::CssPixels): the width is in CSS PIXELS of the page - a
+///   hairline of 1 is one CSS pixel on any screen: `width x pixel_ratio` device pixels, the ratio
+///   of [`SessionRenderOptions::pixel_ratio`](crate::SessionRenderOptions::pixel_ratio) (pass
+///   the frame's `frame.info.pixel_ratio`; 1 by default), whatever the calibration, the camera
+///   and every transform between the element and the canvas. Recorded as a fixed-width stroke
+///   whose reference space is the CSS pixel; the dash pattern and dash offset are CSS pixels
+///   too. Honoured by path shapes, text blocks' outlines and the line look's stroke
+///   ([`SessionPaint::Line`](crate::SessionPaint::Line): one CSS-pixel line weight over the
+///   whole drawing, whatever its zoom).
 ///
 /// Not in C#.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -24,4 +34,7 @@ pub enum StrokeWidthMode {
     ScalesWithElement,
     /// The width stays fixed in the drawing's own (calibrated) units.
     Fixed,
+    /// The width is in CSS pixels: `width x pixel_ratio` device pixels, whatever scales the
+    /// drawing or the element.
+    CssPixels,
 }

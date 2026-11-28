@@ -350,6 +350,46 @@ fn a_pixels_water_point_and_offset_follow_the_layers_drawing_space() {
 }
 
 #[test]
+fn water_that_follows_its_layer_lies_in_the_layers_own_space_and_scrolls_with_its_transform() {
+    //Arrange: the same camera and parallax as above; the layer moved, turned and scaled by its
+    // own transform, its refraction and reflection both following it.
+    let mut s = session();
+    floor(&mut s, "Pool");
+    let mut camera = DrawingCamera::new();
+    camera.set_pan(PointF::new(30.0, -12.0)).unwrap();
+    camera.set_zoom(1.4).unwrap();
+    camera.set_rotation(20.0).unwrap();
+    s.set_camera(Some(camera));
+    let own = crate::models::DrawingTransform::translate(40.0, 25.0).with_rotation(10.0).with_scale(1.5);
+    let layer = s.get_layer_mut("Pool").unwrap();
+    layer.set_parallax(0.5).unwrap();
+    layer.set_transform(own);
+    layer.set_refraction(Some(WaterRefraction { strength: 9.0, follows_layer: true, ..WaterRefraction::new(WaterSource::Ripples(field())) })).unwrap();
+    layer.set_reflection(Some(WaterReflection { follows_layer: true, ..WaterReflection::new(200.0) })).unwrap();
+    s.set_time(2.5);
+    //Act
+    let b = build_at(&s, &SessionRenderOptions::default(), 1280, 720);
+    let fp = composite(&b, 0);
+    let r = b.effects[0].params.water.unwrap().reflection.unwrap();
+    //Assert: device -> water -> device through the layer's own map.
+    let map = Affine::scale(2.0) * camera.get_matrix((640, 360), 0.5) * own.to_matrix();
+    for p in [[100.5f32, 80.5], [640.5, 360.5], [1100.5, 650.5]] {
+        let q = gpu_water_point(&fp, p);
+        let back = map * Point::new(q[0] as f64, q[1] as f64);
+        assert!((back.x - p[0] as f64).abs() < 1e-2 && (back.y - p[1] as f64).abs() < 1e-2, "device -> water -> device: {back:?} for {p:?}");
+    }
+    let on_line = map * Point::new(77.0, 200.0);
+    assert!(r.depth([on_line.x, on_line.y]).abs() < 1e-3, "the waterline moves with the layer");
+    // The default stays in the drawing space (the layer's transform does not move the water).
+    assert!(!WaterRefraction::new(WaterSource::Ripples(field())).follows_layer && !WaterReflection::new(1.0).follows_layer);
+    s.get_layer_mut("Pool").unwrap().set_reflection(Some(WaterReflection::new(200.0))).unwrap();
+    let still = build_at(&s, &SessionRenderOptions::default(), 1280, 720);
+    let r = still.effects[0].params.water.unwrap().reflection.unwrap();
+    let drawing_line = Affine::scale(2.0) * camera.get_matrix((640, 360), 0.5) * Point::new(77.0, 200.0);
+    assert!(r.depth([drawing_line.x, drawing_line.y]).abs() < 1e-3, "a reflection that does not follow keeps its line in the drawing space");
+}
+
+#[test]
 fn a_refraction_of_strength_0_without_shading_glints_or_caustics_leaves_the_picture_unchanged() {
     //Arrange
     let mut s = session();

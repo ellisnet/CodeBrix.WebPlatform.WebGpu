@@ -5,6 +5,7 @@
 mod data_reader;
 mod lod_dither;
 mod lod_instance;
+mod material_textures;
 mod model;
 mod model_animation;
 mod model_bounds;
@@ -37,4 +38,8 @@ pub use model_node::{ModelNode, ModelSkin, NodeTransform};
 pub use model_pose_edit::ModelPoseEdit;
 pub use model_renderer::{ModelRenderStats, ModelRenderer};
 pub use model_shadows::SunShadowMap;
+pub use model_shadows::SunShadowCascades;
+pub(crate) use model_shadows::SunShadowNumbers;
+#[cfg(test)]
+pub(crate) use model_shadows::sun_shadow_numbers;
 pub use model_vertex::{ModelSkinVertex, ModelVertex};

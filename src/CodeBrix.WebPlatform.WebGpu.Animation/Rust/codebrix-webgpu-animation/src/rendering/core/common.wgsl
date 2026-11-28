@@ -8,6 +8,13 @@
 // converted to linear per pixel. The mix (blend) modes work in sRGB-encoded values, as the W3C
 // compositing formulas and NoSkia do.
 //
+// THE TARGET WINDOW (target_window.rs): the renderer's own targets cover a window of the canvas
+// (the frame's drawing), not the whole canvas. Every position in the vertex data, the paints and
+// the effect passes is in CANVAS pixels; `to_clip` takes the window's origin off a point drawn
+// on a target, `canvas_xy` puts it back on a fragment's position, and `vs_final` draws onto the
+// output (the canvas's view, the readback copy, a picture target), whose size is the canvas's.
+// With canvas-sized targets the origin is 0 and every mapping is exactly the plain one.
+//
 // The gradient shading in paint.wgsl (linear, two-point radial, sweep, and the extend modes) is
 // TRANSLATED FROM vello 0.12.0's vello_shaders/shader/fine.wgsl, and the blend functions in
 // composite.wgsl (blend_mix, blend_compose, blend_mix_compose and their helpers) are COPIED FROM
@@ -15,7 +22,8 @@
 // Apache-2.0 OR MIT OR Unlicense; used here under Apache-2.0 (see the notices).
 
 struct View {
-    size: vec4<f32>,
+    size: vec4<f32>,    // the targets' width and height (the window), the window's origin x y
+    canvas: vec4<f32>,  // the output's width and height, 0, 0
 };
 
 struct Paint {
@@ -35,10 +43,30 @@ struct VsOut {
     @location(0) @interpolate(flat) paint: u32,
 };
 
+// A device point (canvas pixels) as a clip position on the renderer's targets.
+fn to_clip(p: vec2<f32>) -> vec4<f32> {
+    let q = p - view.size.zw;
+    return vec4<f32>(q.x / view.size.x * 2.0 - 1.0, 1.0 - q.y / view.size.y * 2.0, 0.0, 1.0);
+}
+
+// A fragment's position on one of the renderer's targets as a canvas position.
+fn canvas_xy(frag: vec2<f32>) -> vec2<f32> {
+    return frag + view.size.zw;
+}
+
 @vertex
 fn vs_main(@location(0) p: vec2<f32>, @location(1) paint: u32) -> VsOut {
     var out: VsOut;
-    out.position = vec4<f32>(p.x / view.size.x * 2.0 - 1.0, 1.0 - p.y / view.size.y * 2.0, 0.0, 1.0);
+    out.position = to_clip(p);
+    out.paint = paint;
+    return out;
+}
+
+// The final step's vertices: device points on the OUTPUT (canvas size).
+@vertex
+fn vs_final(@location(0) p: vec2<f32>, @location(1) paint: u32) -> VsOut {
+    var out: VsOut;
+    out.position = vec4<f32>(p.x / view.canvas.x * 2.0 - 1.0, 1.0 - p.y / view.canvas.y * 2.0, 0.0, 1.0);
     out.paint = paint;
     return out;
 }

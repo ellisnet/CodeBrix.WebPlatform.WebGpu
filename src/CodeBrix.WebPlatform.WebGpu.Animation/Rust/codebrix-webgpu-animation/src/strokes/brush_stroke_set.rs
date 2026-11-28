@@ -33,6 +33,9 @@ pub struct BrushStrokeSet {
     /// The largest distance from a stroke's centre to any point of it, set units (how far a
     /// stroke can reach when it is turned about its centre).
     reach: f32,
+    /// Per record, its own weight as 8 bits (255 = 1, the weight in full); None = every stroke
+    /// 255 (see [`BrushStrokeSet::with_own_weights`]).
+    own_weights: Option<Rc<[u8]>>,
 }
 
 impl BrushStrokeSet {
@@ -91,7 +94,52 @@ impl BrushStrokeSet {
             suffix_start: suffix_start.into(),
             prefix_end: prefix_end.into(),
             reach,
+            own_weights: None,
         })
+    }
+
+    /// The same strokes with a weight of its OWN COLOUR per stroke, in the set's order (0..1, one
+    /// per record; 1 for every stroke of a set made by [`BrushStrokeSet::new`]). It counts only
+    /// where the set's colours are PICKED ([`StrokeColor::Picked`](crate::strokes::StrokeColor)):
+    /// a stroke's colour is mixed towards its record's own by the pickup's
+    /// [`own_weight`](crate::strokes::StrokePickup::own_weight) TIMES its weight here - 1 gives
+    /// the pickup's value, 0 the picked colour alone, whatever the pickup's value. So with a
+    /// pickup's own weight of 1 these weights are each stroke's own mix exactly; with 0 they
+    /// change nothing. Kept in 8 bits (steps of 1/255; 0 and 1 exact). In a stroke-level
+    /// transition a pair's weight travels linearly from its first stroke's to its second's with
+    /// the pair's own fraction (a stroke painting off or on keeps its own). The result is a NEW
+    /// set (its own identity and upload; clones of the old one are unchanged). The error says
+    /// what to change: a weight count other than the stroke count, or a weight outside 0..1 (no
+    /// C# equivalent).
+    pub fn with_own_weights(self, weights: Vec<f32>) -> Result<BrushStrokeSet, String> {
+        if weights.len() != self.records.len() {
+            return Err(format!("A stroke set's own weights are one per stroke, in the set's order: the set has {} strokes and {} weights were given.", self.records.len(), weights.len()));
+        }
+        let mut bytes = Vec::with_capacity(weights.len());
+        for (i, w) in weights.iter().enumerate() {
+            if !(*w >= 0.0 && *w <= 1.0) {
+                return Err(format!("Own weight {i} of a stroke set must be a fraction, 0..1 (1 = the pickup's own weight in full, 0 = the picked colour alone); it is {w}."));
+            }
+            bytes.push((w * 255.0).round() as u8);
+        }
+        Ok(BrushStrokeSet { id: NEXT_SET_ID.fetch_add(1, Ordering::Relaxed), own_weights: Some(bytes.into()), ..self })
+    }
+
+    /// A stroke's own weight as the GPU uses it (see [`BrushStrokeSet::with_own_weights`]): 1
+    /// for every stroke of a set without weights; None past the last stroke.
+    pub fn own_weight(&self, index: usize) -> Option<f32> {
+        (index < self.records.len()).then(|| own_weight_of(self.own_weight_bits(index)))
+    }
+
+    /// True when the set was given own weights. Crate-internal.
+    pub(crate) fn has_own_weights(&self) -> bool {
+        self.own_weights.is_some()
+    }
+
+    /// A stroke's own weight in 8 bits (255 = 1; 255 for a set without weights). Crate-internal
+    /// (the record's packing).
+    pub(crate) fn own_weight_bits(&self, index: usize) -> u8 {
+        self.own_weights.as_ref().and_then(|w| w.get(index).copied()).unwrap_or(255)
     }
 
     /// The set's identity: the same for every clone, different for every set made (what the
@@ -160,6 +208,16 @@ impl BrushStrokeSet {
     /// How many strokes have started at a time (`start <= time`).
     pub fn started_count(&self, seconds: f64) -> usize {
         self.records.iter().filter(|r| r.has_started(seconds)).count()
+    }
+}
+
+/// An 8-bit own weight as a fraction, as strokes.wgsl `stroke_own_weight` computes it: 255 is
+/// exactly 1 and 0 exactly 0.
+pub(crate) fn own_weight_of(bits: u8) -> f32 {
+    if bits == 255 {
+        1.0
+    } else {
+        bits as f32 / 255.0
     }
 }
 

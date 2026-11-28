@@ -355,13 +355,24 @@ impl ReflectionParams {
 /// The layer's (or session's) water for this frame: its sources go into the scene's water list
 /// and the device parameters come back (None when there is nothing to draw: no refraction or
 /// reflection, or a drawing map that cannot be inverted). `drawing` maps the water's coordinates
-/// (calibrated units under the camera) to device pixels; `seconds` is the session time. A source
-/// whose live drops exceed the cap is reported through `report` (once per message).
-pub(crate) fn record_water(scene: &mut crate::rendering::VectorScene, refraction: Option<&crate::water::WaterRefraction>, reflection: Option<&crate::water::WaterReflection>, drawing: Affine, seconds: f64, report: &mut dyn FnMut(String)) -> Option<WaterParams> {
+/// (calibrated units under the camera) to device pixels; `layer` is the layer's own transform
+/// (identity for a session), which the water follows when it is asked to (`follows_layer`: the
+/// ripples in the refraction's space when the layer has a refraction, else in the reflection's;
+/// the waterline in the reflection's own); `seconds` is the session time. A source whose live
+/// drops exceed the cap is reported through `report` (once per message).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn record_water(scene: &mut crate::rendering::VectorScene, refraction: Option<&crate::water::WaterRefraction>, reflection: Option<&crate::water::WaterReflection>, drawing: Affine, layer: Affine, seconds: f64, report: &mut dyn FnMut(String)) -> Option<WaterParams> {
     use crate::water::water_source::WaterTap;
     if refraction.is_none() && reflection.is_none() {
         return None;
     }
+    let follows = |f: bool| if f { drawing * layer } else { drawing };
+    let line_map = reflection.map_or(drawing, |r| follows(r.follows_layer));
+    let drawing = match (refraction, reflection) {
+        (Some(r), _) => follows(r.follows_layer),
+        (None, Some(r)) => follows(r.follows_layer),
+        (None, None) => drawing,
+    };
     let det = drawing.determinant();
     if !(det.abs() > 1e-12) || !det.is_finite() {
         return None;
@@ -399,9 +410,9 @@ pub(crate) fn record_water(scene: &mut crate::rendering::VectorScene, refraction
     if let Some(r) = reflection {
         // The waterline on the device: two of its points, and one unit into the water.
         let (line, gap) = (r.line as f64, r.gap as f64);
-        let a = drawing * kurbo::Point::new(0.0, line);
-        let b = drawing * kurbo::Point::new(1.0, line);
-        let below = drawing * kurbo::Point::new(0.0, line + 1.0);
+        let a = line_map * kurbo::Point::new(0.0, line);
+        let b = line_map * kurbo::Point::new(1.0, line);
+        let below = line_map * kurbo::Point::new(0.0, line + 1.0);
         let t = b - a;
         let t = t / t.hypot();
         let v = below - a;

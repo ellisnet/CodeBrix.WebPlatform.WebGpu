@@ -189,6 +189,20 @@ fn a_marked_element_in_the_bottom_band_is_reported_with_its_overlap() {
 }
 
 #[test]
+fn a_layer_outside_its_time_window_is_not_checked() {
+    let mut s = session(1080, 1920, "Captions", true);
+    filled_rect(&mut s, 0.0, 1800.0, 1080.0, 100.0);
+    s.get_layer_mut("Captions").unwrap().set_time_window(Some(1.0), Some(2.0));
+    let guide = SafeAreaGuides::instagram_reels_ad();
+    let mut counts = Vec::new();
+    for t in [0.5, 1.0, 2.0] {
+        s.set_time(t);
+        counts.push(s.check_safe_area(&guide, None, SafeAreaCheckOptions::default()).len());
+    }
+    assert!(counts[0] == 0 && counts[1] > 0 && counts[2] == 0, "{counts:?}");
+}
+
+#[test]
 fn a_marked_layer_checks_all_of_its_elements_and_reports_each_zone() {
     let mut s = session(1080, 1920, "Titles", true);
     filled_rect(&mut s, 20.0, 20.0, 100.0, 100.0);

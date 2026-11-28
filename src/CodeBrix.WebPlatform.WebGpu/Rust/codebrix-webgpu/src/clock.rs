@@ -28,7 +28,8 @@ impl CanvasClock {
     }
 
     /// Stops the clock: from the next frame on, the time stands still and the delta is 0 (the
-    /// frames are still drawn and counted).
+    /// frames are still drawn and counted - unless the canvas idles while its clock is paused,
+    /// `WebGpuCanvas`'s `idle_when_paused`).
     pub fn pause(&self) {
         self.inner.borrow_mut().pause();
     }
@@ -85,12 +86,19 @@ impl CanvasClock {
     /// Defines a named point in time on the clock's timeline, or moves an existing one: every
     /// layer then refers to it by name ([`CanvasFrame::points`](crate::CanvasFrame::points)).
     pub fn define_point(&self, name: &str, seconds: f64) {
-        self.inner.borrow_mut().points.define(name, seconds);
+        let mut state = self.inner.borrow_mut();
+        state.points.define(name, seconds);
+        state.changed();
     }
 
     /// Removes a named point; false when there was none of that name.
     pub fn remove_point(&self, name: &str) -> bool {
-        self.inner.borrow_mut().points.remove(name)
+        let mut state = self.inner.borrow_mut();
+        let removed = state.points.remove(name);
+        if removed {
+            state.changed();
+        }
+        removed
     }
 
     /// The named points as they are now (each frame carries the same, as they were when it began).
@@ -101,6 +109,13 @@ impl CanvasClock {
     /// Advances the clock to the browser's frame timestamp (milliseconds).
     pub(crate) fn tick(&self, timestamp_ms: f64) -> Tick {
         self.inner.borrow_mut().tick(timestamp_ms)
+    }
+
+    /// The count of the changes that alter what a paused clock's frame shows (a seek, a resume, a
+    /// named point defined, moved or removed): a canvas that idles while its clock is paused draws
+    /// again when it moves.
+    pub(crate) fn changes(&self) -> u64 {
+        self.inner.borrow().changes
     }
 
     /// Two handles are equal when they are the same clock.
@@ -140,11 +155,13 @@ pub(crate) struct ClockState {
     skip_next: bool,
     speed: f64,
     pub(crate) points: TimePoints,
+    /// See [`CanvasClock::changes`].
+    changes: u64,
 }
 
 impl Default for ClockState {
     fn default() -> Self {
-        ClockState { last_timestamp: None, last_tick: None, elapsed: 0.0, frames: 0, paused: false, skip_next: false, speed: 1.0, points: TimePoints::default() }
+        ClockState { last_timestamp: None, last_tick: None, elapsed: 0.0, frames: 0, paused: false, skip_next: false, speed: 1.0, points: TimePoints::default(), changes: 0 }
     }
 }
 
@@ -157,12 +174,18 @@ impl ClockState {
         if self.paused {
             self.paused = false;
             self.skip_next = true;
+            self.changed();
         }
     }
 
     pub(crate) fn seek(&mut self, seconds: f64) {
         self.elapsed = if seconds.is_finite() { seconds } else { 0.0 };
         self.skip_next = true;
+        self.changed();
+    }
+
+    fn changed(&mut self) {
+        self.changes = self.changes.wrapping_add(1);
     }
 
     pub(crate) fn set_speed(&mut self, speed: f64) {
@@ -346,6 +369,29 @@ mod tests {
         assert_eq!(copy.time("title in"), Some(4.0));
         assert_eq!(clock.points().time("title in"), Some(5.0));
         assert!(clock.remove_point("title in"));
+    }
+
+    #[test]
+    fn what_a_paused_frame_shows_is_counted_as_a_change() {
+        //Arrange
+        let clock = CanvasClock::new();
+        let start = clock.changes();
+        //Act + Assert: each of these changes what the next frame shows
+        clock.seek(3.0);
+        let after_seek = clock.changes();
+        clock.define_point("title in", 4.0);
+        let after_define = clock.changes();
+        clock.pause();
+        clock.set_speed(2.0);
+        assert_eq!(clock.changes(), after_define, "a pause and a speed change show the same frame");
+        clock.resume();
+        let after_resume = clock.changes();
+        assert!(clock.remove_point("title in"));
+        let after_remove = clock.changes();
+        assert!(!clock.remove_point("title in"));
+        clock.tick(1000.0);
+        assert!(start < after_seek && after_seek < after_define && after_define < after_resume && after_resume < after_remove);
+        assert_eq!(clock.changes(), after_remove, "nothing was removed, and a frame is no change");
     }
 
     #[test]

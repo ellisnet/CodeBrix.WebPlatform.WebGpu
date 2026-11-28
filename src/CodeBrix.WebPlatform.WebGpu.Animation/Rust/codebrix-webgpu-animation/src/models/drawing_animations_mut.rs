@@ -33,7 +33,7 @@ impl DrawingAnimationsMut<'_> {
         match target {
             BindingTarget::Element(id) => match self.session.find_element(*id) {
                 Some(_) => Ok(()),
-                None => Err("The element is not on any of the session's layers: add it (draw_shape or a layer's add_element) before binding it.".to_string()),
+                None => Err("The element is not on any of the session's layers: add it (draw_shape or a layer's add_element) before binding it. An element inside a group counts only once that group is on a layer: add the group first, then bind its elements.".to_string()),
             },
             BindingTarget::Layer(name) => match self.session.get_layer(name) {
                 Some(_) => Ok(()),
@@ -51,7 +51,7 @@ impl DrawingAnimationsMut<'_> {
     /// `Bind(element, property, Func<double, T>)`): float tracks for Rotation, Scale, ScaleX,
     /// ScaleY, Opacity, TrimStart / TrimEnd / TrimOffset (path shapes) and MorphFraction (morphing
     /// path shapes); point tracks for Position, Anchor and Scale (both axes); colour tracks for a
-    /// group's or layer's Color; bool tracks for a layer's IsVisible; on the camera Position (pan),
+    /// group's or layer's Color; bool tracks (or `BoundTrack::bool_fn`) for a layer's IsVisible; on the camera Position (pan),
     /// Anchor (pivot), Scale (zoom) and Rotation (roll). Pictures and sprites: Tint (colour
     /// track); sprites: FrameIndex (float track, rounded down). EFFECTS, on any element or a
     /// layer: BlurRadius, ShadowBlurRadius, GlowRadius (float tracks), ShadowOffset (point track),

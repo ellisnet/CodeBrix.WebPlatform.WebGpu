@@ -13,7 +13,8 @@ use crate::Color;
 /// [`WaterRefraction`](crate::water::WaterRefraction) (no extra nesting level when the layer has
 /// one, one otherwise; refraction and reflection share it). The waterline `y = line` is in the
 /// layer's DRAWING space (calibrated units under the camera at the layer's parallax - not the
-/// layer's own transform), so a camera that pans or rolls moves and tilts it with the layer; the
+/// layer's own transform, unless [`follows_layer`](WaterReflection::follows_layer)), so a camera
+/// that pans or rolls moves and tilts it with the layer; the
 /// mirror is the line `y = line + gap`. For a pixel `p` BELOW the waterline: the layer's content
 /// is read at `mirror(p)` moved by the water (`J (water_strength x slope)` at `p`, as a
 /// refraction), as the mean of 6 taps along the mirrored vertical over `streak` units, times
@@ -50,13 +51,22 @@ pub struct WaterReflection {
     pub water: Option<WaterSource>,
     /// Water units the mirrored view moves per unit of slope. Default 10.
     pub water_strength: f32,
+    /// True to place the waterline (and the reflection's water) in the LAYER'S OWN space - its
+    /// drawing space times its transform - so a waterline pinned to a layer moves, turns and
+    /// scales with it; false (the default) keeps them in the layer's drawing space, where the
+    /// layer's transform does not move them. WHEN THE FLAGS DIFFER on one layer (it has a
+    /// refraction whose flag is not this one's): the composite has ONE water space per layer,
+    /// so the ripples of both - this reflection's water included - follow the REFRACTION'S flag,
+    /// while the waterline always follows this one. Not in C#.
+    pub follows_layer: bool,
 }
 
 impl WaterReflection {
     /// A reflection about the waterline `line` with the defaults (gap 0, opacity 0.6, fade 300,
-    /// tint (40, 70, 90, 90), streak 3, no water: a still mirror, water strength 10).
+    /// tint (40, 70, 90, 90), streak 3, no water: a still mirror, water strength 10; in the
+    /// layer's drawing space, not following the layer's transform).
     pub fn new(line: f32) -> WaterReflection {
-        WaterReflection { line, gap: 0.0, opacity: 0.6, fade_distance: 300.0, tint: Color::from_rgba(40, 70, 90, 90), streak: 3.0, water: None, water_strength: 10.0 }
+        WaterReflection { line, gap: 0.0, opacity: 0.6, fade_distance: 300.0, tint: Color::from_rgba(40, 70, 90, 90), streak: 3.0, water: None, water_strength: 10.0, follows_layer: false }
     }
 
     /// Checks every value; the error names the one to change.

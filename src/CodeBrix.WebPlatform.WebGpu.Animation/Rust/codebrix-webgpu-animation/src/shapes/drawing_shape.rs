@@ -5,6 +5,7 @@ use kurbo::{Affine, Cap, Circle, Ellipse, Join, Line, Rect, RoundedRect, Stroke}
 use peniko::{BlendMode, Brush, Compose, Fill};
 
 use crate::color::Color;
+use crate::drawing_session_blend::SessionBlendMode;
 use crate::effects::effect_sizes::EffectParams;
 use crate::effects::{DrawingEffects, DrawingMask, DrawingMaskKind};
 use crate::geometry::RectangleF;
@@ -88,6 +89,48 @@ pub(crate) struct EncodeContext<'a> {
     pub(crate) drawing: Affine,
     /// Where problems found while drawing are reported (once each).
     pub(crate) reports: &'a std::cell::RefCell<crate::drawing_session::SessionReports>,
+    /// Device pixels per CSS pixel ([`SessionRenderOptions::pixel_ratio`](crate::SessionRenderOptions::pixel_ratio)):
+    /// the space a [`StrokeWidthMode::CssPixels`](crate::paths::StrokeWidthMode::CssPixels)
+    /// stroke is expanded in.
+    pub(crate) pixel_ratio: f64,
+    /// The canvas rectangle that matters ([`SessionRenderOptions::cull`](crate::SessionRenderOptions::cull)),
+    /// device pixels, already grown by the reach of the effects and water around the content
+    /// being encoded; None encodes everything.
+    pub(crate) cull: Option<CullArea>,
+}
+
+/// What a cull test keeps (device pixels): what can reach `main`, or the `mirror` rectangle (the
+/// part of the layer a reflection mirrors into `main`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CullArea {
+    pub(crate) main: Rect,
+    pub(crate) mirror: Option<Rect>,
+}
+
+impl CullArea {
+    /// Both rectangles grown by `by` device pixels on every side.
+    pub(crate) fn inflate(self, by: f64) -> CullArea {
+        CullArea { main: self.main.inflate(by, by), mirror: self.mirror.map(|m| m.inflate(by, by)) }
+    }
+
+    /// True when `bounds` lie wholly outside both rectangles (NaN compares false: an unknown box
+    /// is kept).
+    pub(crate) fn misses(&self, bounds: Rect) -> bool {
+        let outside = |c: Rect| bounds.x1 < c.x0 || bounds.x0 > c.x1 || bounds.y1 < c.y0 || bounds.y0 > c.y1;
+        outside(self.main) && self.mirror.is_none_or(outside)
+    }
+}
+
+impl EncodeContext<'_> {
+    /// The reference space a fixed-width stroke of this style is expanded in: the CSS pixel for
+    /// [`StrokeWidthMode::CssPixels`](crate::paths::StrokeWidthMode::CssPixels), the drawing's
+    /// units otherwise (what a scaling stroke ignores).
+    pub(crate) fn stroke_reference(&self, style: Option<&crate::paths::PathStrokeStyle>) -> Affine {
+        match style.map(|s| s.width_mode()) {
+            Some(crate::paths::StrokeWidthMode::CssPixels) => Affine::scale(self.pixel_ratio),
+            _ => self.drawing,
+        }
+    }
 }
 
 /// Records content under a mask, in the masked content's coordinates (`transform`). `in_group`:
@@ -186,6 +229,7 @@ pub struct DrawingShape {
     end_time: Option<f64>,
     effects: Option<DrawingEffects>,
     is_safe_area_checked: bool,
+    blend: SessionBlendMode,
 }
 
 macro_rules! from_kind {
@@ -223,6 +267,27 @@ fn union(a: RectangleF, b: RectangleF) -> RectangleF {
     RectangleF::new(l, t, r - l, bt - t)
 }
 
+/// A path element's control points (its end point aside).
+fn control_points(el: &kurbo::PathEl) -> impl Iterator<Item = kurbo::Point> {
+    let (a, b) = match *el {
+        kurbo::PathEl::QuadTo(p, _) => (Some(p), None),
+        kurbo::PathEl::CurveTo(p, q, _) => (Some(p), Some(q)),
+        _ => (None, None),
+    };
+    a.into_iter().chain(b)
+}
+
+fn rect_of(r: RectangleF) -> Rect {
+    Rect::new(r.x as f64, r.y as f64, r.right() as f64, r.bottom() as f64)
+}
+
+/// An upper bound of how much a transform can lengthen a vector (the Frobenius norm of its
+/// linear part, at least its largest singular value).
+fn largest_scale(t: Affine) -> f64 {
+    let c = t.as_coeffs();
+    ((c[0] * c[0]) + (c[1] * c[1]) + (c[2] * c[2]) + (c[3] * c[3])).sqrt()
+}
+
 fn grow(r: RectangleF, half: f32) -> RectangleF {
     RectangleF::new(r.x - half, r.y - half, r.width + 2.0 * half, r.height + 2.0 * half)
 }
@@ -230,7 +295,7 @@ fn grow(r: RectangleF, half: f32) -> RectangleF {
 impl DrawingShape {
     /// A shape of this kind with a new id: untransformed, fully opaque, always shown.
     pub fn new(kind: ShapeKind) -> DrawingShape {
-        DrawingShape { id: ElementId::next(), kind, transform: DrawingTransform::IDENTITY, opacity: 1.0, start_time: None, end_time: None, effects: None, is_safe_area_checked: false }
+        DrawingShape { id: ElementId::next(), kind, transform: DrawingTransform::IDENTITY, opacity: 1.0, start_time: None, end_time: None, effects: None, is_safe_area_checked: false, blend: SessionBlendMode::Normal }
     }
 
     /// The element's identity (what bindings name it by; kept by clones).
@@ -410,6 +475,32 @@ impl DrawingShape {
         self
     }
 
+    /// How the element combines with what was drawn before it (default
+    /// [`SessionBlendMode::Normal`]). Not in C#.
+    pub fn blend_mode(&self) -> SessionBlendMode {
+        self.blend
+    }
+
+    /// Sets how the element combines with what was drawn before it (Not in C#): its layer's
+    /// shapes below it, and what lies below the layer when the layer is not drawn through a
+    /// group of its own (every session layer is). Any mode other than
+    /// [`Normal`](SessionBlendMode::Normal) draws the element (at full opacity) into ONE offscreen
+    /// group put down in that mode at the element's opacity: one level of the renderer's
+    /// nesting allowance (two with effects - the blend's group around the effects' group) and a
+    /// copy of the backdrop for each blended element. A scene already as deep as the renderer
+    /// goes draws its deepest groups as plain clips, counted in
+    /// [`RenderStats::unsupported`](crate::rendering::RenderStats::unsupported). `Normal` draws
+    /// it exactly as before, with no extra group.
+    pub fn set_blend_mode(&mut self, blend: SessionBlendMode) {
+        self.blend = blend;
+    }
+
+    /// The same shape with a blend mode (see [`set_blend_mode`](DrawingShape::set_blend_mode)).
+    pub fn with_blend_mode(mut self, blend: SessionBlendMode) -> DrawingShape {
+        self.blend = blend;
+        self
+    }
+
     /// True when the shape is shown at a session time: at or after its start, before its end (C#
     /// `IsVisibleAt`).
     pub fn is_visible_at(&self, seconds: f64) -> bool {
@@ -524,15 +615,76 @@ impl DrawingShape {
         if self.opacity <= 0.0 {
             return;
         }
+        let effects = self.effects.as_ref().and_then(|e| EffectParams::new(e, transform, ctx.scene_rotation));
+        // The cull rectangle (Not in C#): an element that cannot reach it is not encoded; a
+        // group's (or animated shape's) children are tested one by one, against the rectangle
+        // grown by the group's effects.
+        let grown;
+        let ctx = match (ctx.cull, &effects) {
+            (Some(cull), _) if !matches!(self.kind, ShapeKind::Group(_) | ShapeKind::Animated(_)) => {
+                if self.misses_cull(cull, transform, effects.as_ref().map_or(0.0, |p| p.reach()), ctx, scene) {
+                    return;
+                }
+                ctx
+            }
+            (Some(cull), Some(params)) => {
+                let r = params.reach();
+                grown = EncodeContext { cull: Some(cull.inflate(r)), ..*ctx };
+                &grown
+            }
+            _ => ctx,
+        };
+        // A blend mode (Not in C#): the element drawn whole (at full opacity) into one group put
+        // down in that mode at the element's opacity.
+        let blended = self.blend != SessionBlendMode::Normal;
+        let opacity = if blended { 1.0 } else { self.opacity };
+        if blended {
+            scene.push_layer(self.blend.to_peniko(), self.opacity, Affine::IDENTITY, &ctx.area);
+        }
         // Effects: the element drawn whole (at full opacity) into a group that goes through the
         // effects and is put down at the element's opacity (C#'s DrawThrough).
-        if let Some(params) = self.effects.as_ref().and_then(|e| EffectParams::new(e, transform, ctx.scene_rotation)) {
-            scene.push_effects(params, self.opacity);
+        if let Some(params) = effects {
+            scene.push_effects(params, opacity);
             self.encode_body(scene, transform, inherited, ctx, 1.0, masks, true);
             scene.pop_layer();
-            return;
+        } else {
+            self.encode_body(scene, transform, inherited, ctx, opacity, masks, blended);
         }
-        self.encode_body(scene, transform, inherited, ctx, self.opacity, masks, false);
+        if blended {
+            scene.pop_layer();
+        }
+    }
+
+    /// True when the element certainly draws nothing inside `cull` (device pixels): its CHEAP,
+    /// CONSERVATIVE device bounds - its local box through `transform` (a path's control points,
+    /// not its exact curve extremes; a trimmed path's whole geometry), grown by `reach` (its
+    /// effects'), by the reach of its stroke and of the line look's stroke at the largest scale
+    /// either could be drawn at, and by a pixel of anti-aliasing - lie wholly outside it. Kinds
+    /// whose drawing may leave their bounds (SVG and Lottie documents, stroke sets, particles)
+    /// are never culled.
+    fn misses_cull(&self, cull: CullArea, transform: Affine, reach: f64, ctx: &EncodeContext<'_>, scene: &VectorScene) -> bool {
+        let (local, stroke) = match &self.kind {
+            ShapeKind::Path(p) => {
+                let mut points = p.geometry().bez_path().elements().iter().flat_map(|el| el.end_point().into_iter().chain(control_points(el)));
+                let Some(first) = points.next() else { return false };
+                let r = points.fold(Rect::from_points(first, first), |r, q| r.union_pt(q));
+                (r, p.stroke_style())
+            }
+            ShapeKind::TextBlock(t) => (rect_of(t.get_bounds()), t.stroke_style()),
+            ShapeKind::Svg(_) | ShapeKind::Lottie(_) | ShapeKind::BrushStrokes(_) | ShapeKind::Particles(_) | ShapeKind::Group(_) | ShapeKind::Animated(_) => return false,
+            _ => match self.local_bounds(None) {
+                Some(b) => (rect_of(b), None),
+                None => return false,
+            },
+        };
+        let largest = largest_scale(transform).max(largest_scale(ctx.drawing)).max(ctx.pixel_ratio);
+        let stroke_reach = |s: &crate::paths::PathStrokeStyle| s.width() as f64 / 2.0 * s.reach_factor() as f64 * largest;
+        let line = match scene.look.as_ref().map(|l| &l.paint) {
+            Some(crate::drawing_session_paint::SessionPaint::Line(line)) => stroke_reach(&line.stroke),
+            _ => 0.0,
+        };
+        let grow = reach + stroke.map_or(0.0, stroke_reach) + line + 1.0;
+        cull.misses(transform.transform_rect_bbox(local).inflate(grow, grow))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -615,7 +767,7 @@ impl DrawingShape {
                     scene.stroke(&outline(p.stroke_thickness), transform, &solid(p.color), None, &path);
                 }
             }
-            ShapeKind::Path(p) => p.encode(scene, transform, ctx.drawing, inherited, o),
+            ShapeKind::Path(p) => p.encode(scene, transform, ctx.stroke_reference(p.stroke_style()), inherited, o),
             ShapeKind::BrushStroke(b) => {
                 // C# draws a brushstroke as an anti-aliased filled polygon in its colour or fill;
                 // below a progress of 1 only the painted part.
@@ -648,8 +800,14 @@ impl DrawingShape {
             ShapeKind::Sprite(sp) => sp.encode(scene, transform, time, o),
             ShapeKind::Text(t) => t.encode(scene, transform, inherited, o),
             ShapeKind::TextBlock(t) => t.encode(scene, transform, inherited, o, ctx),
-            ShapeKind::Svg(s) => s.encode(scene, transform, o, ctx),
-            ShapeKind::Lottie(l) => l.encode(scene, transform, time, o),
+            ShapeKind::Svg(s) => {
+                ctx.reports.borrow_mut().note_svg(s.svg());
+                s.encode(scene, transform, o, ctx)
+            }
+            ShapeKind::Lottie(l) => {
+                ctx.reports.borrow_mut().note_lottie(l.lottie());
+                l.encode(scene, transform, time, o)
+            }
             ShapeKind::Group(g) => {
                 // Below full opacity the group is drawn whole into a layer that is then faded;
                 // its mask (in the group's coordinates) applies to the whole content first.

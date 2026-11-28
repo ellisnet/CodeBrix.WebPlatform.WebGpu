@@ -8,7 +8,8 @@
 //! THE COLOUR PART OF THE DRAW BLOCK (words from h7):
 //! - h7 (f32): the place's x, y, 1 / width, 1 / height (set units -> the source's uv);
 //! - h8 (u32): colour flags (`PICK_*`), the source's texels (`SourceTexels`), taps, pigments;
-//! - h9 (f32): own weight, the palette's snap, broken colour's hue (radians) and chroma;
+//! - h9 (f32): own weight (the shader multiplies it by each stroke's own, from its record), the
+//!   palette's snap, broken colour's hue (radians) and chroma;
 //! - h10 (f32): broken colour's lightness, 0, 0, 0;
 //! - h11 (u32): broken colour's seed, 0, 0, 0;
 //! - h12 to h43: the pigments in Oklab (L, a, b, 0), up to 32.
@@ -223,8 +224,16 @@ pub(crate) mod mirror {
     }
 
     /// strokes.wgsl picked_colour: the taps' texels (as sampled) averaged, the rules, the mix with
-    /// the own colour (straight linear). Returns (rgb straight linear, the alpha factor).
+    /// the own colour (straight linear), for a stroke of own weight 1. Returns (rgb straight
+    /// linear, the alpha factor).
     pub(crate) fn picked_colour(own: [f32; 3], texels: &[[f32; 4]], kind: SourceTexels, pickup: &StrokePickup, stroke_seed: u32) -> ([f32; 3], f32) {
+        picked_colour_weighted(own, texels, kind, pickup, stroke_seed, 1.0)
+    }
+
+    /// strokes.wgsl picked_colour for a stroke of own weight `stroke_weight` (its record's,
+    /// strokes/stroke_gpu.rs own_weight_of_word, or a pair's): the mix with the own colour is by
+    /// the pickup's own weight times it.
+    pub(crate) fn picked_colour_weighted(own: [f32; 3], texels: &[[f32; 4]], kind: SourceTexels, pickup: &StrokePickup, stroke_seed: u32, stroke_weight: f32) -> ([f32; 3], f32) {
         let mut sum = [0.0f32; 4];
         for t in texels {
             let c = source_texel(*t, kind);
@@ -241,7 +250,7 @@ pub(crate) mod mirror {
         if let Some(rules) = pickup.rules.as_ref().filter(|r| r.palette.as_ref().map_or(false, |p| !p.pigments.is_empty()) || r.broken.is_some()) {
             rgb = colour_rules(rgb, rules, stroke_seed);
         }
-        let w = pickup.own_weight.clamp(0.0, 1.0);
+        let w = pickup.own_weight.clamp(0.0, 1.0) * stroke_weight;
         if w > 0.0 {
             rgb = oklab_to_linear(lerp3(linear_to_oklab(rgb), linear_to_oklab(own), w)).map(|v| v.clamp(0.0, 1.0));
         }

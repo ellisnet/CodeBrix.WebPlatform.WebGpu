@@ -113,6 +113,34 @@ fn a_fixed_width_stroke_is_in_drawing_units_so_the_calibration_and_the_camera_st
 }
 
 #[test]
+fn a_stroke_in_css_pixels_is_width_times_the_pixel_ratio_whatever_scales_the_drawing_or_the_element() {
+    //Arrange: drawing units of 2 canvas pixels, the element scaled 5 x 3, the layer 1 x 6, the
+    // camera zoomed 1.5 times; a 1-CSS-pixel hairline.
+    let mut s = session();
+    s.draw_shape(crate::shapes::DrawingShape::from(line(1.0, StrokeWidthMode::CssPixels)).with_transform(DrawingTransform::IDENTITY.with_scale_xy(5.0, 3.0)));
+    s.get_layer_mut("A").unwrap().set_transform(DrawingTransform::IDENTITY.with_scale_xy(1.0, 6.0));
+    let mut camera = DrawingCamera::new();
+    camera.set_zoom(1.5).unwrap();
+    s.set_camera(Some(camera));
+    let at = |ratio: f64| {
+        let mut scene = VectorScene::new();
+        s.render_with(&mut scene, 200, 200, &crate::SessionRenderOptions { pixel_ratio: ratio, ..crate::SessionRenderOptions::default() });
+        stroke_boxes(&scene)
+    };
+    //Act
+    let (one, two, three, bad) = (at(1.0), at(2.0), at(3.0), at(f64::NAN));
+    //Assert
+    assert_eq!(crate::SessionRenderOptions::default().pixel_ratio, 1.0);
+    assert!(close(one[0].height(), 1.0), "{:?}", one[0]);
+    assert!(close(two[0].height(), 2.0), "{:?}", two[0]);
+    assert!(close(three[0].height(), 3.0), "{:?}", three[0]);
+    assert!(close(bad[0].height(), 1.0), "a ratio that is not usable counts as 1: {:?}", bad[0]);
+    assert!(close(one[0].width(), two[0].width()), "the path itself still follows every transform");
+    let style = line(1.0, StrokeWidthMode::CssPixels).stroke_style().cloned().unwrap();
+    assert!(style.is_fixed_width() && style.width_mode() == StrokeWidthMode::CssPixels);
+}
+
+#[test]
 fn a_fixed_width_stroke_ignores_the_layer_transform_and_an_animated_scale() {
     //Arrange
     let mut s = session();

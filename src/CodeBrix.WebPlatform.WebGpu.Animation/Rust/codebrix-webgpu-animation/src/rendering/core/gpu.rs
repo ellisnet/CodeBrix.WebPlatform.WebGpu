@@ -23,20 +23,35 @@
 //! `ripples` storage buffer (group 2 binding 2, one upload per frame) and up to two height pictures
 //! (group 1 bindings 5 and 6: an image-cache texture, a picture target's texture, an application's
 //! view, or a 1 x 1 blank); the composite module carries noise.wgsl for the caustic light.
+//! GPU TIMING (Not in C#; gpu_timer.rs): switched on, the frame's first pass writes a timestamp at
+//! its beginning and its last pass one at its end (a frame whose last pass would not be one of the
+//! final passes gets an empty pass for it), resolved and copied after the last pass; switched off
+//! (the default) every pass has `timestamp_writes: None` as before. A LIVE PICTURE
+//! (images/live_picture.rs) is drawn from its own texture, its queued regions written first.
+//! THE TARGET WINDOW (Not in C#; target_window.rs): the level targets, the backdrop copy, the
+//! effect textures, the height record and the checkpoints are the size of the frame's window
+//! (the builder's `window`), not the canvas's, made again when its size changes; the view
+//! uniform carries the window's size and origin and the output's size, and the final passes
+//! (`vs_final`) put the targets back at the window's origin on the canvas's view, the readback
+//! copy or the picture target, which keep the output's size.
 
 use std::collections::HashMap;
 use std::ops::Range;
 
-use codebrix_webgpu::{wgpu, CanvasFrame, CanvasTarget};
+use codebrix_webgpu::{wgpu, CanvasTarget};
 use peniko::{ImageData, ImageFormat};
 
+use crate::images::LivePicture;
+use crate::rendering::core::gpu_timer::{GpuTiming, PassStamps};
+use crate::rendering::core::FrameOutput;
 use crate::rendering::core::build::{Builder, CompositeMode, FxRole, FxStep, FxTexture, Op, ParticleInstance, StrokeOp, StrokeSource, WaterBinding};
 use crate::strokes::stroke_checkpoints::{CheckpointCache, CheckpointStep};
 use crate::strokes::StrokeCheckpoints;
 use crate::rendering::picture_target::{PictureTarget, PICTURE_FORMAT};
 use crate::rendering::core::paint::{PaintData, RAMP_SAMPLES, RAMP_SLOTS};
+use crate::rendering::core::target_window::TargetWindow;
 use crate::rendering::core::texture_ledger::{self, FrameImage, Residency, TextureLedger, Upload, CHECKPOINT_RESIDENCY, RESIDENCY};
-use crate::strokes::stroke_gpu::{pack_records, DRAW_BINDING_BYTES, RECORD_BYTES};
+use crate::strokes::stroke_gpu::{pack_set, DRAW_BINDING_BYTES, RECORD_BYTES};
 
 const SAMPLES: u32 = 4;
 const COLOR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -115,7 +130,7 @@ struct TipsEntry {
     bind: wgpu::BindGroup,
 }
 
-/// A finished layer's height record (canvas size).
+/// A finished layer's height record (the target window's size).
 struct HeightTarget {
     view: wgpu::TextureView,
 }
@@ -201,9 +216,14 @@ pub(crate) struct Gpu {
     ledger: TextureLedger,
     targets: Vec<Target>,
     backdrop: Option<Backdrop>,
+    /// The output's size (the canvas's, or a picture target's).
     pub(crate) size: (u32, u32),
+    /// The internal targets' size (the frame's target window; (0, 0) until the first frame).
+    target_size: (u32, u32),
     frame: u64,
     pub(crate) readback: Option<Readback>,
+    /// The GPU timing of the frames (off by default).
+    pub(crate) timing: GpuTiming,
 }
 
 fn face(compare: wgpu::CompareFunction, pass_op: wgpu::StencilOperation) -> wgpu::StencilFaceState {
@@ -325,11 +345,13 @@ impl Gpu {
         let comp_state = || stencil_state(face(C::Equal, S::Keep), face(C::Equal, S::Keep), CLIP, 0);
         let composite = (0..14u8).map(|c| make("animation composite", &pl_composite, cm, "fs_composite", COLOR, Some(compose_blend(c)), all, comp_state(), SAMPLES)).collect();
         let blend = make("animation blend", &pl_blend, cm, "fs_blend", COLOR, None, all, comp_state(), SAMPLES);
-        let final_view = make("animation final", &pl_composite, cm, "fs_final", target.format, premul, all, None, 1);
-        let final_readback = make("animation final (readback)", &pl_composite, cm, "fs_final", COLOR, premul, all, None, 1);
+        // The final passes draw onto the OUTPUT (the canvas's size): vs_final, not the targets'
+        // mapping.
+        let final_view = make_with("vs_final", "animation final", &pl_composite, cm, "fs_final", target.format, premul, all, None, 1);
+        let final_readback = make_with("vs_final", "animation final (readback)", &pl_composite, cm, "fs_final", COLOR, premul, all, None, 1);
         // A picture target's final pass: the resolved layer as premultiplied sRGB-encoded bytes,
         // over the cleared picture.
-        let picture_final = make("animation final (picture target)", &pl_composite, &picture_module, "fs_picture", PICTURE_FORMAT, None, all, None, 1);
+        let picture_final = make_with("vs_final", "animation final (picture target)", &pl_composite, &picture_module, "fs_picture", PICTURE_FORMAT, None, all, None, 1);
         let fx_resolve = make_with("vs_fx", "animation effect resolve", &pl_fx_resolve, &fx_resolve_module, "fs_resolve", FX_FORMAT, None, all, None, 1);
         let fx_down = make_with("vs_fx", "animation effect down", &pl_fx_filter, &fx_filter_module, "fs_down", FX_FORMAT, None, all, None, 1);
         let fx_blur = make_with("vs_fx", "animation effect blur", &pl_fx_filter, &fx_filter_module, "fs_blur", FX_FORMAT, None, all, None, 1);
@@ -409,7 +431,8 @@ impl Gpu {
         let blank_height = device.create_texture(&wgpu::TextureDescriptor { label: Some("animation no height"), size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: HEIGHT_FORMAT, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[] });
         let blank_height_view = blank_height.create_view(&wgpu::TextureViewDescriptor::default());
         let no_tips = Gpu::tips_bind(device, &layout_tips, &blank_tips_view, &tip_sampler, &blank_source_view, &source_sampler);
-        let view_buffer = device.create_buffer(&wgpu::BufferDescriptor { label: Some("animation view"), size: 16, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        // The view (common.wgsl View): the target window's size and origin, the output's size.
+        let view_buffer = device.create_buffer(&wgpu::BufferDescriptor { label: Some("animation view"), size: 32, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let ramp_buffer = device.create_buffer(&wgpu::BufferDescriptor { label: Some("animation ramps"), size: (RAMP_SLOTS * RAMP_SAMPLES * 16) as u64, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let linear = device.create_sampler(&wgpu::SamplerDescriptor { label: Some("animation image linear"), mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..wgpu::SamplerDescriptor::default() });
         let nearest = device.create_sampler(&wgpu::SamplerDescriptor { label: Some("animation image nearest"), ..wgpu::SamplerDescriptor::default() });
@@ -481,8 +504,10 @@ impl Gpu {
             targets: Vec::new(),
             backdrop: None,
             size: (0, 0),
+            target_size: (0, 0),
             frame: 0,
             readback: None,
+            timing: GpuTiming::new(device),
         }
     }
 
@@ -542,7 +567,7 @@ impl Gpu {
             }
             None => {
                 if upload_set {
-                    let buffer = records_buffer(&pack_records(op.set.records()));
+                    let buffer = records_buffer(&pack_set(&op.set));
                     let bind = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("animation stroke records"), layout: &self.layout_records, entries: &[wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() }, wgpu::BindGroupEntry { binding: 1, resource: buffer.as_entire_binding() }] });
                     self.stroke_sets.insert(id, StrokeSetEntry { bind });
                 }
@@ -587,6 +612,13 @@ impl Gpu {
     /// The size changed: the targets are made again on use.
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
         self.size = (width, height);
+        self.target_size = (0, 0);
+        self.drop_targets();
+    }
+
+    /// The internal targets go (a new output size or a new target window size): made again on
+    /// use, the checkpoints forgotten (a copy fits only a target of its own size and place).
+    fn drop_targets(&mut self) {
         self.targets.clear();
         self.backdrop = None;
         self.fx_textures.clear();
@@ -602,7 +634,7 @@ impl Gpu {
     /// The frame's checkpoint plan of every stroke draw that asks for one (the CPU half decides;
     /// a checkpoint made this frame gets its texture now), counted into `stats`.
     fn plan_checkpoints(&mut self, device: &wgpu::Device, b: &Builder, stats: &mut crate::rendering::RenderStats) -> Vec<Option<CheckpointStep>> {
-        let (w, h) = self.size;
+        let (w, h) = self.target_size;
         let bytes = StrokeCheckpoints::bytes_at(w.max(1), h.max(1));
         let mut steps = Vec::with_capacity(b.stroke_ops.len());
         for op in &b.stroke_ops {
@@ -649,7 +681,7 @@ impl Gpu {
     /// A stroke draw's instances `range` in a pass of their own on the level's target (colour
     /// and stencil loaded and stored), inside the clip `depth`.
     #[allow(clippy::too_many_arguments)]
-    fn stroke_pass(&self, encoder: &mut wgpu::CommandEncoder, level: usize, depth: u32, bind0: &wgpu::BindGroup, groups: &(wgpu::BindGroup, wgpu::BindGroup), offset: u32, range: Range<u32>) -> bool {
+    fn stroke_pass(&self, encoder: &mut wgpu::CommandEncoder, level: usize, depth: u32, bind0: &wgpu::BindGroup, groups: &(wgpu::BindGroup, wgpu::BindGroup), offset: u32, range: Range<u32>, stamps: &PassStamps) -> bool {
         let Some(db) = self.draw_bind.as_ref() else {
             return false;
         };
@@ -661,7 +693,7 @@ impl Gpu {
             label: Some("animation stroke pass (checkpoint)"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &t.color_view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &t.stencil_view, depth_ops: None, stencil_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }) }),
-            timestamp_writes: None,
+            timestamp_writes: stamps.writes(false),
             occlusion_query_set: None,
             multiview_mask: None,
         });
@@ -675,9 +707,9 @@ impl Gpu {
         true
     }
 
-    /// The height record's view, made (canvas size) on first use.
+    /// The height record's view, made (the target window's size) on first use.
     fn height_view(&mut self, device: &wgpu::Device) -> wgpu::TextureView {
-        let (w, h) = self.size;
+        let (w, h) = self.target_size;
         self.height
             .get_or_insert_with(|| {
                 let texture = device.create_texture(&wgpu::TextureDescriptor { label: Some("animation height record"), size: wgpu::Extent3d { width: w.max(1), height: h.max(1), depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: HEIGHT_FORMAT, usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[] });
@@ -687,10 +719,10 @@ impl Gpu {
             .clone()
     }
 
-    /// The effect texture of a role and level, made on first use (the level's size: the canvas
-    /// divided by the level, rounded up).
+    /// The effect texture of a role and level, made on first use (the level's size: the target
+    /// window divided by the level, rounded up).
     fn fx_texture(&mut self, device: &wgpu::Device, key: FxTexture) -> &FxEntry {
-        let (w, h) = self.size;
+        let (w, h) = self.target_size;
         let layout = &self.layout_fx_tex;
         self.fx_textures.entry(key).or_insert_with(|| {
             let level = key.1.max(1);
@@ -781,7 +813,7 @@ impl Gpu {
     }
 
     fn ms_texture(&self, device: &wgpu::Device, format: wgpu::TextureFormat, usage: wgpu::TextureUsages) -> wgpu::Texture {
-        let (w, h) = self.size;
+        let (w, h) = self.target_size;
         device.create_texture(&wgpu::TextureDescriptor { label: Some("animation target"), size: wgpu::Extent3d { width: w.max(1), height: h.max(1), depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: SAMPLES, dimension: wgpu::TextureDimension::D2, format, usage, view_formats: &[] })
     }
 
@@ -817,6 +849,13 @@ impl Gpu {
         // A picture target's stand-in: its texture as it is (nothing uploaded).
         if let Some(target) = PictureTarget::find(data.data.id()) {
             let view = target.texture(device).view;
+            return Some((Gpu::image_bind(device, &self.layout_image, &view, &self.linear, &self.nearest), view));
+        }
+        // A live picture's stand-in: its own texture on this device, the regions queued for it
+        // written first (counted as live-picture writes; the ledger never holds it).
+        if let Some(live) = LivePicture::find(data.data.id()) {
+            let (view, written) = live.texture_view(device, queue);
+            texture_ledger::count_live(stats, &written);
             return Some((Gpu::image_bind(device, &self.layout_image, &view, &self.linear, &self.nearest), view));
         }
         let (w, h) = (data.width, data.height);
@@ -865,21 +904,32 @@ impl Gpu {
 
     /// Records the frame's operations into the frame's encoder - onto the frame's view, or into
     /// `picture` (a picture target's layer: the picture's size, cleared and drawn whole). Returns
-    /// (draw calls, passes).
-    pub(crate) fn encode(&mut self, frame: &mut CanvasFrame<'_>, b: &mut Builder, read: bool, picture: Option<&PictureTarget>) -> (usize, usize) {
+    /// (draw calls, passes). `frame` is a canvas frame's output or an offscreen one's
+    /// ([`FrameOutput`]).
+    pub(crate) fn encode(&mut self, frame: &mut FrameOutput<'_>, b: &mut Builder, read: bool, picture: Option<&PictureTarget>) -> (usize, usize) {
         self.frame += 1;
         let device = frame.context.device();
         let queue = frame.context.queue();
-        let (w, h) = picture.map_or((frame.info.width, frame.info.height), |p| p.size());
+        let (w, h) = picture.map_or((frame.width, frame.height), |p| p.size());
         if self.size != (w, h) {
             self.resize(w, h);
         }
+        // The frame's target window: the internal targets are made again when its size changes.
+        let window: TargetWindow = b.window;
+        if self.target_size != window.size() {
+            self.drop_targets();
+            self.target_size = window.size();
+        }
+        let (tw, th) = self.target_size;
+        // GPU timing: what has arrived, and the query set of this frame (None: untimed).
+        let stamps = PassStamps::new(self.timing.begin_frame(device, queue));
         let needs_backdrop = b.ops.iter().any(|o| matches!(o, Op::LayerEnd { mode: CompositeMode::Mix, .. }));
         self.ensure_targets(device, b.levels_needed, needs_backdrop);
         // Images: one bind group per image used this frame (index 0 = none).
         let mut image_groups = vec![self.no_image.clone()];
         let mut image_views: Vec<Option<wgpu::TextureView>> = vec![None];
         let mut stats = b.stats;
+        stats.gpu_ms = self.timing.latest_ms();
         for image in b.images.clone() {
             match self.image_group(device, queue, &image, &mut stats) {
                 Some((group, view)) => {
@@ -928,7 +978,7 @@ impl Gpu {
         let frame_now = self.frame;
         self.source_groups.retain(|_, (_, used)| frame_now - *used <= 1);
         // Uploads: the view, the vertices (stencil list, then the cover list), paints, new ramps.
-        queue.write_buffer(&self.view_buffer, 0, bytes(&[w as f32, h as f32, 0.0, 0.0]));
+        queue.write_buffer(&self.view_buffer, 0, bytes(&window.view_words((w, h))));
         for (slot, samples) in b.ramps.uploads.drain(..) {
             queue.write_buffer(&self.ramp_buffer, (slot as usize * RAMP_SAMPLES * 16) as u64, bytes(&samples));
         }
@@ -993,7 +1043,7 @@ impl Gpu {
             if !clear && !resuming {
                 if let Some(Op::LayerEnd { mode: CompositeMode::Mix, .. }) = b.ops.get(i) {
                     if let Some(bd) = self.backdrop.as_ref() {
-                        let size = wgpu::Extent3d { width: w.max(1), height: h.max(1), depth_or_array_layers: 1 };
+                        let size = wgpu::Extent3d { width: tw.max(1), height: th.max(1), depth_or_array_layers: 1 };
                         frame.encoder.copy_texture_to_texture(self.targets[level].color.as_image_copy(), bd.texture.as_image_copy(), size);
                     }
                 }
@@ -1007,7 +1057,7 @@ impl Gpu {
                             label: Some("animation height pass"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })],
                             depth_stencil_attachment: None,
-                            timestamp_writes: None,
+                            timestamp_writes: stamps.writes(false),
                             occlusion_query_set: None,
                             multiview_mask: None,
                         });
@@ -1039,7 +1089,7 @@ impl Gpu {
                             label: Some("animation effect pass"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &self.fx_textures[&dst].view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
                             depth_stencil_attachment: None,
-                            timestamp_writes: None,
+                            timestamp_writes: stamps.writes(false),
                             occlusion_query_set: None,
                             multiview_mask: None,
                         });
@@ -1063,7 +1113,7 @@ impl Gpu {
                     label: Some("animation pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &t.color_view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &t.stencil_view, depth_ops: None, stencil_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }) }),
-                    timestamp_writes: None,
+                    timestamp_writes: stamps.writes(false),
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
@@ -1210,7 +1260,7 @@ impl Gpu {
                 // stroke range in a pass of its own; then the level's pass goes on.
                 let op = &b.stroke_ops[d as usize];
                 let step = steps[d as usize].unwrap_or_default();
-                let size = wgpu::Extent3d { width: w.max(1), height: h.max(1), depth_or_array_layers: 1 };
+                let size = wgpu::Extent3d { width: tw.max(1), height: th.max(1), depth_or_array_layers: 1 };
                 if let Some(cp) = step.restore.and_then(|(slot, _)| self.checkpoint_textures.get(slot).cloned().flatten()) {
                     frame.encoder.copy_texture_to_texture(cp.as_image_copy(), self.targets[level].color.as_image_copy(), size);
                 }
@@ -1225,7 +1275,7 @@ impl Gpu {
                             copied = true;
                         }
                     }
-                    if self.stroke_pass(frame.encoder, level, depth, &bind0, groups, op.offset, range) {
+                    if self.stroke_pass(frame.encoder, level, depth, &bind0, groups, op.offset, range, &stamps) {
                         passes += 1;
                         draw_calls += 1;
                     }
@@ -1268,7 +1318,7 @@ impl Gpu {
                 label: Some("animation picture target"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: stamps.writes(!read),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -1286,7 +1336,7 @@ impl Gpu {
                 label: Some("animation final"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: frame.view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: stamps.writes(!read),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -1299,12 +1349,27 @@ impl Gpu {
             draw_calls += 1;
         }
         if read {
-            self.encode_readback(frame, &vb, &bind0, final_quad);
+            self.encode_readback(frame, &vb, &bind0, final_quad, &stamps);
         }
+        // A timed frame whose last pass did not end the timing (nothing reached the view): an
+        // empty pass on the main target writes the end.
+        if stamps.needs_end() {
+            let t = &self.targets[0];
+            let _pass = frame.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("animation gpu timing end"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &t.color_view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
+                depth_stencil_attachment: None,
+                timestamp_writes: stamps.writes(true),
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            passes += 1;
+        }
+        self.timing.end_frame(frame.encoder);
         (draw_calls + particle_draws + stroke_draws, passes)
     }
 
-    fn encode_readback(&mut self, frame: &mut CanvasFrame<'_>, vb: &wgpu::Buffer, bind0: &wgpu::BindGroup, quad: Range<u32>) {
+    fn encode_readback(&mut self, frame: &mut FrameOutput<'_>, vb: &wgpu::Buffer, bind0: &wgpu::BindGroup, quad: Range<u32>, stamps: &PassStamps) {
         let device = frame.context.device();
         let (w, h) = self.size;
         if self.readback.as_ref().map_or(true, |r| r.width != w || r.height != h) {
@@ -1320,7 +1385,7 @@ impl Gpu {
                 label: Some("animation readback"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &r.view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: stamps.writes(true),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -1339,10 +1404,14 @@ impl Gpu {
         );
     }
 
-    /// Without a browser there is no readback: `done` gets no pixels.
+    /// Outside a browser build this testing readback hands `done` NO pixels (an empty list, 0 x
+    /// 0): it serves only AnimationLayerControl::read_pixels_for_testing, whose layer draws on a
+    /// browser canvas. A native program draws with OffscreenRenderer into a texture of its own
+    /// and reads that texture itself (a copy into a buffer, then `device.poll`), never through
+    /// this.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn map_readback(&self, done: Box<dyn FnOnce(Vec<u8>, u32, u32)>) {
-        // Only a browser has this renderer's GPU device; elsewhere there is nothing to read.
+        // Not mapped here: a native device would need polling, and nothing native asks for it.
         done(Vec::new(), 0, 0);
     }
 

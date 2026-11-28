@@ -27,13 +27,16 @@ pub struct DrawingLayer {
     refraction: Option<crate::water::WaterRefraction>,
     reflection: Option<crate::water::WaterReflection>,
     is_safe_area_checked: bool,
+    start_time: Option<f64>,
+    end_time: Option<f64>,
+    blend: crate::drawing_session_blend::SessionBlendMode,
     elements: Vec<DrawingShape>,
 }
 
 impl DrawingLayer {
     /// An empty layer.
     pub fn new(name: &str, color: Color) -> DrawingLayer {
-        DrawingLayer { name: name.to_string(), color, opacity: 1.0, is_visible: true, transform: DrawingTransform::IDENTITY, parallax: 1.0, mask: None, effects: None, frame_operations: None, surface_finish: None, refraction: None, reflection: None, is_safe_area_checked: false, elements: Vec::new() }
+        DrawingLayer { name: name.to_string(), color, opacity: 1.0, is_visible: true, transform: DrawingTransform::IDENTITY, parallax: 1.0, mask: None, effects: None, frame_operations: None, surface_finish: None, refraction: None, reflection: None, is_safe_area_checked: false, start_time: None, end_time: None, blend: crate::drawing_session_blend::SessionBlendMode::Normal, elements: Vec::new() }
     }
 
     /// The name.
@@ -182,6 +185,69 @@ impl DrawingLayer {
     /// Shows or hides the layer.
     pub fn set_is_visible(&mut self, value: bool) {
         self.is_visible = value;
+    }
+
+    /// The session time from which the layer is shown (None, the default: from the start). Not
+    /// in C# (an element's [`start_time`](crate::shapes::DrawingShape::start_time) for a whole
+    /// layer).
+    pub fn start_time(&self) -> Option<f64> {
+        self.start_time
+    }
+
+    /// The session time from which the layer is no longer shown (None, the default: never
+    /// hidden). Not in C#.
+    pub fn end_time(&self) -> Option<f64> {
+        self.end_time
+    }
+
+    /// Sets the layer's time window, in session seconds (Not in C#; as an element's
+    /// [`set_time_window`](crate::shapes::DrawingShape::set_time_window)): the layer is drawn
+    /// from `start_time` (None: from the start) until before `end_time` (None: never hidden), and
+    /// checked by [`check_safe_area`](crate::DrawingSession::check_safe_area) only then. Its
+    /// elements' own windows still apply inside it. A layer used as a matte
+    /// ([`DrawingMask::from_layer`]) ignores its window, as it ignores its visibility.
+    pub fn set_time_window(&mut self, start_time: Option<f64>, end_time: Option<f64>) {
+        self.start_time = start_time;
+        self.end_time = end_time;
+    }
+
+    /// The same layer with a time window (see [`set_time_window`](DrawingLayer::set_time_window)).
+    pub fn with_time_window(mut self, start_time: Option<f64>, end_time: Option<f64>) -> DrawingLayer {
+        self.set_time_window(start_time, end_time);
+        self
+    }
+
+    /// How the layer combines with the layers below it (default
+    /// [`SessionBlendMode::Normal`](crate::SessionBlendMode::Normal)). Not in C#.
+    pub fn blend_mode(&self) -> crate::drawing_session_blend::SessionBlendMode {
+        self.blend
+    }
+
+    /// Sets how the layer's group combines with the layers below it in its session (Not in C#;
+    /// the session's own [`SessionRenderOptions::blend`](crate::SessionRenderOptions::blend) is
+    /// how the whole session combines with what is below IT). Every layer is already one group,
+    /// so a blend costs no extra level - except with effects (blur, glow, shadow, frame
+    /// operations, a surface finish, water), where the blend's group goes around the effects'
+    /// group: one more level of the renderer's nesting allowance (a scene already as deep as
+    /// the renderer goes draws its deepest groups as plain clips, counted in
+    /// [`RenderStats::unsupported`](crate::rendering::RenderStats::unsupported)). A mode other
+    /// than `Normal` reads a copy of the backdrop when the layer is composited. A layer used as
+    /// a matte ignores its blend mode.
+    pub fn set_blend_mode(&mut self, blend: crate::drawing_session_blend::SessionBlendMode) {
+        self.blend = blend;
+    }
+
+    /// The same layer with a blend mode (see [`set_blend_mode`](DrawingLayer::set_blend_mode)).
+    pub fn with_blend_mode(mut self, blend: crate::drawing_session_blend::SessionBlendMode) -> DrawingLayer {
+        self.blend = blend;
+        self
+    }
+
+    /// True when the layer is drawn at a session time: it is visible
+    /// ([`is_visible`](DrawingLayer::is_visible)) and the time is at or after its start and
+    /// before its end. Not in C#.
+    pub fn is_visible_at(&self, seconds: f64) -> bool {
+        self.is_visible && self.start_time.is_none_or(|s| seconds >= s) && self.end_time.is_none_or(|e| seconds < e)
     }
 
     /// True when every element of the layer is checked by

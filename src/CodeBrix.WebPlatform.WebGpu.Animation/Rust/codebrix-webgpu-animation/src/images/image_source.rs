@@ -1,10 +1,12 @@
 //! `ImageSource`: a picture as DECODED pixels (C# `ImageSource`).
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use peniko::{ImageAlphaType, ImageData, ImageFormat};
 
 use crate::geometry::Rectangle;
+use crate::images::LivePicture;
 
 /// A picture to draw with an [`ImageShape`](crate::shapes::ImageShape) (or as the frames of a
 /// [`SpriteSheet`](crate::images::SpriteSheet)): a copy of straight-alpha RGBA pixels (C#
@@ -25,7 +27,10 @@ use crate::geometry::Rectangle;
 /// SHARING. A clone is the SAME picture (C# shares one reference): the pixels are kept once, and
 /// the renderer uploads them to the GPU once and keeps the texture while any shape draws it.
 /// Dropping the last clone releases the pixels (C# `Dispose`); the GPU texture goes once no frame
-/// has used it for a while.
+/// has used it for a while. A picture whose pixels change every frame is a
+/// [`LivePicture`](crate::images::LivePicture) instead (Not in C#): its
+/// [`image_source`](crate::images::LivePicture::image_source) is an `ImageSource` stand-in drawn
+/// from the live picture's own texture.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImageSource {
     data: ImageData,
@@ -46,6 +51,26 @@ fn check_buffer(available: usize, width: u32, height: u32) -> Result<usize, Stri
 impl ImageSource {
     fn from_vec(rgba: Vec<u8>, width: u32, height: u32) -> ImageSource {
         ImageSource { data: ImageData { data: peniko::Blob::new(Arc::new(rgba)), format: ImageFormat::Rgba8, alpha_type: ImageAlphaType::Alpha, width, height } }
+    }
+
+    /// A live picture's stand-in (its pixels are the live picture's, found by the blob's id).
+    pub(crate) fn from_stand_in(data: ImageData) -> ImageSource {
+        ImageSource { data }
+    }
+
+    /// The pixels as the CPU reads them: a live picture's as they are now; a live picture's
+    /// stand-in whose picture is gone, transparent.
+    fn pixels(&self) -> Cow<'_, [u8]> {
+        if let Some(live) = LivePicture::find(self.data.data.id()) {
+            return Cow::Owned(live.to_rgba());
+        }
+        let required = self.data.width as usize * self.data.height as usize * 4;
+        let all = self.data.data.data();
+        if all.len() >= required {
+            Cow::Borrowed(all)
+        } else {
+            Cow::Owned(vec![0; required])
+        }
     }
 
     /// Copies straight-alpha RGBA pixels (R, G, B, A per pixel, sRGB-encoded, rows top to bottom,
@@ -96,10 +121,12 @@ impl ImageSource {
     }
 
     /// A new picture holding a copy of part of this one (C# `Crop`; sprite sheets cut their cells
-    /// with it). The error says what to do when the area is empty or reaches outside.
+    /// with it; of a live picture's stand-in, a copy of the live picture's pixels now). The error
+    /// says what to do when the area is empty or reaches outside.
     pub fn crop(&self, area: Rectangle) -> Result<ImageSource, String> {
         self.check_area(area)?;
-        let all = self.data.data.data();
+        let pixels = self.pixels();
+        let all: &[u8] = &pixels;
         let row = self.data.width as usize * 4;
         let mut rgba = Vec::with_capacity(area.width as usize * area.height as usize * 4);
         for y in 0..area.height as usize {
@@ -109,9 +136,10 @@ impl ImageSource {
         Ok(ImageSource::from_vec(rgba, area.width as u32, area.height as u32))
     }
 
-    /// A copy of the pixels as straight-alpha RGBA bytes (C# `ToRgba`).
+    /// A copy of the pixels as straight-alpha RGBA bytes (C# `ToRgba`; of a live picture's
+    /// stand-in, the live picture's pixels now).
     pub fn to_rgba(&self) -> Vec<u8> {
-        self.data.data.data().to_vec()
+        self.pixels().into_owned()
     }
 
     /// The error for an area that is empty or reaches outside the picture.

@@ -3,7 +3,8 @@
 //! and the CPU twins of the shader's formulas - Schlick's Fresnel, absorption and scattering by
 //! the path through the water, the soft shore, depth reconstruction, the refraction fallback, the
 //! screen-space reflection's march and its fades, the caustic net, the bottom's normal from three
-//! depth points and the sheen's colour curve (the twins are compiled for the host tests only). `water_surface.wgsl` uses the same formulas: keep
+//! depth points and the sheen's colour curve, the coverage mask's edge fade, the flow's offsets
+//! of the detail ripples, caustics and sheen (the twins are compiled for the host tests only). `water_surface.wgsl` uses the same formulas: keep
 //! the two in step (tests in `water::tests`).
 
 use glam::{Mat4, Vec3, Vec4};
@@ -67,7 +68,8 @@ pub(crate) struct WaterUniforms {
     pub(crate) look: Vec4,
     /// caustics strength (0: none), scale, focus, depth fade.
     pub(crate) caustics: Vec4,
-    /// x, y: the caustic net's two motion phases (radians).
+    /// x, y: the caustic net's two motion phases (radians); z, w: the flow's shifts of the net's
+    /// two warps (radians; 0 without flow).
     pub(crate) caustic_phase: Vec4,
     /// The current phase of each detail ripple (radians).
     pub(crate) detail_phase: Vec4,
@@ -90,9 +92,36 @@ pub(crate) struct WaterUniforms {
     pub(crate) waves: [Vec4; 32],
     /// Four vec4 per local light, as the model shader's.
     pub(crate) local_lights: [Vec4; 64],
+    // From here on: the mask, the reflection environment, the flow and the sun's cascades (Not in
+    // C#); all zero when none of them is used, so the bytes before are those of the surface alone.
+    /// x: 1 with a coverage mask (the masked entry point); y: its threshold.
+    pub(crate) mask: Vec4,
+    /// x: 1 when the bound cube is the reflection environment; y: its intensity; z: its last
+    /// prefiltered mip level; w: its rotation about +Y.
+    pub(crate) reflection: Vec4,
+    /// x, y: the flow's velocity along world x and z (units per second; kept for a later flow
+    /// map); z, w: the caustic net's offset by the flow within a cell (net cells, 0..1).
+    pub(crate) flow: Vec4,
+    /// x: the sun's cascades (0 or 1: the single map); y, z: the caustic net's whole-cell offset
+    /// by the flow (i32 bits); w: 0.
+    pub(crate) extra: [u32; 4],
+    /// The sun's cascades (read when `extra[0]` is above 1): xyz the camera's view direction, w
+    /// the blend band (as the model shader's `sun_view`).
+    pub(crate) sun_view: Vec4,
+    /// The far end of each cascade, depth along `sun_view.xyz` from the camera.
+    pub(crate) sun_splits: Vec4,
+    /// Each cascade's depth bias and normal offset.
+    pub(crate) sun_biases: Vec4,
+    pub(crate) sun_offsets: Vec4,
+    /// Each cascade's view-projection.
+    pub(crate) sun_cascade_matrices: [Mat4; 4],
 }
 
-pub(crate) const WATER_UNIFORM_SIZE: u64 = 2160;
+pub(crate) const WATER_UNIFORM_SIZE: u64 = 2544;
+/// The size of the record before the mask, reflection, flow and cascade fields (what every
+/// surface wrote before they were added).
+#[cfg(test)]
+pub(crate) const WATER_SURFACE_PART: usize = 2160;
 const _: () = assert!(std::mem::size_of::<WaterUniforms>() == WATER_UNIFORM_SIZE as usize);
 /// The bytes between two surfaces' uniforms: the size rounded up to the dynamic-offset alignment.
 pub(crate) const WATER_SLOT_SIZE: u64 = WATER_UNIFORM_SIZE.div_ceil(256) * 256;
@@ -120,9 +149,62 @@ pub(crate) fn caustic_phases(seconds: f64, speed: f32) -> (f32, f32) {
 }
 
 /// The sheen's drift (0..1 film cycles) and band phase (radians) at `seconds`.
+#[cfg(test)]
 pub(crate) fn sheen_phases(seconds: f64, drift: f32) -> (f32, f32) {
+    sheen_phases_flowing(seconds, drift, 0.0)
+}
+
+/// The sheen's phases with its bands carried by the flow: `along` is how fast the band argument
+/// (`dot(p.xz, SHEEN_BAND_AXIS) * scale`) runs under the flow, radians per second
+/// ([`sheen_flow_rate`]); 0 is [`sheen_phases`] exactly.
+pub(crate) fn sheen_phases_flowing(seconds: f64, drift: f32, along: f64) -> (f32, f32) {
     let cycles = seconds * drift as f64;
-    (cycles.rem_euclid(1.0) as f32, cycles_to_phase(cycles * SHEEN_BAND_RATE))
+    (cycles.rem_euclid(1.0) as f32, cycles_to_phase(cycles * SHEEN_BAND_RATE - seconds * along / std::f64::consts::TAU))
+}
+
+/// The direction the sheen's bands vary along (`band = sin(dot(p.xz, axis) * scale + phase)`).
+pub(crate) const SHEEN_BAND_AXIS: [f64; 2] = [2.2, 1.7];
+
+/// How fast the sheen's band argument runs under a flow (radians per second): the bands at a
+/// point are those that were `flow * t` upstream.
+pub(crate) fn sheen_flow_rate(flow: glam::Vec2, scale: f32) -> f64 {
+    (flow.x as f64 * SHEEN_BAND_AXIS[0] + flow.y as f64 * SHEEN_BAND_AXIS[1]) * scale as f64
+}
+
+/// The caustic net's warp frequencies (the net's `q = p + 0.35 * (sin(p.y * 1.7 + ..), sin(p.x *
+/// 1.3 - ..))`).
+pub(crate) const CAUSTIC_WARP_Y: f64 = 1.7;
+pub(crate) const CAUSTIC_WARP_X: f64 = 1.3;
+
+/// What the shader needs to draw the caustic net carried `flow * seconds` downstream (`scale` net
+/// cells per unit) with no growing number: the whole cells of the offset (the cell hash is
+/// shifted by them, exactly), the offset within a cell (0..1), and the two warps' phase shifts
+/// for the whole cells (wrapped, radians). The net at `p` is then the unmoved net at `p - offset`
+/// for every time; zero flow gives zeros.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CausticFlow {
+    pub(crate) cells: [i32; 2],
+    pub(crate) fraction: glam::Vec2,
+    pub(crate) shifts: glam::Vec2,
+}
+
+/// The caustic net's flow offset at `seconds` (see [`CausticFlow`]).
+pub(crate) fn caustic_flow(flow: glam::Vec2, scale: f32, seconds: f64) -> CausticFlow {
+    let offset = [flow.x as f64 * scale as f64 * seconds, flow.y as f64 * scale as f64 * seconds];
+    let whole = [offset[0].floor(), offset[1].floor()];
+    let fraction = glam::Vec2::new((offset[0] - whole[0]) as f32, (offset[1] - whole[1]) as f32);
+    // Whole cells as i32 (they would wrap only after 2^31 cells: decades of flow).
+    let cells = [(whole[0] as i64) as i32, (whole[1] as i64) as i32];
+    let shift = |rate: f64, cells: f64| -> f32 {
+        let turns = -(rate * cells) / std::f64::consts::TAU;
+        let phase = cycles_to_phase(turns);
+        if phase == 0.0 {
+            0.0
+        } else {
+            phase
+        }
+    };
+    CausticFlow { cells, fraction, shifts: glam::Vec2::new(shift(CAUSTIC_WARP_Y, whole[1]), shift(CAUSTIC_WARP_X, whole[0])) }
 }
 
 /// The 32-bit hash both sides use (a PCG step, then an output permutation).
@@ -155,9 +237,31 @@ pub(crate) fn detail_waves(strength: f32, wavelength: f32, seed: u32) -> [Vec4; 
 }
 
 /// The detail ripples' current phases at `seconds` (each travels at `speed` units per second).
+#[cfg(test)]
 pub(crate) fn detail_phases(waves: &[Vec4; DETAIL_WAVES], speed: f32, seconds: f64) -> Vec4 {
-    let phase = |w: Vec4| cycles_to_phase(seconds * (w.z as f64 * speed as f64) / std::f64::consts::TAU);
+    detail_phases_flowing(waves, speed, glam::Vec2::ZERO, seconds)
+}
+
+/// The detail ripples' phases with the whole pattern carried by `flow` (world x and z units per
+/// second): each ripple then runs at `speed` plus the flow's part along its direction. Zero flow
+/// is [`detail_phases`] exactly.
+pub(crate) fn detail_phases_flowing(waves: &[Vec4; DETAIL_WAVES], speed: f32, flow: glam::Vec2, seconds: f64) -> Vec4 {
+    let phase = |w: Vec4| {
+        let along = w.x as f64 * flow.x as f64 + w.y as f64 * flow.y as f64;
+        cycles_to_phase(seconds * (w.z as f64 * (speed as f64 + along)) / std::f64::consts::TAU)
+    };
     Vec4::new(phase(waves[0]), phase(waves[1]), phase(waves[2]), phase(waves[3]))
+}
+
+/// The opacity of the water where its coverage mask reads `coverage` (the masked entry point's
+/// edge fade): None at or below `threshold` (nothing drawn: no colour, no depth), else a smooth
+/// step from 0 just above the threshold to 1 at full coverage.
+pub(crate) fn mask_opacity(coverage: f32, threshold: f32) -> Option<f32> {
+    if coverage.is_nan() || coverage <= threshold {
+        return None;
+    }
+    let x = ((coverage - threshold) / (1.0 - threshold).max(1e-6)).clamp(0.0, 1.0);
+    Some(x * x * (3.0 - 2.0 * x))
 }
 
 /// The slope (dh/dx, dh/dz) the detail ripples add at a world point, each faded by its
@@ -316,13 +420,21 @@ pub(crate) fn bottom_normal(b: Vec3, bx: Vec3, by: Vec3, v: Vec3) -> Vec3 {
 /// edges of a domain-warped field of moving points, 0..1.
 #[cfg(test)]
 pub(crate) fn caustic_net(p: Vec2, phase_a: f32, phase_b: f32, seed: u32) -> f32 {
-    let q = p + 0.35 * Vec2::new((p.y * 1.7 + phase_b).sin(), (p.x * 1.3 - phase_b + 1.0).sin());
+    caustic_net_moved(p, phase_a, phase_b, Vec2::ZERO, [0, 0], seed)
+}
+
+/// The caustic net moved by the flow (the shader's `caustic_net`): `p` already less the offset
+/// within a cell, the warps' phases shifted by `shifts`, the cells by `-cells` (see
+/// [`CausticFlow`]). Zero shifts and cells are [`caustic_net`].
+#[cfg(test)]
+pub(crate) fn caustic_net_moved(p: Vec2, phase_a: f32, phase_b: f32, shifts: Vec2, cells: [i32; 2], seed: u32) -> f32 {
+    let q = p + 0.35 * Vec2::new((p.y * 1.7 + phase_b + shifts.x).sin(), (p.x * 1.3 - phase_b + 1.0 + shifts.y).sin());
     let cell = q.floor();
     let f = q - cell;
     let (mut d1, mut d2) = (8.0f32, 8.0f32);
     for y in -1..=1 {
         for x in -1..=1 {
-            let h = hash_cell(cell.x as i32 + x, cell.y as i32 + y, seed);
+            let h = hash_cell((cell.x as i32).wrapping_sub(cells[0]).wrapping_add(x), (cell.y as i32).wrapping_sub(cells[1]).wrapping_add(y), seed);
             let point = Vec2::new(x as f32, y as f32) + Vec2::splat(0.5) + 0.38 * Vec2::new((phase_a + std::f32::consts::TAU * h.x).sin(), (phase_b + std::f32::consts::TAU * h.y).sin());
             let d = point.distance(f);
             if d < d1 {

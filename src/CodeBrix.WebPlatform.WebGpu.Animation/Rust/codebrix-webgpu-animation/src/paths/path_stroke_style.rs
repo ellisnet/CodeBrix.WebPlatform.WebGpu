@@ -96,10 +96,11 @@ impl PathStrokeStyle {
         self.options.width_mode
     }
 
-    /// True when the width stays fixed in the drawing's own units ([`StrokeWidthMode::Fixed`]).
+    /// True when the width does not scale with the element: fixed in the drawing's own units
+    /// ([`StrokeWidthMode::Fixed`]) or given in CSS pixels ([`StrokeWidthMode::CssPixels`]).
     /// Not in C#.
     pub fn is_fixed_width(&self) -> bool {
-        self.options.width_mode == StrokeWidthMode::Fixed
+        self.options.width_mode != StrokeWidthMode::ScalesWithElement
     }
 
     /// The same style with another width mode. Not in C#.

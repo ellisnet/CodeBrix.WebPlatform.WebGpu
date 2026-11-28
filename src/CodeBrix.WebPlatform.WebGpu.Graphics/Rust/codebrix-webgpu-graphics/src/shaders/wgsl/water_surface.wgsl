@@ -2,8 +2,12 @@
 // field's heights and by open-water (Gerstner) waves; per pixel the colour of the scene captured
 // behind it, refracted by the slopes, tinted by the real depth of water, with caustics on the
 // bottom, a Fresnel reflection of the environment and of what is on screen, sun glints and local
-// lights' highlights, the sun's shadow, an optional thin-film sheen and a soft shore. The CPU
-// twins of the formulas are in src/water/water_math.rs and gerstner_math.rs: keep them in step.
+// lights' highlights, the sun's shadow, an optional thin-film sheen and a soft shore; optionally
+// shaped by a coverage mask (entry point fs_masked) and carried by a flow. The CPU twins of the
+// formulas are in src/water/water_math.rs and gerstner_math.rs: keep them in step.
+// THIS BODY IS NOT A WHOLE SHADER: the sun's map (group 3, binding 0) and `sun_compare` come from
+// water_sun_map.wgsl (one map, texture_depth_2d) or water_sun_cascades.wgsl (a layer per cascade,
+// texture_depth_2d_array), put after it (WaterShaders::SURFACE and SURFACE_CASCADED).
 // Every texture read is textureSampleLevel / textureLoad / textureSampleCompareLevel (no implicit
 // derivatives inside branches); the only derivatives are taken first, in uniform control flow.
 
@@ -49,6 +53,7 @@ struct Water {
     scattering: vec4<f32>,
     look: vec4<f32>,
     caustics: vec4<f32>,
+    // x, y: the net's two motion phases; z, w: the flow's shifts of its two warps.
     caustic_phase: vec4<f32>,
     detail_phase: vec4<f32>,
     detail_waves: array<vec4<f32>, 4>,
@@ -60,6 +65,24 @@ struct Water {
     sun_shadow: vec4<f32>,
     waves: array<Wave, 16>,
     local_lights: array<LocalLight, 16>,
+    // From here on all zero when unused. x: 1 with a coverage mask; y: its threshold.
+    mask: vec4<f32>,
+    // x: 1 when the bound cube is the reflection environment; y: its intensity; z: its last mip
+    // level; w: its rotation about +Y.
+    reflection: vec4<f32>,
+    // xy: the flow's velocity (world x, z; for a later flow map); zw: the caustic net's offset by
+    // the flow within a cell.
+    flow: vec4<f32>,
+    // x: the sun's cascades (0 or 1: the single map); y, z: the caustic net's whole-cell offset by
+    // the flow (i32 bits).
+    extra: vec4<u32>,
+    // The sun's cascades, as the model shader's: xyz the camera's view direction, w the blend band;
+    // each cascade's far end, depth bias, normal offset and view-projection.
+    sun_view: vec4<f32>,
+    sun_splits: vec4<f32>,
+    sun_biases: vec4<f32>,
+    sun_offsets: vec4<f32>,
+    sun_cascade_matrices: array<mat4x4<f32>, 4>,
 };
 
 @group(0) @binding(0) var<uniform> water: Water;
@@ -68,7 +91,9 @@ struct Water {
 @group(1) @binding(2) var linear_sampler: sampler;
 @group(2) @binding(0) var environment_map: texture_cube<f32>;
 @group(2) @binding(1) var field_map: texture_2d<f32>;
-@group(3) @binding(0) var sun_map: texture_depth_2d;
+// The coverage mask (read by fs_masked only; its pipelines' layout has it).
+@group(2) @binding(2) var mask_map: texture_2d<f32>;
+// group 3, binding 0: the sun's map (water_sun_map.wgsl or water_sun_cascades.wgsl).
 @group(3) @binding(1) var shadow_sampler: sampler_comparison;
 
 struct VertexOutput {
@@ -195,13 +220,23 @@ fn environment_light(direction: vec3<f32>, roughness: f32) -> vec3<f32> {
     return select(hemisphere(direction), sampled, water.environment.x > 0.5);
 }
 
-// How much of the sun's light reaches a point (1 without the map or outside it).
-fn sun_visibility(world: vec3<f32>, normal: vec3<f32>) -> f32 {
-    let grid = i32(water.counts.z);
-    if (grid <= 0) {
-        return 1.0;
+// What the water reflects in `direction` at `roughness` (before the exposure): the reflection
+// environment when one is bound (whatever the ambient), else the sky's light.
+fn reflection_light(direction: vec3<f32>, roughness: f32) -> vec3<f32> {
+    if (water.reflection.x > 0.5) {
+        let c = cos(water.reflection.w);
+        let s = sin(water.reflection.w);
+        let turned = vec3<f32>(c * direction.x - s * direction.z, direction.y, s * direction.x + c * direction.z);
+        return textureSampleLevel(environment_map, linear_sampler, turned, roughness * water.reflection.z).rgb * water.reflection.y;
     }
-    let clip = water.sun_matrix * vec4<f32>(world + normal * water.sun_shadow.w, 1.0);
+    return environment_light(direction, roughness);
+}
+
+// How much of the sun's light reaches a point through one map (layer `layer` of the cascades; 0
+// for the single map) seen through `matrix`, with its bias and normal offset (1 outside it).
+fn sun_map_visibility(layer: i32, matrix: mat4x4<f32>, bias: f32, normal_offset: f32, world: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let grid = i32(water.counts.z);
+    let clip = matrix * vec4<f32>(world + normal * normal_offset, 1.0);
     if (clip.w <= 0.0) {
         return 1.0;
     }
@@ -215,10 +250,58 @@ fn sun_visibility(world: vec3<f32>, normal: vec3<f32>) -> f32 {
     for (var y = 0; y < grid; y++) {
         for (var x = 0; x < grid; x++) {
             let offset = vec2<f32>(start + f32(x), start + f32(y)) * water.sun_shadow.y;
-            sum += textureSampleCompareLevel(sun_map, shadow_sampler, uv + offset, ndc.z - water.sun_shadow.z);
+            sum += sun_compare(uv + offset, layer, ndc.z - bias);
         }
     }
     return mix(1.0, sum / f32(grid * grid), water.sun_shadow.x);
+}
+
+// The cascade for a point at `depth` along the camera's view: the model shader's cascade_pick
+// (pbr_body.wgsl; the same text but for the uniform's name - a host test compares them; twin:
+// lighting::shadows::cascade_pick).
+fn cascade_pick(depth: f32, cascades: u32) -> vec2<f32> {
+    var start = 0.0;
+    for (var index = 0u; index < cascades; index++) {
+        let end = water.sun_splits[index];
+        if (depth < end) {
+            let band = water.sun_view.w * (end - start);
+            let weight = select(0.0, clamp((depth - (end - band)) / max(band, 1e-6), 0.0, 1.0), band > 0.0);
+            return vec2<f32>(f32(index), weight);
+        }
+        start = end;
+    }
+    return vec2<f32>(-1.0, 0.0);
+}
+
+fn sun_cascade_visibility(cascade: u32, world: vec3<f32>, normal: vec3<f32>) -> f32 {
+    return sun_map_visibility(i32(cascade), water.sun_cascade_matrices[cascade], water.sun_biases[cascade], water.sun_offsets[cascade], world, normal);
+}
+
+// How much of the sun's light reaches a point (1 without the map or outside it): the single map,
+// or with cascades the one the point's depth picks, blended into the next in its band as the
+// model shader does (the last fading out to 1 towards the reach; 1 beyond it).
+fn sun_visibility(world: vec3<f32>, normal: vec3<f32>) -> f32 {
+    if (i32(water.counts.z) <= 0) {
+        return 1.0;
+    }
+    let cascades = min(water.extra.x, 4u);
+    if (cascades <= 1u) {
+        return sun_map_visibility(0, water.sun_matrix, water.sun_shadow.z, water.sun_shadow.w, world, normal);
+    }
+    let pick = cascade_pick(dot(world - water.camera.xyz, water.sun_view.xyz), cascades);
+    if (pick.x < 0.0) {
+        return 1.0;
+    }
+    let cascade = u32(pick.x);
+    let near = sun_cascade_visibility(cascade, world, normal);
+    if (pick.y <= 0.0) {
+        return near;
+    }
+    var next = 1.0;
+    if (cascade + 1u < cascades) {
+        next = sun_cascade_visibility(cascade + 1u, world, normal);
+    }
+    return mix(near, next, pick.y);
 }
 
 fn hash_u32(x: u32) -> u32 {
@@ -233,16 +316,18 @@ fn hash_cell(cell: vec2<i32>, seed: u32) -> vec2<f32> {
     return vec2<f32>(f32(h >> 8u), f32(g >> 8u)) / 16777216.0;
 }
 
-// The caustic net (water_math::caustic_net): bright thin edges of moving cells, 0..1.
-fn caustic_net(p: vec2<f32>, phase_a: f32, phase_b: f32, seed: u32) -> f32 {
-    let q = p + 0.35 * vec2<f32>(sin(p.y * 1.7 + phase_b), sin(p.x * 1.3 - phase_b + 1.0));
+// The caustic net (water_math::caustic_net_moved): bright thin edges of moving cells, 0..1;
+// carried by the flow through `shifts` (its warps' phases) and `cells` (whole cells taken from the
+// hash), `p` already less the offset within a cell (all zero without flow).
+fn caustic_net(p: vec2<f32>, phase_a: f32, phase_b: f32, shifts: vec2<f32>, cells: vec2<i32>, seed: u32) -> f32 {
+    let q = p + 0.35 * vec2<f32>(sin(p.y * 1.7 + phase_b + shifts.x), sin(p.x * 1.3 - phase_b + 1.0 + shifts.y));
     let cell = floor(q);
     let f = q - cell;
     var d1 = 8.0;
     var d2 = 8.0;
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
-            let c = vec2<i32>(cell) + vec2<i32>(x, y);
+            let c = vec2<i32>(cell) - cells + vec2<i32>(x, y);
             let h = hash_cell(c, seed);
             let point = vec2<f32>(f32(x), f32(y)) + vec2<f32>(0.5) + 0.38 * vec2<f32>(sin(phase_a + TAU * h.x), sin(phase_b + TAU * h.y));
             let d = distance(point, f);
@@ -362,6 +447,25 @@ fn march(start: vec3<f32>, r: vec3<f32>, max_distance: f32) -> vec3<f32> {
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // Derivatives first, in uniform control flow: how much of the world one pixel covers.
     let footprint = max(length(dpdx(input.world)), length(dpdy(input.world)));
+    return shade(input, footprint, 1.0);
+}
+
+// The surface shaped by its coverage mask (water_math::mask_opacity): nothing at or below the
+// threshold (no colour, no depth), above it the water faded in over the scene behind it.
+@fragment
+fn fs_masked(input: VertexOutput) -> @location(0) vec4<f32> {
+    let footprint = max(length(dpdx(input.world)), length(dpdy(input.world)));
+    let coverage = textureSampleLevel(mask_map, linear_sampler, input.field_uv, 0.0).r;
+    let threshold = water.mask.y;
+    if (!(coverage > threshold)) {
+        discard;
+    }
+    let x = clamp((coverage - threshold) / max(1.0 - threshold, 1e-6), 0.0, 1.0);
+    return shade(input, footprint, x * x * (3.0 - 2.0 * x));
+}
+
+// One pixel of water; `opacity` (1 without a mask) fades it over the scene behind it.
+fn shade(input: VertexOutput, footprint: f32, opacity: f32) -> vec4<f32> {
     let uv = input.clip.xy * water.viewport.zw;
     let exposure = water.camera.w;
     let up = vec3<f32>(0.0, 1.0, 0.0);
@@ -450,7 +554,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let vertical = max(water.surface.y - bottom.y, 0.0);
         let sun_in_water = refract(water.key_direction.xyz, up, 1.0 / 1.33);
         let entry = bottom - sun_in_water * (vertical / min(sun_in_water.y, -0.05));
-        let net = caustic_net(entry.xz * water.caustics.y, water.caustic_phase.x, water.caustic_phase.y, water.counts.w);
+        let cells = bitcast<vec2<i32>>(water.extra.yz);
+        let net = caustic_net(entry.xz * water.caustics.y - water.flow.zw, water.caustic_phase.x, water.caustic_phase.y, water.caustic_phase.zw, cells, water.counts.w);
         // Focusing by the wave field's curvature: brighter under crests (negative Laplacian).
         let entry_local = rotate_y(entry - water.surface.xyz, -water.surface.w);
         let entry_uv = entry_local.xz / max(water.extent.xy, vec2<f32>(1e-6)) + vec2<f32>(0.5);
@@ -474,7 +579,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // REFLECTION: the environment, and what is on screen.
     let roughness = clamp(water.look.y, 0.0, 1.0);
     let r = reflect(-v, n);
-    var reflected = environment_light(r, roughness) * exposure;
+    var reflected = reflection_light(r, roughness) * exposure;
     if (water.switches.x != 0u) {
         let reach = clamp(distance(water.camera.xyz, p) * 2.0, 1.0, 500.0);
         let hit = march(p, r, reach);
@@ -526,7 +631,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let x = clamp(path / water.look.w, 0.0, 1.0);
         shore = x * x * (3.0 - 2.0 * x);
     }
-    color = mix(unshifted, color, shore);
+    color = mix(unshifted, color, shore * opacity);
 
     if (water.switches.w != 0u) {
         return vec4<f32>(encode_srgb(color), 1.0);

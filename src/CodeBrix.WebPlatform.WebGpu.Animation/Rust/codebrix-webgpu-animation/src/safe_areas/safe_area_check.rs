@@ -82,7 +82,7 @@ impl DrawingSession {
     /// and zone it overlaps, with the overlap in calibrated units and in frame pixels. Checked are
     /// the elements flagged `is_safe_area_checked` and every element of a layer so flagged (or all,
     /// with `check_all_elements`); hidden layers and elements outside their time window are
-    /// skipped. A preview aid: drawing the guide's overlay is the renderer's.
+    /// skipped (a layer outside its time window too). A preview aid: drawing the guide's overlay is the renderer's.
     pub fn check_safe_area(&self, guide: &SafeAreaGuide, frame_size: Option<(u32, u32)>, options: SafeAreaCheckOptions) -> Vec<SafeAreaFinding> {
         let mut findings = Vec::new();
         let calibration = self.calibration_size();
@@ -98,7 +98,7 @@ impl DrawingSession {
             return findings;
         }
         for layer in self.layers() {
-            if !layer.is_visible() {
+            if !layer.is_visible_at(time) {
                 continue;
             }
             let camera = self.camera().map_or(Affine::IDENTITY, |c| c.get_matrix(calibration, layer.parallax()));

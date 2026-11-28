@@ -536,7 +536,7 @@ fn a_mask_is_made_from_a_picture_channel() {
 
 fn down(x: f64, button: PointerButton, id: i32) -> CanvasInput {
     let buttons = if button == PointerButton::Primary { PointerButtons::PRIMARY } else { PointerButtons::SECONDARY };
-    CanvasInput::PointerDown { x, y: 0.0, pointer_id: id, button, buttons, kind: PointerKind::Mouse, modifiers: ModifierKeys::default() }
+    CanvasInput::PointerDown { x, y: 0.0, pointer_id: id, button, buttons, kind: PointerKind::Mouse, modifiers: ModifierKeys::default(), tap_count: 1 }
 }
 
 fn moved(x: f64, id: i32) -> CanvasInput {

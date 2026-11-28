@@ -72,6 +72,13 @@ pub struct GltfDocument {
     /// For each animation, the number each of its channels has in the FILE; empty when no
     /// channel was taken out (the numbers are then the positions).
     pub(crate) channel_numbers: Vec<Vec<usize>>,
+    /// The JSON chunk as the file holds it, kept for [`GltfDocument::node_extras`] (the `gltf`
+    /// crate is built without its `extras` feature, so its typed document drops every `extras`);
+    /// None when the JSON cannot hold an `extras` member (see `may_have_extras`).
+    pub(crate) json: Option<Vec<u8>>,
+    /// Each node's `extras` as JSON text, read from `json` on the first
+    /// [`GltfDocument::node_extras`] call.
+    node_extras: std::sync::OnceLock<Vec<Option<String>>>,
 }
 
 fn refuse(what: String) -> GraphicsException {
@@ -105,7 +112,30 @@ impl GltfDocument {
         check_validation(&root)?;
         check_references(&root)?;
         let materials_without_pbr = materials_without_pbr(&root, json_bytes);
-        Ok(GltfDocument { document: gltf::Document::from_json_without_validation(root), blob, binary, warnings, materials_without_pbr, channel_numbers })
+        let json = may_have_extras(json_bytes).then(|| json_bytes.to_vec());
+        Ok(GltfDocument { document: gltf::Document::from_json_without_validation(root), blob, binary, warnings, materials_without_pbr, channel_numbers, json, node_extras: std::sync::OnceLock::new() })
+    }
+
+    /// The `extras` of glTF node `node` - the application's own data that an exporter writes
+    /// there (Blender's custom properties, for example) - as JSON text, or None when the node has
+    /// no `extras` (or `"extras": null`) or there is no node `node` (Not in C#). The text is the
+    /// value written out again compactly: the same JSON value, without whitespace, with object
+    /// members in alphabetical order and numbers in the JSON reader's own spelling (`1` stays
+    /// `1`, `2.50` becomes `2.5`). Read it with any JSON reader.
+    ///
+    /// `node` is the glTF node index, which is also [`ModelNode::index`](crate::ModelNode::index):
+    /// the extras line up with [`Model::nodes`](crate::Model::nodes) of a model built from this
+    /// document by that index (`document.node_extras(model.nodes()[i].index)`), and with
+    /// [`Model::find_node`](crate::Model::find_node).
+    ///
+    /// MEMORY: the document keeps its JSON chunk (the whole `.gltf` file, or the JSON part of a
+    /// `.glb`) for this, as long as the document lives - unless the JSON has no `extras` member
+    /// at all, when nothing is kept and every answer is None. The first call reads the JSON once
+    /// and keeps every node's extras text; later calls are lookups. Drop the document after
+    /// building the model to free both.
+    pub fn node_extras(&self, node: usize) -> Option<String> {
+        let json = self.json.as_deref()?;
+        self.node_extras.get_or_init(|| read_node_extras(json)).get(node).cloned().flatten()
     }
 
     /// True when material `index` has a `pbrMetallicRoughness` object (see
@@ -195,8 +225,10 @@ fn node_pointer(pointer: &str) -> Option<(u64, &str)> {
 /// pointer that names a node's translation, rotation, scale or weights becomes the ordinary
 /// channel it is, and every other channel without a node is taken out with a warning (C#: the
 /// reference converter's glTF library reads the first kind as a node channel, and the builder
-/// leaves the second kind out with this warning). Returns the document and, when channels were
-/// taken out, each animation's remaining channels' numbers in the file.
+/// leaves the second kind out with this warning). The same second reading takes out every
+/// `extras` that is not an object (a string, a number, null), which glTF allows and the typed
+/// document does not. Returns the document and, when channels were taken out, each animation's
+/// remaining channels' numbers in the file.
 fn read_root(json_bytes: &[u8], warnings: &mut Vec<String>) -> Result<(json::Root, Vec<Vec<usize>>), GraphicsException> {
     let first = match json::deserialize::from_slice::<json::Root>(json_bytes) {
         Ok(root) if !root.extensions_used.iter().any(|name| name == ANIMATION_POINTER) => return Ok((root, Vec::new())),
@@ -243,6 +275,12 @@ fn read_root(json_bytes: &[u8], warnings: &mut Vec<String>) -> Result<(json::Roo
             channel_numbers.push(numbers);
         }
     }
+    // An `extras` that is not an object (glTF allows any JSON value there) does not fit the
+    // `gltf` crate's types when they are built without its `extras` feature: such members are
+    // taken out of what is typed (GltfDocument::node_extras still reads them from the file).
+    if first.is_some() && remove_non_object_extras(&mut value) {
+        changed = true;
+    }
     if removed.is_empty() && !changed {
         if let Some(error) = first {
             return Err(not_gltf(&error));
@@ -257,6 +295,42 @@ fn read_root(json_bytes: &[u8], warnings: &mut Vec<String>) -> Result<(json::Roo
             Ok((root, channel_numbers))
         }
         Err(error) => Err(not_gltf(&error.to_string())),
+    }
+}
+
+/// False when the JSON cannot hold an `extras` member: the word appears nowhere, and no `\u`
+/// escape could spell it in a member name. Such a document keeps no copy of its JSON.
+fn may_have_extras(json_bytes: &[u8]) -> bool {
+    json_bytes.windows(6).any(|w| w == b"extras") || json_bytes.windows(2).any(|w| w == b"\\u")
+}
+
+/// Every node's `extras` as compact JSON text (None for a node without one, or with null), in
+/// node order; empty when the JSON has no `nodes` array.
+fn read_node_extras(json_bytes: &[u8]) -> Vec<Option<String>> {
+    let Ok(value) = json::deserialize::from_slice::<json::Value>(json_bytes) else {
+        return Vec::new();
+    };
+    let Some(nodes) = value.get("nodes").and_then(json::Value::as_array) else {
+        return Vec::new();
+    };
+    nodes.iter().map(|node| node.get("extras").filter(|extras| !extras.is_null()).map(json::Value::to_string)).collect()
+}
+
+/// Takes every `extras` member whose value is not an object out of `value`, at any depth outside
+/// the extras themselves; true when one was taken out.
+fn remove_non_object_extras(value: &mut json::Value) -> bool {
+    match value {
+        json::Value::Object(members) => {
+            let mut removed = members.get("extras").is_some_and(|extras| !extras.is_object()) && members.remove("extras").is_some();
+            for (name, member) in members.iter_mut() {
+                if name != "extras" {
+                    removed |= remove_non_object_extras(member);
+                }
+            }
+            removed
+        }
+        json::Value::Array(items) => items.iter_mut().fold(false, |removed, item| remove_non_object_extras(item) | removed),
+        _ => false,
     }
 }
 

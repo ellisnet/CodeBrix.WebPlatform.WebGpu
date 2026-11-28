@@ -5,7 +5,7 @@
 use crate::color::Color;
 use crate::formations::FormationArea;
 use crate::geometry::{PointF, RectangleF};
-use crate::painting::{element_area, DetailMap, DirectionField, DirectionGuide, NoiseFieldOptions, PictureFieldOptions, StrokeLayout, StrokeLayoutOptions, StrokeSize};
+use crate::painting::{element_area, DetailMap, DirectionField, EdgeDetailOptions, DirectionGuide, NoiseFieldOptions, PictureFieldOptions, StrokeLayout, StrokeLayoutOptions, StrokeSize};
 use crate::paths::{PathGeometry, PathGeometryBuilder};
 use crate::planes::{DrawingNoise, DrawingNoiseFractalOptions, DrawingNoiseKind, DrawingPlane, DrawingPlaneImage};
 use crate::shapes::{BrushStrokeShape, BrushStrokeShapeOptions};
@@ -196,6 +196,34 @@ fn rotation_determinism_and_errors() {
     assert_eq!((nothing.angle_at(1.0, 1.0), nothing.strength_at(1.0, 1.0)), (0.0, 0.0));
     // Outside its rectangle a field holds its edge values.
     assert_eq!(field.angle_at(-100.0, 500.0), field.angle_at(0.0, 40.0));
+}
+
+#[test]
+fn a_full_detail_percentile_brings_mid_strength_edges_up_and_one_is_the_old_result() {
+    //Arrange: a strong edge (black to white at x = 10) and a weak one (white to 80% at x = 30).
+    let mut p = DrawingPlaneImage::new(40, 20).unwrap();
+    p.fill_with(|x, _| match x {
+        0..=9 => [0.0, 0.0, 0.0, 1.0],
+        10..=29 => [1.0, 1.0, 1.0, 1.0],
+        _ => [0.8, 0.8, 0.8, 1.0],
+    });
+    //Act
+    let old = DetailMap::from_picture_edges(&p, 1.0).unwrap();
+    let one = DetailMap::from_picture_edges_with(&p, &EdgeDetailOptions { smoothing: 1.0, full_detail_percentile: 1.0 }).unwrap();
+    let default = DetailMap::from_picture_edges_with(&p, &EdgeDetailOptions::default()).unwrap();
+    let low = DetailMap::from_picture_edges_with(&p, &EdgeDetailOptions { smoothing: 1.0, full_detail_percentile: 0.5 }).unwrap();
+    //Assert
+    assert_eq!(one.data(), old.data(), "percentile 1 is exactly from_picture_edges");
+    assert_eq!(default.data(), DetailMap::from_picture_edges(&p, 0.0).unwrap().data());
+    let (weak_old, weak_low) = (old.get(29, 10).unwrap(), low.get(29, 10).unwrap());
+    assert!(weak_old < 0.3 && weak_low > weak_old * 1.5, "{weak_old} -> {weak_low}");
+    assert_eq!(low.get(9, 10).unwrap(), 1.0, "the strong edge is clamped to full detail");
+    assert!(low.data().iter().all(|v| (0.0..=1.0).contains(v)));
+    for bad in [0.0, -0.5, 1.5, f32::NAN] {
+        assert!(DetailMap::from_picture_edges_with(&p, &EdgeDetailOptions { smoothing: 0.0, full_detail_percentile: bad }).is_err(), "{bad}");
+    }
+    let flat = DetailMap::from_picture_edges_with(&picture(8, 8, |_, _| false), &EdgeDetailOptions { smoothing: 0.0, full_detail_percentile: 0.5 }).unwrap();
+    assert!(flat.data().iter().all(|v| *v == 0.0), "a flat picture gives 0 everywhere");
 }
 
 #[test]

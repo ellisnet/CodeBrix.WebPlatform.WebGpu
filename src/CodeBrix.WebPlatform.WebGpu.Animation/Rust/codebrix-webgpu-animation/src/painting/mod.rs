@@ -53,7 +53,7 @@ pub use plane_keyframe_player::{PlaneKeyframePaint, PlaneKeyframePlayer};
 // The painterly planning and colour pieces (no C# equivalent).
 pub use color_mix::{ColorInterpolation, ColorMix};
 pub use color_rules::{BrokenColor, ColorRules, PaintPalette, PaletteMode};
-pub use detail::DetailMap;
+pub use detail::{DetailMap, EdgeDetailOptions};
 pub use direction_field::{DirectionField, NoiseFieldOptions, PictureFieldOptions};
 pub use direction_guide::DirectionGuide;
 pub use painting_timeline::{PaintingStage, PaintingTimeline, StrokeOrder};

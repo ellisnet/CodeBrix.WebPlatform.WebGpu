@@ -12,7 +12,11 @@
 //! edit, channel sampling); the rest of the C# library a browser can do (an animated texture
 //! drawn by the sprite batch, a render bundle, a compute pass writing indirect arguments, an
 //! indirect draw, occlusion and timestamp queries with the GPU timer, buffer mapping, texture
-//! regions and the async texture readback); and the async checks.
+//! regions and the async texture readback); and the async checks; and frames with a target of
+//! their own without a canvas (the marked graphics-offscreen block); and node extras, the tone
+//! mapper in a viewport, the per-half draw counts and animated model textures (gfx-a), oriented
+//! and near-fading glows, several emitters, lit and stretched particles (gfx-b), and the sun's
+//! shadow in cascades (gfx-c).
 
 use codebrix_webgpu::glam::{Affine2, Mat4, Vec2};
 use codebrix_webgpu::{wgpu, CanvasFrame, CanvasInput, CanvasLayers, CanvasRenderer, CanvasTarget, GpuContext, RendererHandle, WebGpuCanvas, WebGpuUnavailable};
@@ -500,8 +504,14 @@ fn Scene(context: GpuContext) -> Element {
         let models = Models { graphics: graphics.clone(), bytes: Vec::new(), drawn: None, depth: None };
         let hdr = Hdr { graphics: graphics.clone(), hdr_bytes: Vec::new(), parts: None, target: None };
         let rest = Rest { graphics: graphics.clone(), parts: None };
-        CanvasLayers::new(vec![RendererHandle::new(Layer { graphics: graphics.clone(), pipeline: None, material: None }), RendererHandle::new(shapes), RendererHandle::new(models), RendererHandle::new(hdr), RendererHandle::new(rest), effects_layer::layer(graphics.clone()), msaa_layer::layer(graphics.clone()), lod_layer::layer(graphics.clone()), water_layer::layer(graphics.clone()), water_surface_layer::layer(graphics.clone())])
+        CanvasLayers::new(vec![RendererHandle::new(Layer { graphics: graphics.clone(), pipeline: None, material: None }), RendererHandle::new(shapes), RendererHandle::new(models), RendererHandle::new(hdr), RendererHandle::new(rest), effects_layer::layer(graphics.clone()), msaa_layer::layer(graphics.clone()), lod_layer::layer(graphics.clone()), water_layer::layer(graphics.clone()), water_surface_layer::layer(graphics.clone()), gfx_a::layer(graphics.clone()), gfx_b_effects::layer(graphics.clone())])
     });
+    // ===== BEGIN graphics-offscreen block =====
+    use_hook(|| offscreen_frames::draw(&graphics).is_ok());
+    // ===== END graphics-offscreen block =====
+    // ===== BEGIN gfx-c block =====
+    use_hook(|| gfx_c::cascaded_lighting().sun_shadows.cascades);
+    // ===== END gfx-c block =====
     let mut compiled = use_signal(|| 0usize);
     let mut rest = use_signal(|| 0usize);
     {
@@ -553,6 +563,243 @@ fn gltf_models(graphics: &GraphicsContext, model_file: &[u8], fetched: &std::col
     let _shared = set.uploaded_texture("models/forest/Textures/bark.jpg", true, true).is_some();
     Ok(models)
 }
+
+// ===== BEGIN graphics-offscreen block (frames with a target of their own, without a canvas) =====
+/// Drawing without a canvas: frames whose OWN target is a headless target - one with an encoder
+/// of its own (submitted by the frame), one on an encoder of the caller's (submitted by the
+/// caller) - so that code written for a canvas frame's target draws offscreen unchanged.
+mod offscreen_frames {
+    use codebrix_webgpu::wgpu;
+    use codebrix_webgpu_graphics::{Color4, GraphicsContext, GraphicsException, GraphicsFrame, HeadlessTargetOptions, RectangleF, SpriteBatch, SpriteBatchBeginOptions};
+
+    /// Code written for "the frame's own target" (a canvas layer's): the same on a canvas frame and
+    /// offscreen.
+    fn draw_over_own_target(frame: &mut GraphicsFrame<'_>, sprites: &mut SpriteBatch, clear: Option<Color4>) -> Result<(), GraphicsException> {
+        let mut pass = frame.begin_render_pass(clear, Some(1.0))?;
+        sprites.begin(&pass, SpriteBatchBeginOptions::default())?;
+        sprites.fill_rectangle(RectangleF::new(16.0, 16.0, 96.0, 48.0), Color4::new(0.2, 0.6, 1.0, 1.0));
+        sprites.end(&mut pass)?;
+        Ok(())
+    }
+
+    /// Two frames on one headless target.
+    pub(super) fn draw(graphics: &GraphicsContext) -> Result<(), GraphicsException> {
+        let options = HeadlessTargetOptions { format: wgpu::TextureFormat::Rgba8UnormSrgb, with_depth: true, depth_format: wgpu::TextureFormat::Depth32Float };
+        let target = graphics.create_headless_target(256, 256, options)?;
+        let mut sprites = SpriteBatch::new(graphics)?;
+        let mut frame = graphics.begin_frame_on(&target.view());
+        let _ = frame.target().map(|own| (own.width(), own.height()));
+        draw_over_own_target(&mut frame, &mut sprites, Some(Color4::BLACK))?;
+        frame.submit()?;
+        let mut encoder = graphics.device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("the caller's encoder") });
+        {
+            let mut frame = graphics.begin_frame_with_encoder_on(&mut encoder, &target.view());
+            draw_over_own_target(&mut frame, &mut sprites, None)?;
+        }
+        graphics.queue().submit([encoder.finish()]);
+        Ok(())
+    }
+}
+// ===== END graphics-offscreen block =====
+
+// ===== BEGIN gfx-a block (node extras, the tone mapper in a viewport, per-half draw counts, animated model textures) =====
+/// A glTF file's node extras; a model whose base colour scrolls and turns and is overridden by a
+/// flipbook's frames, set on the renderer every frame; the draw counts of the opaque and blended
+/// halves; and an HDR inset tone mapped into a viewport of the canvas pass.
+mod gfx_a {
+    use codebrix_webgpu::glam::{Affine2, Vec2};
+    use codebrix_webgpu::{wgpu, CanvasFrame, CanvasRenderer, CanvasTarget, GpuContext, RendererHandle};
+    use codebrix_webgpu_graphics::{AnimatedTexture, AnimatedTextureOptions, Camera, Color4, DepthRange, GltfDocument, GraphicsContext, GraphicsException, HeadlessRenderTarget, HeadlessTargetOptions, Model, ModelInstance, ModelLoadOptions, ModelRenderStats, ModelRenderer, ModelTextureKind, RectangleF, RenderPass, SceneLighting, ToneMapper};
+
+    /// The extras of a glTF file's first nodes, by glTF node index (ModelNode::index).
+    pub(super) fn node_extras(gltf_bytes: &[u8]) -> Vec<Option<String>> {
+        let Ok(document) = GltfDocument::parse(gltf_bytes) else { return Vec::new() };
+        (0..4).map(|node| document.node_extras(node)).collect()
+    }
+
+    fn animate_textures(renderer: &mut ModelRenderer, model: &Model, flipbook: &AnimatedTexture, seconds: f64) -> Result<(), GraphicsException> {
+        let flow = Affine2::from_translation(Vec2::new(seconds as f32 * 0.05, 0.0)) * Affine2::from_angle(0.3);
+        renderer.set_material_texture_transform(model, Some(0), ModelTextureKind::BaseColor, flow)?;
+        renderer.set_material_texture_override(model, Some(0), ModelTextureKind::BaseColor, Some(flipbook.get_frame_texture(seconds)))?;
+        renderer.set_material_texture_override(model, None, ModelTextureKind::Emissive, None)
+    }
+
+    fn tone_map_inset(tone: &mut ToneMapper, pass: &mut RenderPass<'_>, inset: &HeadlessRenderTarget) -> Result<(), GraphicsException> {
+        pass.set_viewport(16.0, 16.0, 320.0, 180.0, DepthRange::default());
+        let _viewport: Option<(RectangleF, DepthRange)> = pass.viewport();
+        tone.apply_in_pass(pass, inset.color())
+    }
+
+    fn halves(renderer: &ModelRenderer) -> (usize, usize, usize, usize) {
+        let stats: ModelRenderStats = renderer.frame_stats();
+        (stats.opaque_draw_calls, stats.blended_draw_calls, stats.opaque_instances, stats.blended_instances)
+    }
+
+    struct Parts {
+        renderer: ModelRenderer,
+        models: Vec<Model>,
+        instances: Vec<ModelInstance>,
+        flipbook: AnimatedTexture,
+        tone: ToneMapper,
+    }
+
+    struct Textures {
+        graphics: GraphicsContext,
+        bytes: Vec<u8>,
+        parts: Option<Parts>,
+        inset: Option<HeadlessRenderTarget>,
+    }
+
+    impl Textures {
+        fn create(&self) -> Result<Parts, GraphicsException> {
+            let g = &self.graphics;
+            let models = g.load_models(&self.bytes, &ModelLoadOptions::default())?;
+            let instances = models.iter().map(Model::create_instance).collect();
+            let frames = [vec![255u8; 16], vec![0u8; 16]];
+            let frame_slices: Vec<&[u8]> = frames.iter().map(Vec::as_slice).collect();
+            let flipbook = g.create_animated_texture(2, 2, &frame_slices, &AnimatedTextureOptions::default())?;
+            Ok(Parts { renderer: g.create_model_renderer()?, models, instances, flipbook, tone: g.create_tone_mapper()? })
+        }
+    }
+
+    impl CanvasRenderer for Textures {
+        fn prepare(&mut self, _context: &GpuContext, _target: &CanvasTarget) {
+            let _extras = node_extras(&self.bytes);
+            self.parts = self.create().ok();
+        }
+
+        fn resize(&mut self, _context: &GpuContext, width: u32, height: u32) {
+            let options = HeadlessTargetOptions { format: wgpu::TextureFormat::Rgba16Float, with_depth: true, depth_format: wgpu::TextureFormat::Depth24Plus };
+            self.inset = self.graphics.create_headless_target((width / 4).max(1), (height / 4).max(1), options).ok();
+        }
+
+        fn render(&mut self, frame: &mut CanvasFrame<'_>) {
+            let time = frame.info.time;
+            let graphics = self.graphics.clone();
+            let (Some(parts), Some(inset)) = (self.parts.as_mut(), self.inset.as_ref()) else { return };
+            // One value per material per frame, before the frame's first begin.
+            for model in &parts.models {
+                let _ = animate_textures(&mut parts.renderer, model, &parts.flipbook, time);
+            }
+            let camera = Camera::new();
+            let mut graphics_frame = graphics.begin_canvas_frame(frame, None);
+            if let Ok(mut pass) = graphics_frame.begin_render_pass_to(&inset.view(), Some(Color4::BLACK), Some(1.0)) {
+                if parts.renderer.begin(&pass, &camera, Some(&SceneLighting::default())).is_ok() {
+                    for instance in &parts.instances {
+                        let _ = parts.renderer.draw(instance);
+                    }
+                    let _ = parts.renderer.end(&mut pass);
+                }
+            };
+            let _halves = halves(&parts.renderer);
+            if let Ok(mut pass) = graphics_frame.begin_render_pass(None, None) {
+                let _ = tone_map_inset(&mut parts.tone, &mut pass, inset);
+            };
+        }
+    }
+
+    pub(super) fn layer(graphics: GraphicsContext) -> RendererHandle {
+        RendererHandle::new(Textures { graphics, bytes: Vec::new(), parts: None, inset: None })
+    }
+}
+// ===== END gfx-a block =====
+
+// ===== BEGIN gfx-b block (oriented glows, the near fade, several emitters, lit and stretched particles) =====
+/// Glows lying on the ground and standing upright beside camera-facing ones, a near fade; one
+/// particle system of 48 emitters, stretched along their motion and drawn lit by the scene.
+mod gfx_b_effects {
+    use codebrix_webgpu::{CanvasFrame, CanvasRenderer, CanvasTarget, GpuContext, RendererHandle};
+    use codebrix_webgpu_graphics::glam::Vec3;
+    use codebrix_webgpu_graphics::{AmbientLighting, Camera, Color4, Glow, GlowFacing, GlowLayer, GlowNearFade, GraphicsContext, GraphicsException, GraphicsFrame, ParticleEmitter, ParticleStretch, ParticleSystem, ParticleSystemOptions, RenderPass, SceneLighting};
+
+    fn make(g: &GraphicsContext) -> Result<(GlowLayer, ParticleSystem), GraphicsException> {
+        let mut glows = g.create_glow_layer()?;
+        glows.set_near_fade(Some(GlowNearFade { start: 0.5, end: 2.0 }));
+        let _fade: Option<GlowNearFade> = glows.near_fade();
+        let _defaults = GlowNearFade::default();
+        let mut sparks = g.create_particle_system(&ParticleSystemOptions { capacity: 8192, ..ParticleSystemOptions::default() })?;
+        sparks.emitter.rate = 40.0;
+        for i in 1..48 {
+            let _index: usize = sparks.add_emitter(ParticleEmitter { position: Vec3::new(i as f32 * 0.5, 0.0, 0.0), rate: 40.0, ..ParticleEmitter::default() })?;
+        }
+        let count: usize = sparks.emitter_count();
+        if let Some(e) = sparks.emitter_at_mut(count - 1) {
+            e.rate = 80.0;
+        }
+        let _first: Option<&ParticleEmitter> = sparks.emitter_at(0);
+        let _removed: ParticleEmitter = sparks.remove_emitter(count - 1)?;
+        sparks.burst_from(3, 25)?;
+        sparks.set_stretch(Some(ParticleStretch { factor: 0.05, max: 4.0 }));
+        let _stretch: Option<ParticleStretch> = sparks.stretch();
+        let _cap: usize = ParticleSystem::MAX_EMITTERS;
+        Ok((glows, sparks))
+    }
+
+    fn step(sparks: &mut ParticleSystem, gf: &mut GraphicsFrame<'_>, delta: f64) -> Result<(), GraphicsException> {
+        sparks.update(gf, delta)
+    }
+
+    fn draw(glows: &mut GlowLayer, sparks: &mut ParticleSystem, pass: &mut RenderPass<'_>, camera: &Camera, time: f64) -> Result<(), GraphicsException> {
+        glows.begin(pass, camera, time)?;
+        glows.add(&Glow::new(Vec3::new(0.0, 1.0, 0.0), 0.6, Vec3::new(1.0, 0.7, 0.3), 3.0));
+        glows.add_oriented(&Glow::new(Vec3::new(0.0, 0.01, 0.0), 2.0, Vec3::new(1.0, 0.8, 0.4), 1.5), GlowFacing::flat(Vec3::Y, 1.0));
+        glows.add_oriented(&Glow::new(Vec3::new(2.0, 1.0, 0.0), 0.5, Vec3::new(0.3, 0.6, 1.0), 2.0), GlowFacing::Fixed { right: Vec3::X, up: Vec3::new(0.0, 3.0, 0.0) });
+        glows.add_oriented(&Glow::new(Vec3::ZERO, 0.5, Vec3::ONE, 1.0), GlowFacing::Camera);
+        glows.end(pass)?;
+        let _draws: usize = glows.last_draw_call_count();
+        let lighting = SceneLighting { ambient: AmbientLighting::Hemisphere, ambient_ground_color: Some(Color4::new(0.1, 0.08, 0.05, 1.0)), exposure: 1.2, ..SceneLighting::default() };
+        sparks.draw_lit(pass, camera, &lighting)?;
+        sparks.draw(pass, camera)
+    }
+
+    struct Sparks {
+        graphics: GraphicsContext,
+        parts: Option<(GlowLayer, ParticleSystem)>,
+        camera: Camera,
+    }
+
+    impl CanvasRenderer for Sparks {
+        fn prepare(&mut self, _context: &GpuContext, _target: &CanvasTarget) {
+            self.parts = make(&self.graphics).ok();
+        }
+
+        fn render(&mut self, frame: &mut CanvasFrame<'_>) {
+            let (time, delta) = (frame.info.time, frame.info.delta);
+            let graphics = self.graphics.clone();
+            let camera = self.camera;
+            let Some((glows, sparks)) = self.parts.as_mut() else { return };
+            let mut graphics_frame = graphics.begin_canvas_frame(frame, None);
+            // The step (a compute pass) before the pass that draws the particles.
+            let _ = step(sparks, &mut graphics_frame, delta);
+            if let Ok(mut pass) = graphics_frame.begin_render_pass(None, None) {
+                let _ = draw(glows, sparks, &mut pass, &camera, time);
+            };
+        }
+    }
+
+    pub(super) fn layer(graphics: GraphicsContext) -> RendererHandle {
+        RendererHandle::new(Sparks { graphics, parts: None, camera: Camera::new() })
+    }
+}
+// ===== END gfx-b block =====
+
+// ===== BEGIN gfx-c block (the sun's shadow in cascades) =====
+/// A large region's sun shadow in four cascades reaching 400 m, with every cascade setting.
+mod gfx_c {
+    use codebrix_webgpu_graphics::glam::Vec3;
+    use codebrix_webgpu_graphics::{SceneLighting, SunShadowSettings};
+
+    pub(super) fn cascaded_lighting() -> SceneLighting {
+        let mut lighting = SceneLighting::default();
+        lighting.sun_shadows = SunShadowSettings::covering(Vec3::new(-1585.0, -20.0, -1585.0), Vec3::new(1585.0, 300.0, 1585.0)).with_cascades(4, 400.0);
+        lighting.sun_shadows.cascade_split_weight = 0.7;
+        lighting.sun_shadows.cascade_blend = 0.1;
+        let _max: u32 = SunShadowSettings::MAX_CASCADES;
+        let _all = SunShadowSettings { cascades: 3, cascade_reach: f32::INFINITY, cascade_split_weight: 0.5, cascade_blend: 0.0, ..SunShadowSettings::default() };
+        lighting
+    }
+}
+// ===== END gfx-c block =====
 
 // ===== BEGIN graphics-effects block (frame timer, glow layer, bloom, particles) =====
 /// The effects as an application uses them, on the HDR path: a frame timer around the frame
@@ -1130,6 +1377,8 @@ mod water_surface_layer {
         BloomRenderer, Camera, Color4, GraphicsContext, GraphicsException, HeadlessRenderTarget, HeadlessTargetOptions, ModelInstance, ModelLoadOptions, ModelRenderStats, ModelRenderer, OpenWaterWaves, ParticleSystem, ParticleSystemOptions, PointLight, SceneLighting, SkyboxRenderer, SunShadowMap, SunShadowSettings, ToneMapper,
         WaterCaustics, WaterDetail, WaterField, WaterFrame, WaterLook, WaterRenderStats, WaterRenderer, WaterSheen, WaterSurface, WaveField, WaveFieldOptions, WaveStir,
     };
+    // ---- gfx-d: a shaped, flowing surface, the reflection environment, the sun's cascades ----
+    use codebrix_webgpu_graphics::{SunShadowCascades, WaterCoverage, WaterMask};
 
     struct Parts {
         models: ModelRenderer,
@@ -1138,6 +1387,8 @@ mod water_surface_layer {
         water: WaterRenderer,
         field: WaveField,
         surface: WaterSurface,
+        // gfx-d: a round, flowing pool beside the pond.
+        shaped: WaterSurface,
         bloom: BloomRenderer,
         tone: ToneMapper,
         particles: ParticleSystem,
@@ -1187,10 +1438,24 @@ mod water_surface_layer {
                 open_waves: Some(OpenWaterWaves::from_wind(0.3, 4.0, 8, 1)),
                 detail: WaterDetail { strength: 0.06, wavelength: 0.35, speed: 0.4, seed: 1 },
                 look,
+                mask: None,
+                flow: Vec2::ZERO,
             };
             let _limits = (WaterSurface::MAX_GRID, surface.grid_cell(), WaterLook::default() == look, WaterSheen::default().strength);
+            // ---- gfx-d: a coverage mask (an ellipse, an outline, a function) and a flow ----
+            let mut coverage = WaterCoverage::ellipse(64, 64, 2.0);
+            let outline = WaterCoverage::polygon(64, 48, &[Vec2::new(0.1, 0.1), Vec2::new(0.9, 0.2), Vec2::new(0.5, 0.9)], 2.0);
+            coverage.set(0, 0, 0.5);
+            let ramp = WaterCoverage::from_fn(8, 8, |u, _v| u);
+            let _cells = (coverage.cells().len(), coverage.columns(), coverage.rows(), coverage.get(1, 1), coverage.sample(Vec2::splat(0.5)), outline.get(0, 0), ramp.cells().len(), WaterCoverage::MAX_CELLS, WaterCoverage::new(4, 4).rows());
+            let mask: WaterMask = g.create_water_mask(&coverage)?;
+            let _own = WaterMask { threshold: 0.1, ..WaterMask::of_view(&mask.view) };
+            let shaped = WaterSurface { center: Vec3::new(8.0, 0.0, 0.0), size: Vec2::new(4.0, 4.0), mask: Some(mask), flow: Vec2::new(0.6, -0.2), ..WaterSurface::default() };
+            let _answers = (shaped.to_mask(Vec3::ONE), shaped.opacity_at(0.5, -0.5));
+            let _cascaded_source = WaterShaders::SURFACE_CASCADED.len();
+            // ---- end gfx-d ----
             let particles = g.create_particle_system(&ParticleSystemOptions::default())?;
-            Ok(Parts { models, instances, skybox: g.create_skybox_renderer()?, water: g.create_water_renderer()?, field, surface, bloom: g.create_bloom_renderer()?, tone: g.create_tone_mapper()?, particles, hdr: None })
+            Ok(Parts { models, instances, skybox: g.create_skybox_renderer()?, water: g.create_water_renderer()?, field, surface, shaped, bloom: g.create_bloom_renderer()?, tone: g.create_tone_mapper()?, particles, hdr: None })
         }
     }
 
@@ -1243,12 +1508,21 @@ mod water_surface_layer {
             }
             if let Some(map) = &sun {
                 let _facts = (&map.view, map.matrix, map.texel, map.depth_bias, map.normal_offset, map.softness, map.strength);
+                // gfx-d: every cascade's numbers, for a receiver of the application's own.
+                let cascades: Option<&SunShadowCascades> = map.cascades();
+                if let Some(c) = cascades {
+                    let _numbers = (c.count, c.view_axis, c.blend, c.splits, c.matrices, c.depth_biases, c.normal_offsets);
+                }
             }
+            // gfx-d: the environment the water reflects (None: the lighting's, or the hemisphere).
+            parts.water.set_reflection_environment(None);
+            let _reflects = parts.water.reflection_environment().is_some();
             let _ = parts.water.capture_scene(&mut graphics_frame, hdr);
             {
                 let Ok(mut pass) = graphics_frame.begin_render_pass_to(&target, None, None) else { return };
                 let water_frame = WaterFrame { camera: &camera, lighting: Some(&lighting), time, sun_shadow: sun.as_ref() };
                 let _ = parts.water.draw(&mut pass, &water_frame, &parts.surface);
+                let _ = parts.water.draw(&mut pass, &water_frame, &parts.shaped);
                 // The same pair, finished in this later pass on the same target.
                 let _ = parts.models.end_blended(&mut pass);
                 let _ = parts.particles.draw(&mut pass, &camera);

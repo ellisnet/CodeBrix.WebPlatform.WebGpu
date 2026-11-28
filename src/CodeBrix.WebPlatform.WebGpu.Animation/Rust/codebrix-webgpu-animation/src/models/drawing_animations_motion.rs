@@ -110,7 +110,7 @@ impl DrawingAnimationsMut<'_> {
         let count = elements.len();
         let mut cars = Vec::with_capacity(count);
         for (i, id) in elements.iter().enumerate() {
-            let element = self.session.find_element_mut(*id).ok_or("The element is not on any of the session's layers.")?;
+            let element = self.session.find_element_mut(*id).ok_or("The element is not on any of the session's layers: add it (draw_shape or a layer's add_element) before binding it. An element inside a group counts only once that group is on a layer: add the group first, then bind its elements.")?;
             if settings.anchor_at_center {
                 if let Some(b) = element.get_bounds() {
                     element.set_transform(element.transform().with_anchor(PointF::new(b.x + (b.width / 2.0), b.y + (b.height / 2.0))));

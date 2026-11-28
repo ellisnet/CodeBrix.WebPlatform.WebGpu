@@ -1,14 +1,16 @@
 //! The test frontend of the real-materialize tests: it names the first-party crate
 //! codebrix-webgpu and uses its public API (the context, the canvas host with two layers and one
 //! clock with a named point in time, renderers that draw with wgpu directly, the input, the "not
-//! available" message, the frame loop and the maths), so that
+//! available" message, the frame loop and the maths; a layer with a time scale of its own, the tap
+//! count and its options, a redraw request on a canvas that idles while paused, a decorative
+//! canvas, and the target of a texture that is not a canvas), so that
 //! `cargo check --offline --target wasm32-unknown-unknown` proves a frontend can build with it
 //! from the materialized vendor folder alone. It is compiled, never run.
 
 use codebrix_webgpu::math::{Mat4, Quat, Vec3};
 use codebrix_webgpu::{
     wgpu, CanvasClock, CanvasFrame, CanvasInput, CanvasLayers, CanvasRenderer, CanvasTarget, FrameLoop, GpuContext, GpuUnavailable, RendererHandle, SurfaceFailure,
-    WebGpuCanvas, WebGpuUnavailable,
+    TapOptions, WebGpuCanvas, WebGpuUnavailable,
 };
 use dioxus::prelude::*;
 
@@ -49,10 +51,11 @@ impl CanvasRenderer for Spinner {
     }
 
     fn input(&mut self, input: &CanvasInput) {
-        if let CanvasInput::KeyDown { key } = input {
-            if key == "r" {
-                self.shown = false;
-            }
+        match input {
+            CanvasInput::KeyDown { key } if key == "r" => self.shown = false,
+            // A double-click or a double tap.
+            CanvasInput::PointerDown { tap_count: 2, .. } => self.shown = !self.shown,
+            _ => {}
         }
     }
 
@@ -87,8 +90,19 @@ fn Scene(context: GpuContext) -> Element {
     let layers = use_hook(|| {
         let bottom = RendererHandle::new(Spinner { format: None, model: Mat4::IDENTITY, shown: false });
         let top = RendererHandle::new(Spinner { format: None, model: Mat4::IDENTITY, shown: false });
-        CanvasLayers::new(vec![bottom, top])
+        let layers = CanvasLayers::new(vec![bottom, top.clone()]);
+        // The top layer runs at twice the clock's speed.
+        let _ = (layers.set_time_scale(&top, 2.0), layers.time_scale(&top));
+        layers
     });
+    // The page changes what a layer draws while the clock may be paused: draw it once more.
+    let redraw = {
+        let layers = layers.clone();
+        move |_| layers.request_redraw()
+    };
+    // A texture that is not a canvas surface takes the canvas's convention.
+    let offscreen = CanvasTarget::offscreen(wgpu::TextureFormat::Rgba8UnormSrgb);
+    let ornament = use_hook(|| CanvasLayers::single(RendererHandle::new(Spinner { format: Some(offscreen.format), model: Mat4::IDENTITY, shown: true })));
     let name = context.adapter_info().name;
     let pause = {
         let clock = clock.clone();
@@ -97,8 +111,10 @@ fn Scene(context: GpuContext) -> Element {
         }
     };
     rsx! {
-        WebGpuCanvas { context, layers, clock: clock.clone(), class: "canvas", label: "A test canvas" }
+        WebGpuCanvas { context: context.clone(), layers, clock: clock.clone(), class: "canvas", label: "A test canvas", idle_when_paused: true, tap_options: TapOptions { interval_ms: 400.0, ..TapOptions::default() } }
+        WebGpuCanvas { context, layers: ornament, clock: clock.clone(), class: "ornament", transparent: true, interactive: false }
         button { onclick: pause, "Pause" }
+        button { onclick: redraw, "Redraw" }
         p { "{name} - {GpuUnavailable::TITLE}" }
     }
 }

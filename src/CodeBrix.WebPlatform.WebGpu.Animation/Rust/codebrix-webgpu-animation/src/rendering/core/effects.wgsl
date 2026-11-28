@@ -70,11 +70,14 @@ struct FxPass {
 @group(2) @binding(1) var<storage, read> fx_kernel: array<f32>;
 
 // Down and blur passes draw into a texture of a coarser level: device pixels / level, mapped
-// onto that texture (v4.xy is its size in texels).
+// onto that texture (v4.xy is its size in texels). The effect textures cover the frame's target
+// window (common.wgsl): a level's texel j is the canvas's texel j + origin / level (the origin is
+// a multiple of every level, target_window.rs), so the passes' valid texels (canvas texels) are
+// checked at the texel plus that shift.
 @vertex
 fn vs_fx(@location(0) p: vec2<f32>, @location(1) pass_index: u32) -> VsOut {
     let fp = fx[pass_index];
-    let q = p / fp.v1.y;
+    let q = (p - view.size.zw) / fp.v1.y;
     var out: VsOut;
     out.position = vec4<f32>(q.x / fp.v4.x * 2.0 - 1.0, 1.0 - q.y / fp.v4.y * 2.0, 0.0, 1.0);
     out.paint = pass_index;
@@ -92,7 +95,7 @@ fn inside(c: vec2<f32>, r: vec4<f32>) -> bool {
 fn fs_resolve(in: VsOut) -> @location(0) vec4<f32> {
     let fp = fx[in.paint];
     let xy = in.position.xy;
-    if (!inside(xy, fp.v0)) {
+    if (!inside(canvas_xy(xy), fp.v0)) {
         return vec4<f32>(0.0);
     }
     let c = vec2<i32>(xy);
@@ -102,8 +105,9 @@ fn fs_resolve(in: VsOut) -> @location(0) vec4<f32> {
 //@part filter
 @group(1) @binding(0) var fx_src: texture_2d<f32>;
 
-fn load_valid(c: vec2<i32>, valid: vec4<f32>) -> vec4<f32> {
-    if (!inside(vec2<f32>(c) + vec2<f32>(0.5), valid)) {
+// The texel c of the source (at `level`) where it is valid, zero elsewhere.
+fn load_valid(c: vec2<i32>, valid: vec4<f32>, level: f32) -> vec4<f32> {
+    if (!inside(vec2<f32>(c) + view.size.zw / level + vec2<f32>(0.5), valid)) {
         return vec4<f32>(0.0);
     }
     return textureLoad(fx_src, c, 0);
@@ -116,7 +120,7 @@ fn fs_down(in: VsOut) -> @location(0) vec4<f32> {
     let texel = vec2<i32>(in.position.xy);
     if (ratio <= 1.0) {
         // A finer target (rare): the source texel under this one.
-        return load_valid(vec2<i32>(in.position.xy * ratio), fp.v0);
+        return load_valid(vec2<i32>(in.position.xy * ratio), fp.v0, fp.v1.x);
     }
     // The exact box of source texels under this texel (zero outside the valid ones).
     let n = i32(ratio + 0.5);
@@ -124,7 +128,7 @@ fn fs_down(in: VsOut) -> @location(0) vec4<f32> {
     var sum = vec4<f32>(0.0);
     for (var y = 0; y < n; y++) {
         for (var x = 0; x < n; x++) {
-            sum += load_valid(origin + vec2<i32>(x, y), fp.v0);
+            sum += load_valid(origin + vec2<i32>(x, y), fp.v0, fp.v1.x);
         }
     }
     return sum / f32(n * n);
@@ -140,7 +144,7 @@ fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
     // C#'s order of summation: from -radius to +radius.
     var sum = vec4<f32>(0.0);
     for (var i = -radius; i <= radius; i++) {
-        sum += fx_kernel[offset + u32(i + radius)] * load_valid(texel + dir * i, fp.v0);
+        sum += fx_kernel[offset + u32(i + radius)] * load_valid(texel + dir * i, fp.v0, fp.v1.x);
     }
     return sum;
 }
@@ -149,10 +153,11 @@ fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
 @group(1) @binding(0) var picture_ms: texture_multisampled_2d<f32>;
 
 // A picture target's final pass: the mean of the layer's 4 samples (linear premultiplied) as
-// premultiplied sRGB-encoded values (the picture's Rgba8Unorm texels).
+// premultiplied sRGB-encoded values (the picture's Rgba8Unorm texels). The picture pixel (drawn
+// by vs_final) reads the target at the pixel less the window's origin.
 @fragment
 fn fs_picture(in: VsOut) -> @location(0) vec4<f32> {
-    let c = vec2<i32>(in.position.xy);
+    let c = vec2<i32>(in.position.xy - view.size.zw);
     let linear = (textureLoad(picture_ms, c, 0) + textureLoad(picture_ms, c, 1) + textureLoad(picture_ms, c, 2) + textureLoad(picture_ms, c, 3)) * 0.25;
     return premul_linear_to_srgb(linear);
 }
@@ -423,10 +428,11 @@ fn finish_shade(fp: FxPass, gradient: vec2<f32>, paint: f32) -> vec2<f32> {
 }
 
 // The finish on the layer's content (linear premultiplied): its straight colour shaded and
-// highlighted. The height record is read at the pixel and one pixel either side.
+// highlighted. The height record (the target window's size) is read at the pixel and one pixel
+// either side.
 fn finish_colour(c: vec4<f32>, p: vec2<f32>, fp: FxPass) -> vec4<f32> {
     let size = vec2<i32>(textureDimensions(fx_height)) - vec2<i32>(1);
-    let t = clamp(vec2<i32>(p), vec2<i32>(0), size);
+    let t = clamp(vec2<i32>(p - view.size.zw), vec2<i32>(0), size);
     let h0 = textureLoad(fx_height, t, 0).r;
     let hl = textureLoad(fx_height, clamp(t - vec2<i32>(1, 0), vec2<i32>(0), size), 0).r;
     let hr = textureLoad(fx_height, clamp(t + vec2<i32>(1, 0), vec2<i32>(0), size), 0).r;
@@ -443,10 +449,11 @@ fn finish_colour(c: vec4<f32>, p: vec2<f32>, fp: FxPass) -> vec4<f32> {
     return vec4<f32>(clamp(straight * shaded.x + vec3<f32>(shaded.y), vec3<f32>(0.0), vec3<f32>(1.0)) * c.a, c.a);
 }
 
-// A texture of a level sampled at a device position (bilinear between its texels).
+// A texture of a level sampled at a device position (bilinear between its texels; the texture
+// covers the target window).
 fn sample_level(t: texture_2d<f32>, device: vec2<f32>, level: f32) -> vec4<f32> {
     let size = vec2<f32>(textureDimensions(t));
-    return textureSampleLevel(t, fx_linear, device / level / size, 0.0);
+    return textureSampleLevel(t, fx_linear, (device - view.size.zw) / level / size, 0.0);
 }
 
 // The planes' colour operations on a linear premultiplied colour: unpremultiplied and encoded
@@ -514,7 +521,7 @@ fn transition_colour(c: vec4<f32>, p: vec2<f32>, fp: FxPass) -> vec4<f32> {
 @fragment
 fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     let fp = fx[in.paint];
-    let p = in.position.xy;
+    let p = canvas_xy(in.position.xy);
     let flags = u32(fp.v1.w);
     // The water under the pixel (slot A: the refraction's; slot B: the reflection's own).
     let wflags = fp.u4.x;

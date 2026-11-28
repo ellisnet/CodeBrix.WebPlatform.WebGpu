@@ -9,8 +9,8 @@ use crate::formations::DirectionalArrivalOrder;
 use crate::models::AnimatedProperty;
 use crate::rendering::{TestBuilder, VectorScene};
 use crate::shapes::{BrushStrokesOptions, BrushStrokesShape};
-use crate::strokes::brush_stroke_morph::{morph_record, pair_fraction, shorter_turn, PairKind};
-use crate::strokes::stroke_gpu::FLAG_MORPH;
+use crate::strokes::brush_stroke_morph::{morph_record, pair_fraction, pair_own_weight, shorter_turn, PairKind};
+use crate::strokes::stroke_gpu::{own_weight_of_word, pack_records, FLAG_MORPH};
 use crate::strokes::{BrushStrokeMorph, BrushStrokeRecord, BrushStrokeSet, StrokeCheckpoints, StrokePair, StrokePairingOptions};
 use crate::{Color, DrawingSession, DrawingSessionOptions, PointF};
 
@@ -208,6 +208,41 @@ fn the_two_orders_are_each_paintings_own_and_the_targets_carry_the_kind_and_dela
     assert_eq!(word(&b, 0, 13) >> 16, 0);
     assert_eq!(f32::from_bits(word(&a, 2, 0)), 400.0, "an arriving stroke stands for itself in the first records");
     assert_eq!(a.len(), 3 * 64);
+}
+
+#[test]
+fn both_record_buffers_carry_each_strokes_own_weight_beside_the_kind_and_delay() {
+    //Arrange: as above; from 0 -> to 1, from 1 -> to 0, to 2 arrives, from weights (0, 0.2),
+    // to weights (1, 0.6, 0.4).
+    let from = BrushStrokeSet::new(vec![at(0.0, 0.0, Color::BLACK), at(100.0, 0.0, Color::BLACK)]).unwrap().with_own_weights(vec![0.0, 0.2]).unwrap();
+    let to = BrushStrokeSet::new(vec![at(105.0, 0.0, Color::WHITE), at(5.0, 0.0, Color::WHITE), at(400.0, 0.0, Color::WHITE)]).unwrap().with_own_weights(vec![1.0, 0.6, 0.4]).unwrap();
+    let m = BrushStrokeMorph::pair(&from, &to, StrokePairingOptions::default()).unwrap();
+    //Act
+    let (a, b) = m.pack_variant(&[0.25, 0.5, 0.75], 0);
+    //Assert
+    let word = |bytes: &[u8], k: usize, w: usize| u32::from_le_bytes(bytes[k * 64 + w * 4..k * 64 + w * 4 + 4].try_into().unwrap());
+    let weights = |bytes: &[u8]| (0..3).map(|k| own_weight_of_word(word(bytes, k, 13))).collect::<Vec<_>>();
+    let w = |set: &BrushStrokeSet, i: usize| set.own_weight(i).unwrap();
+    assert_eq!(weights(&a), vec![w(&from, 0), w(&from, 1), w(&to, 2)], "the first strokes' own; an arriving stroke stands for itself");
+    assert_eq!(weights(&b), vec![w(&to, 1), w(&to, 0), w(&to, 2)], "the second strokes' own");
+    assert_eq!((word(&b, 2, 13) >> 16) & 0xFF, 2, "the kind beside the weight");
+    assert_eq!(word(&b, 2, 13) >> 24, 255 - 102, "0.4 = 102 of 255");
+    assert_eq!(f32::from_bits(word(&b, 1, 11)), 0.5, "the delay");
+    let plain = BrushStrokeMorph::pair(&BrushStrokeSet::new(from.records().to_vec()).unwrap(), &BrushStrokeSet::new(to.records().to_vec()).unwrap(), StrokePairingOptions::default()).unwrap();
+    let (pa, _) = plain.pack_variant(&[0.25, 0.5, 0.75], 0);
+    let firsts: Vec<BrushStrokeRecord> = plain.pairs().iter().map(|p| plain.ends(p).0).collect();
+    assert_eq!(pa, pack_records(&firsts), "sets without weights: the records exactly as before");
+}
+
+#[test]
+fn a_pairs_own_weight_travels_with_its_fraction_and_a_stroke_off_or_on_keeps_its_own() {
+    assert_eq!(pair_own_weight(0.2, 0.8, PairKind::Paired, 0.0), 0.2, "exactly the first at 0");
+    assert_eq!(pair_own_weight(0.2, 0.8, PairKind::Paired, -1.0), 0.2);
+    assert_eq!(pair_own_weight(0.2, 0.8, PairKind::Paired, f32::NAN), 0.2);
+    assert_eq!(pair_own_weight(0.2, 0.8, PairKind::Paired, 1.0), 0.8, "exactly the second at 1");
+    assert!((pair_own_weight(0.2, 0.8, PairKind::Paired, 0.25) - 0.35).abs() < 1e-6, "linear between");
+    assert_eq!(pair_own_weight(0.2, 0.8, PairKind::Leaves, 0.5), 0.2);
+    assert_eq!(pair_own_weight(0.2, 0.8, PairKind::Arrives, 0.5), 0.8);
 }
 
 #[test]

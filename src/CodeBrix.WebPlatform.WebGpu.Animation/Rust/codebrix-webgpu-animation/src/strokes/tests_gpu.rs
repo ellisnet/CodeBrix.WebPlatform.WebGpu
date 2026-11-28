@@ -11,7 +11,7 @@ use crate::models::{AnimatedProperty, DrawingTransform, DrawingTransformOptions}
 use crate::planes::DrawingPlane;
 use crate::strokes::stroke_anchor::{anchored, blend, resolve_anchors};
 use crate::strokes::stroke_boil::{boil_jitter, hash_unit};
-use crate::strokes::stroke_gpu::{draw_block_bytes, extent, hull, pack_record, pack_records, progress_f32, stroke_coverage, to_local};
+use crate::strokes::stroke_gpu::{draw_block_bytes, extent, hull, own_weight_of_word, pack_record, pack_records, pack_set, progress_f32, stroke_coverage, to_local};
 use crate::strokes::{boil_epoch, BrushStrokeRecord, BrushStrokeSet, BrushTip, BrushTips, StrokeAnchor, StrokeBoil};
 
 fn record(bend: f32, profile: f32) -> BrushStrokeRecord {
@@ -45,6 +45,46 @@ fn a_record_packs_into_the_64_bytes_the_shader_reads() {
     assert_eq!(&bytes[48..52], &[10, 20, 30, 200], "the colour's bytes are r g b a");
     assert_eq!(&bytes[56..60], &[1, 0, 7, 0], "anchor 0 in the low half, anchor 1 in the high half");
     assert_eq!(&bytes[64..128], &bytes[0..64]);
+}
+
+#[test]
+fn a_set_without_own_weights_packs_exactly_the_records_and_weights_of_one_do_too() {
+    //Arrange
+    let mut r = record(0.25, 3.0);
+    r.tip = 0xFFFF;
+    r.seed = 9;
+    let records = vec![r, record(0.0, 4.0), record(-0.1, 2.0)];
+    let plain = BrushStrokeSet::new(records.clone()).unwrap();
+    let ones = BrushStrokeSet::new(records.clone()).unwrap().with_own_weights(vec![1.0; 3]).unwrap();
+    //Act
+    let (a, b) = (pack_set(&plain), pack_set(&ones));
+    //Assert
+    assert_eq!(a, pack_records(&records), "byte for byte the records as packed before own weights");
+    assert_eq!(b, a, "weight 1 packs 0 in word 13's top byte");
+    assert_eq!(u32::from_le_bytes(a[52..56].try_into().unwrap()), 0xFFFF, "word 13 is the tip alone");
+}
+
+#[test]
+fn own_weights_pack_into_word_13s_top_byte_beside_the_tip() {
+    //Arrange
+    let mut r = record(0.0, 4.0);
+    r.tip = 0xFFFF;
+    let set = BrushStrokeSet::new(vec![r; 4]).unwrap().with_own_weights(vec![0.0, 0.5, 1.0, 0.2]).unwrap();
+    //Act
+    let bytes = pack_set(&set);
+    let word13 = |k: usize| u32::from_le_bytes(bytes[k * 64 + 52..k * 64 + 56].try_into().unwrap());
+    //Assert
+    assert_eq!(word13(0), 0xFF00_FFFF, "weight 0: 255 there");
+    assert_eq!(word13(1), 0x7F00_FFFF, "weight 0.5 = 128 of 255: 127 there");
+    assert_eq!(word13(2), 0x0000_FFFF, "weight 1: 0 there");
+    assert_eq!(word13(3), ((255 - 51) << 24) | 0xFFFF);
+    assert_eq!(&bytes[64..116], &pack_records(&[r])[0..52], "every other word as before");
+    for k in 0..4 {
+        assert_eq!(own_weight_of_word(word13(k)), set.own_weight(k).unwrap(), "the shader's reading is the set's weight");
+    }
+    assert_eq!(own_weight_of_word(0), 1.0, "exactly 1");
+    assert_eq!(own_weight_of_word(0xFF00_0000), 0.0, "exactly 0");
+    assert_eq!(own_weight_of_word(0x0002_FFFF), 1.0, "the flags and the tip are not the weight");
 }
 
 #[test]

@@ -446,3 +446,17 @@ fn a_bool_track_bound_to_a_layer_shows_and_hides_it_exactly_at_its_keys() {
     assert_eq!(seen, vec![true, true, false, false, true]);
     assert!(s.animations_mut().bind(BindingTarget::layer("A"), AnimatedProperty::Opacity, BoolTrack::new()).is_err(), "a bool track drives IsVisible only");
 }
+
+#[test]
+fn a_bool_function_bound_to_a_layer_shows_and_hides_it_by_the_time() {
+    let mut s = session();
+    s.animations_mut().bind(BindingTarget::layer("A"), AnimatedProperty::IsVisible, BoundTrack::bool_fn(|t| t < 1.0 || t >= 2.0)).unwrap();
+    let mut seen = Vec::new();
+    for t in [0.5, 0.999, 1.0, 1.5, 2.0] {
+        s.set_time(t);
+        seen.push(s.get_layer("A").unwrap().is_visible());
+    }
+    assert_eq!(seen, vec![true, true, false, false, true]);
+    assert!(s.animations_mut().bind(BindingTarget::layer("A"), AnimatedProperty::Opacity, BoundTrack::bool_fn(|_| true)).is_err(), "a bool function drives IsVisible only");
+    assert_eq!(format!("{:?}", BoundTrack::bool_fn(|_| true)), "BoolFn");
+}

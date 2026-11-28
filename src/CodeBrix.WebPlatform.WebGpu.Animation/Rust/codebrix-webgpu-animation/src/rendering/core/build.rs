@@ -5,7 +5,12 @@
 //!   dashes) in the shape's OWN space, at a tolerance chosen from the transform's scale rounded
 //!   to quarter octaves; the resulting triangle fan is kept, keyed by the shape's elements, the
 //!   stroke style and that scale step. A shape that moves, turns or scales a little reuses its
-//!   fan: each frame only transforms the fan's points (no flattening, no stroking).
+//!   fan: each frame only transforms the fan's points (no flattening, no stroking). A draw
+//!   position that misses two frames running stops storing until its key repeats (geometry
+//!   that has settled is stored again). Fans are kept within a byte budget
+//!   ([`CACHE_BUDGET_BYTES`] unless the application sets another: the layer's control handle and
+//!   the offscreen renderer's `set_geometry_cache_budget`), the least recently used dropped
+//!   first, never by age alone.
 //! - STENCIL-THEN-COVER. A path's fan counts the winding into the stencil's low 5 bits; a cover
 //!   (the transformed bounding box) paints where the winding is non-zero (or odd) and clears it.
 //! - BATCHING. Consecutive fills whose device bounding boxes do not overlap (on the same target,
@@ -28,7 +33,8 @@
 //!   list, a picture target, an application's texture) and writes the pickup into its block.
 //! - STROKE CHECKPOINTS (Not in C#): a stroke draw that asks for its checkpoint cache gets a KEY
 //!   (`checkpoint_keys`, after the frame is built): its own identity (set, tips, colour source,
-//!   its block apart from the time, its target level, the canvas size) and a hash of EVERYTHING
+//!   its block apart from the time, its target level, the canvas size, the target window) and a
+//!   hash of EVERYTHING
 //!   encoded before it in the frame (the root clear, every operation with its vertices, paints,
 //!   pictures, ramps, particles, effect passes and earlier stroke draws). The GPU half restores a
 //!   checkpoint only under the same key, so a restored frame is identical to the full redraw.
@@ -43,6 +49,12 @@
 //!   for the GPU half (a picture of the frame's list, a picture target, an application's view).
 //!   The group's region grows by the refraction's largest offset and by the mirrored part of the
 //!   content box (`ReflectionParams::region`).
+//! - THE TARGET WINDOW (Not in C#; target_window.rs): the frame's `window` is the canvas (the
+//!   default: canvas-sized targets, as before) or, opted in with `set_content_sized_targets(true)`,
+//!   picked once the frame is built from the box its internal targets must cover (`target_need`:
+//!   the root content, every effect group's region and the texels of its levels); every position
+//!   handed to the GPU half stays in canvas pixels, and only the effect textures' sizes in the pass
+//!   data (v4 of the resolve, down and blur passes) are the window's.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -52,6 +64,7 @@ use peniko::{BlendMode, Brush, Compose, Fill, Mix};
 
 use crate::effects::effect_sizes::EffectParams;
 use crate::rendering::core::paint::{self, PaintData, RampCache};
+use crate::rendering::core::target_window::{self, TargetWindow, WindowRule};
 use crate::rendering::vector_scene::{Hasher, Item, VectorScene};
 
 /// Flattening tolerance, device pixels.
@@ -59,8 +72,13 @@ pub(crate) const TOLERANCE: f64 = 0.25;
 pub(crate) const MAX_DEPTH: u32 = 7;
 pub(crate) const MAX_LEVELS: usize = 4;
 const MAX_BATCH: usize = 256;
-/// Frames a cached fan may go unused before it is dropped.
-const CACHE_KEEP_FRAMES: u64 = 90;
+/// The geometry cache's DEFAULT budget, bytes: 32 MiB (33,554,432 bytes), the fans' points (8
+/// bytes each) and [`CACHE_ENTRY_BYTES`] per fan - about four million points. Above the budget
+/// the fans used least recently (never one used in the frame just built) are dropped down to
+/// three quarters of it. The application can set another (`set_geometry_cache_budget`).
+pub(crate) const CACHE_BUDGET_BYTES: usize = 32 << 20;
+/// What one cached fan costs beyond its points (the entry, its key, the map's slot), bytes.
+const CACHE_ENTRY_BYTES: usize = 96;
 
 /// One vertex: a device-space position and the paint the cover uses.
 #[repr(C)]
@@ -315,6 +333,13 @@ struct CacheEntry {
     last_used: u64,
 }
 
+impl CacheEntry {
+    /// What the entry counts against the cache's budget.
+    fn bytes(&self) -> usize {
+        self.fan.len() * std::mem::size_of::<[f32; 2]>() + CACHE_ENTRY_BYTES
+    }
+}
+
 /// Counters of one frame, and the CPU time it took.
 ///
 /// THE CPU TIMINGS (`record_ms`, `build_ms`, `encode_ms`; Not in C#) are milliseconds of the
@@ -325,6 +350,10 @@ struct CacheEntry {
 /// browser the clock is `performance.now()`, which browsers coarsen (to 0.1 ms or more unless the
 /// page is cross-origin isolated): read an average over many frames, not one frame's value.
 /// Nothing drawn depends on these readings.
+///
+/// THE GPU TIME (`gpu_ms`; Not in C#) is measured only when the application switches it on
+/// ([`AnimationLayerControl::set_gpu_timing`](crate::rendering::AnimationLayerControl::set_gpu_timing),
+/// [`OffscreenRenderer::set_gpu_timing`](crate::rendering::OffscreenRenderer::set_gpu_timing)).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RenderStats {
     /// Fills and strokes in the scene.
@@ -396,7 +425,10 @@ pub struct RenderStats {
     pub strokes_restored: usize,
     /// Checkpoints held after this frame. Not in C#.
     pub checkpoints: usize,
-    /// Their GPU bytes (16 per canvas pixel each). Not in C#.
+    /// Their GPU bytes (16 per pixel of the renderer's internal targets each: the canvas's pixels
+    /// by default, the drawing's box when the targets are sized to it; see
+    /// [`AnimationLayerControl::set_content_sized_targets`](crate::rendering::AnimationLayerControl::set_content_sized_targets)).
+    /// Not in C#.
     pub checkpoint_bytes: usize,
     /// Ripple drops the frame's refractions and reflections evaluate per pixel (each field's live
     /// drops, counted once per effect group that draws it; a field with walls evaluates each 9
@@ -416,6 +448,20 @@ pub struct RenderStats {
     /// CPU milliseconds the renderer took to encode the frame's GPU work (buffer uploads, passes
     /// and draw calls recorded into the frame's encoder). Not in C#.
     pub encode_ms: f64,
+    /// GPU milliseconds of the renderer's work in a frame: from the beginning of its first render
+    /// pass to the end of its last (the copies between them included; the buffer and texture
+    /// writes before them, and other layers, not). The LATEST result available, which is from a
+    /// frame a few frames old (the GPU hands results back asynchronously). None while the timing
+    /// is off (the default), where the device lacks `TIMESTAMP_QUERY`, and until the first result
+    /// arrives. Browsers coarsen timestamps (to about 0.1 ms), so read an average. Not in C#.
+    pub gpu_ms: Option<f64>,
+    /// Regions written into live pictures' textures this frame
+    /// ([`LivePicture`](crate::images::LivePicture): each region queued since the texture was
+    /// last written, or one whole picture when its texture is made). Counted by the renderer that
+    /// writes them (the first of the frame to draw the picture on its device). Not in C#.
+    pub live_picture_writes: usize,
+    /// The bytes of those writes (4 per pixel). Not in C#.
+    pub live_picture_write_bytes: usize,
 }
 
 impl RenderStats {
@@ -452,6 +498,10 @@ pub(crate) struct Builder {
     pub(crate) stats: RenderStats,
     stack: Vec<Frame>,
     cache: HashMap<u64, CacheEntry>,
+    /// The bytes the cache's entries count against the budget (the sum of their `bytes`).
+    cache_bytes: usize,
+    /// The cache's budget, bytes, when the application set one (None: [`CACHE_BUDGET_BYTES`]).
+    cache_budget: Option<usize>,
     stroke_ctx: StrokeCtx,
     frame: u64,
     batch_boxes: Vec<Rect>,
@@ -464,11 +514,23 @@ pub(crate) struct Builder {
     /// Per draw (by its position in the scene): how many frames in a row it missed the cache.
     /// A draw that keeps missing (animated geometry: a morph, a trim) is not stored at all.
     miss_streak: Vec<u8>,
+    /// Per draw (by its position in the scene): its geometry key the last time it was drawn. A
+    /// miss under the same key as then is geometry that has settled: it is stored again.
+    draw_keys: Vec<Option<u64>>,
     /// The fan of a draw that is not stored.
     scratch: Vec<[f32; 2]>,
     /// Per ramp slot, the frame its ramp was last uploaded (part of a checkpoint key: a slot that
     /// gets another ramp changes the key of what was drawn with it).
     ramp_serials: HashMap<u32, u64>,
+    /// The frame's TARGET WINDOW (target_window.rs; Not in C#): where the internal targets sit on
+    /// the canvas and their size, decided once the frame is built.
+    pub(crate) window: TargetWindow,
+    window_rule: WindowRule,
+    /// True: internal targets sized to the drawing (`set_content_sized_targets(true)`, opt-in);
+    /// false (the default): canvas-sized, as before.
+    content_sized: bool,
+    /// The effect passes whose texture size (v4.xy) is the window's at a level: (pass, level).
+    pub(crate) fx_sized: Vec<(u32, u32)>,
 }
 
 /// Where a draw's fan is.
@@ -651,6 +713,7 @@ impl Builder {
         self.effects.clear();
         self.fx_passes.clear();
         self.fx_kernels.clear();
+        self.fx_sized.clear();
         self.ripples.clear();
         self.stack.clear();
         self.batch_boxes.clear();
@@ -713,6 +776,14 @@ impl Builder {
         let root = self.root_content.intersect(self.viewport);
         self.root_clear = self.quad(root, 0).unwrap_or(empty_at(self.cover.len()));
         self.final_quad = self.quad(root, 0).unwrap_or(empty_at(self.cover.len()));
+        // The target window (before the keys: they name it), and the effect textures' sizes in it.
+        let need = target_window::need_box(self.target_need(root), width, height);
+        self.window = self.window_rule.next(need, width, height, self.content_sized);
+        for &(pass, level) in &self.fx_sized {
+            let (tw, th) = self.window.level_size(level);
+            self.fx_passes[pass as usize].v4[0] = tw as f32;
+            self.fx_passes[pass as usize].v4[1] = th as f32;
+        }
         self.stats.fill_batches = self.ops.iter().filter(|o| matches!(o, Op::Fill { .. })).count();
         self.stats.vertices = self.stencil.len() + self.cover.len();
         self.stats.cached = self.cache.len();
@@ -720,16 +791,82 @@ impl Builder {
             self.ramp_serials.insert(*slot, self.frame);
         }
         self.checkpoint_keys();
-        // Eviction: fans unused for a while go; when animated geometry (a new fan every frame)
-        // makes the cache much larger than one frame's use, everything not used in the last two
-        // frames goes at once.
-        let used = self.stats.cache_hits + self.stats.cache_misses;
-        let frame = self.frame;
-        if self.cache.len() > 4096 && self.cache.len() > 3 * used {
-            self.cache.retain(|_, e| frame - e.last_used <= 1);
-        } else if frame % 30 == 0 {
-            self.cache.retain(|_, e| frame - e.last_used <= CACHE_KEEP_FRAMES);
+        self.evict();
+    }
+
+    /// Eviction by budget: while the cache is within it nothing goes, however long a fan has been
+    /// unused (an element hidden for a while is not flattened again when it shows); above it the
+    /// fans used least recently go, down to three quarters of the budget, never one used in this
+    /// frame (a frame that needs more than the budget keeps all it drew).
+    fn evict(&mut self) {
+        let budget = self.cache_budget();
+        if self.cache_bytes <= budget {
+            return;
         }
+        let frame = self.frame;
+        let mut old: Vec<(u64, u64)> = self.cache.iter().filter(|(_, e)| e.last_used != frame).map(|(k, e)| (e.last_used, *k)).collect();
+        old.sort_unstable();
+        let target = budget - budget / 4;
+        for (_, k) in old {
+            if self.cache_bytes <= target {
+                break;
+            }
+            if let Some(e) = self.cache.remove(&k) {
+                self.cache_bytes -= e.bytes();
+            }
+        }
+    }
+
+    /// What the frame's internal targets must cover (target_window.rs): the root content (the
+    /// final step's area) and every effect group's region grown by one pixel and by the texels
+    /// of each effect level its passes write and read; within the canvas.
+    fn target_need(&self, root: Rect) -> Rect {
+        let (w, h) = (self.viewport.x1 as u32, self.viewport.y1 as u32);
+        let mut need = root;
+        let mut add = |r: Rect| {
+            let r = r.intersect(self.viewport);
+            if r.width() > 0.0 && r.height() > 0.0 {
+                need = if need.width() > 0.0 && need.height() > 0.0 { need.union(r) } else { r };
+            }
+        };
+        for e in &self.effects {
+            if !(e.region.width() > 0.0 && e.region.height() > 0.0) {
+                continue;
+            }
+            add(e.region.inflate(1.0, 1.0));
+            let levels = e.steps.iter().flat_map(|s| match s {
+                FxStep::Resolve { .. } => [1, 1],
+                FxStep::Down { src, dst, .. } | FxStep::Blur { src, dst, .. } => [src.1, dst.1],
+            });
+            for level in levels.chain(e.reads.iter().map(|r| r.1)) {
+                let k = level.max(1) as f64;
+                let t = level_rect(e.region, level.max(1), w, h);
+                add(Rect::new(t.x0 * k, t.y0 * k, t.x1 * k, t.y1 * k));
+            }
+        }
+        need
+    }
+
+    /// Canvas-sized internal targets (false, the default) or targets sized to the frame's
+    /// drawing (true, opt-in); see target_window.rs.
+    pub(crate) fn set_content_sized_targets(&mut self, on: bool) {
+        self.content_sized = on;
+    }
+
+    /// True while the internal targets are sized to the drawing (off by default).
+    pub(crate) fn content_sized_targets(&self) -> bool {
+        self.content_sized
+    }
+
+    /// Sets the geometry cache's budget, bytes (the application's setting, through the layer's
+    /// control handle or the offscreen renderer; the next frame keeps to it).
+    pub(crate) fn set_cache_budget(&mut self, bytes: usize) {
+        self.cache_budget = Some(bytes);
+    }
+
+    /// The geometry cache's budget, bytes ([`CACHE_BUDGET_BYTES`] unless set).
+    pub(crate) fn cache_budget(&self) -> usize {
+        self.cache_budget.unwrap_or(CACHE_BUDGET_BYTES)
     }
 
     fn depth_now(&self) -> u32 {
@@ -952,6 +1089,7 @@ impl Builder {
         if input.1 != level {
             let dst = (FxRole::Down, level);
             let pass = self.fx_pass(FxPassData { v0: rect(self.fx_valid(input, region)), v1: [input.1 as f32, level as f32, 0.0, 0.0], v4: size, ..FxPassData::default() });
+            self.fx_sized.push((pass, level));
             let quad = self.fx_quad(device, pass);
             steps.push(FxStep::Down { src: input, dst, quad });
             src = dst;
@@ -961,10 +1099,12 @@ impl Builder {
         self.fx_kernels.extend_from_slice(&kernel);
         let temp = (FxRole::Temp, level);
         let pass = self.fx_pass(FxPassData { v0: rect(self.fx_valid(src, region)), v1: [level as f32, level as f32, 1.0, 0.0], v4: size, u0: [offset, radius as u32, 0, 0], ..FxPassData::default() });
+        self.fx_sized.push((pass, level));
         let quad = self.fx_quad(device, pass);
         steps.push(FxStep::Blur { src, dst: temp, quad });
         let dst = (out, level);
         let pass = self.fx_pass(FxPassData { v0: rect(lr), v1: [level as f32, level as f32, 0.0, 1.0], v4: size, u0: [offset, radius as u32, 0, 0], ..FxPassData::default() });
+        self.fx_sized.push((pass, level));
         let quad = self.fx_quad(device, pass);
         steps.push(FxStep::Blur { src: temp, dst, quad });
         dst
@@ -976,6 +1116,7 @@ impl Builder {
         let (p, content, region) = (self.effects[k].params, self.effects[k].content, self.effects[k].region);
         let mut steps = Vec::new();
         let pass = self.fx_pass(FxPassData { v0: [content.x0 as f32, content.y0 as f32, content.x1 as f32, content.y1 as f32], v1: [1.0, 1.0, 0.0, 0.0], v4: [self.viewport.x1 as f32, self.viewport.y1 as f32, 0.0, 0.0], ..FxPassData::default() });
+        self.fx_sized.push((pass, 1));
         let quad = self.fx_quad(region, pass);
         steps.push(FxStep::Resolve { quad });
         let mut input: FxTexture = (FxRole::Resolved, 1);
@@ -1124,7 +1265,10 @@ impl Builder {
         let frame = self.frame;
         if self.miss_streak.len() <= ordinal {
             self.miss_streak.resize(ordinal + 1, 0);
+            self.draw_keys.resize(ordinal + 1, None);
         }
+        let settled = self.draw_keys[ordinal] == Some(k);
+        self.draw_keys[ordinal] = Some(k);
         if let Some(entry) = self.cache.get_mut(&k) {
             entry.last_used = frame;
             self.stats.cache_hits += 1;
@@ -1132,8 +1276,11 @@ impl Builder {
             return if entry.fan.is_empty() { None } else { Some((FanRef::Cached(k), entry.bounds)) };
         }
         self.stats.cache_misses += 1;
-        let store = self.miss_streak[ordinal] < 2;
-        self.miss_streak[ordinal] = self.miss_streak[ordinal].saturating_add(1);
+        // Stored: the first two misses in a row, and a miss under the key this position drew
+        // last time (geometry that changed and has settled; a still shape that took the position
+        // of an animated one) - so only geometry that really changes every frame goes unstored.
+        let store = self.miss_streak[ordinal] < 2 || settled;
+        self.miss_streak[ordinal] = if settled { 0 } else { self.miss_streak[ordinal].saturating_add(1) };
         let tolerance = TOLERANCE / step_scale;
         let mut out = if store { Vec::new() } else { std::mem::take(&mut self.scratch) };
         out.clear();
@@ -1147,7 +1294,9 @@ impl Builder {
         let bounds = bounds.unwrap_or(Rect::ZERO);
         let empty = out.is_empty();
         let fan_ref = if store {
-            self.cache.insert(k, CacheEntry { fan: out, bounds, last_used: frame });
+            let entry = CacheEntry { fan: out, bounds, last_used: frame };
+            self.cache_bytes += entry.bytes();
+            self.cache.insert(k, entry);
             FanRef::Cached(k)
         } else {
             self.scratch = out;
@@ -1497,6 +1646,10 @@ impl Builder {
         }
         let mut prior = KeyHash(0xcbf2_9ce4_8422_2325);
         prior.word(self.viewport.x1.to_bits() ^ self.viewport.y1.to_bits().rotate_left(17));
+        // The target window (target_window.rs): a checkpoint is a copy of a target at its place.
+        let win = self.window;
+        prior.word(win.x as u64 | (win.y as u64) << 32);
+        prior.word(win.width as u64 | (win.height as u64) << 32);
         self.hash_cover(&mut prior, &self.root_clear.clone());
         let mut volatile = false;
         let mut level = 0u64;
@@ -1718,6 +1871,138 @@ mod tests {
             assert_eq!(b.ops.len(), 1);
         }
         assert_eq!(b.cache.len(), 2);
+    }
+
+    /// The (misses, hits) of each frame of `frames` scenes drawn in turn.
+    fn misses_and_hits(b: &mut Builder, frames: usize, mut draw: impl FnMut(usize, &mut VectorScene)) -> Vec<(usize, usize)> {
+        let mut scene = VectorScene::new();
+        (0..frames)
+            .map(|frame| {
+                scene.reset();
+                draw(frame, &mut scene);
+                b.build(&scene, 800, 600);
+                (b.stats.cache_misses, b.stats.cache_hits)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn animated_geometry_that_settles_misses_once_more_and_then_hits() {
+        //Arrange
+        let mut b = Builder::default();
+        //Act: the radius changes for frames 0 to 5 (a morph running), then stays.
+        let log = misses_and_hits(&mut b, 12, |frame, scene| scene.fill(Fill::NonZero, Affine::IDENTITY, &red(), None, &Circle::new((200.0, 200.0), 50.0 + frame.min(5) as f64)));
+        //Assert: frame 5 is the settled geometry's first miss, frame 6 its second (stored).
+        assert!(log[..7].iter().all(|f| *f == (1, 0)), "{log:?}");
+        assert!(log[7..].iter().all(|f| *f == (0, 1)), "{log:?}");
+    }
+
+    #[test]
+    fn a_still_shape_that_takes_an_animated_shapes_draw_position_is_stored() {
+        //Arrange
+        let mut b = Builder::default();
+        //Act: a changing shape is the first draw for frames 0 to 3; then a still one is.
+        let log = misses_and_hits(&mut b, 12, |frame, scene| {
+            let circle = if frame < 4 { Circle::new((200.0, 200.0), 50.0 + frame as f64) } else { Circle::new((300.0, 300.0), 80.0) };
+            scene.fill(Fill::NonZero, Affine::IDENTITY, &red(), None, &circle);
+        });
+        //Assert
+        assert!(log[..6].iter().all(|f| *f == (1, 0)), "{log:?}");
+        assert!(log[6..].iter().all(|f| *f == (0, 1)), "{log:?}");
+    }
+
+    #[test]
+    fn geometry_that_changes_every_frame_is_not_stored_however_long_it_runs() {
+        //Arrange
+        let mut b = Builder::default();
+        //Act
+        let log = misses_and_hits(&mut b, 40, |frame, scene| scene.fill(Fill::NonZero, Affine::IDENTITY, &red(), None, &Circle::new((200.0, 200.0), 50.0 + frame as f64)));
+        //Assert: only the first two frames' fans were stored.
+        assert!(log.iter().all(|f| *f == (1, 0)), "{log:?}");
+        assert_eq!(b.cache.len(), 2);
+    }
+
+    #[test]
+    fn a_shape_hidden_for_a_long_time_is_not_flattened_again_when_shown() {
+        for hidden in [30usize, 89, 95, 120, 200, 1000] {
+            //Arrange
+            let mut b = Builder::default();
+            //Act: shown on frame 0, hidden (another still shape drawn alone), shown again.
+            let log = misses_and_hits(&mut b, hidden + 2, |frame, scene| {
+                scene.fill(Fill::NonZero, Affine::IDENTITY, &red(), None, &Circle::new((100.0, 100.0), 10.0));
+                if frame == 0 || frame == hidden + 1 {
+                    scene.fill(Fill::NonZero, Affine::IDENTITY, &red(), None, &Circle::new((400.0, 300.0), 120.0));
+                }
+            });
+            //Assert
+            assert_eq!(*log.last().unwrap(), (0, 2), "hidden for {hidden} frames");
+        }
+    }
+
+    #[test]
+    fn a_whole_scene_hidden_and_shown_again_is_not_flattened_again() {
+        //Arrange: five thousand still shapes (more than the old purge's entry limit).
+        let mut b = Builder::default();
+        let many = |scene: &mut VectorScene| {
+            for i in 0..5000 {
+                scene.fill(Fill::NonZero, Affine::IDENTITY, &red(), None, &Circle::new(((i % 100) as f64 * 8.0, (i / 100) as f64 * 12.0), 3.0 + (i % 7) as f64));
+            }
+        };
+        //Act: shown, then 300 frames of one other shape, then shown again.
+        let log = misses_and_hits(&mut b, 302, |frame, scene| {
+            if frame == 0 || frame == 301 {
+                many(scene);
+            } else {
+                scene.fill(Fill::NonZero, Affine::IDENTITY, &red(), None, &Circle::new((100.0, 100.0), 10.0));
+            }
+        });
+        //Assert
+        assert_eq!(*log.last().unwrap(), (0, 5000));
+    }
+
+    #[test]
+    fn the_cache_stays_within_its_budget_and_drops_the_least_recently_used_first() {
+        //Arrange: a budget of about twenty circles' fans.
+        let mut b = Builder::default();
+        let circle = |i: usize| Circle::new((400.0, 300.0), 100.0 + i as f64);
+        let mut scene = VectorScene::new();
+        scene.fill(Fill::NonZero, Affine::IDENTITY, &red(), None, &circle(0));
+        b.build(&scene, 800, 600);
+        let one = b.cache_bytes;
+        b.set_cache_budget(one * 20);
+        //Act: two hundred different still shapes, each shown for two frames, one after another.
+        let mut peak = 0;
+        for i in 1..200 {
+            for _ in 0..2 {
+                scene.reset();
+                scene.fill(Fill::NonZero, Affine::IDENTITY, &red(), None, &circle(i));
+                b.build(&scene, 800, 600);
+                peak = peak.max(b.cache_bytes);
+            }
+        }
+        //Assert: never above the budget (each fan is a little larger than the last), the count
+        //kept right, the most recent shapes kept and the oldest gone.
+        assert!(peak <= one * 20, "peak {peak}, budget {}", one * 20);
+        assert_eq!(b.cache_bytes, b.cache.values().map(CacheEntry::bytes).sum::<usize>());
+        let log = misses_and_hits(&mut b, 1, |_, scene| scene.fill(Fill::NonZero, Affine::IDENTITY, &red(), None, &circle(198)));
+        assert_eq!(log, [(0, 1)]);
+        let log = misses_and_hits(&mut b, 1, |_, scene| scene.fill(Fill::NonZero, Affine::IDENTITY, &red(), None, &circle(1)));
+        assert_eq!(log, [(1, 0)]);
+    }
+
+    #[test]
+    fn a_frame_that_needs_more_than_the_budget_keeps_all_it_drew() {
+        //Arrange
+        let mut b = Builder::default();
+        b.set_cache_budget(1);
+        //Act
+        let log = misses_and_hits(&mut b, 3, |_, scene| {
+            for i in 0..10 {
+                scene.fill(Fill::NonZero, Affine::IDENTITY, &red(), None, &Circle::new((40.0 + i as f64 * 60.0, 100.0), 20.0 + i as f64));
+            }
+        });
+        //Assert
+        assert_eq!(log, [(10, 0), (0, 10), (0, 10)]);
     }
 
     #[test]

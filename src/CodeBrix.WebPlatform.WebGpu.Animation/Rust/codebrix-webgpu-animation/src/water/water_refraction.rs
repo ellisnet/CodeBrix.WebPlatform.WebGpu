@@ -55,6 +55,16 @@ pub struct WaterRefraction {
     pub glints: Option<WaterGlints>,
     /// The caustic light on what is seen through the water; None (the default) for none.
     pub caustics: Option<CausticLight>,
+    /// True to place the water in the LAYER'S OWN space - its drawing space times its transform -
+    /// so water pinned to a layer moves, turns and scales with it (a layer scrolled by its
+    /// transform carries its ripples along); false (the default) keeps it in the layer's drawing
+    /// space, where the layer's transform does not move it. A session's refraction has no layer
+    /// transform: the flag changes nothing there. WHEN THE FLAGS DIFFER on one layer (its
+    /// refraction follows and its reflection does not, or the other way round): the composite
+    /// has ONE water space per layer, so the ripples of both - the refraction's and the
+    /// reflection's own water - are evaluated in THIS refraction's space, while the reflection's
+    /// waterline still follows the reflection's own flag. Not in C#.
+    pub follows_layer: bool,
 }
 
 /// Sun glints on a refraction's water (no C# equivalent).
@@ -102,9 +112,10 @@ impl Default for CausticLight {
 
 impl WaterRefraction {
     /// A refraction through `source` with the defaults (strength 12, shading 0.3, light from 225
-    /// degrees at 45; glints and caustics off).
+    /// degrees at 45; glints and caustics off; in the layer's drawing space, not following the
+    /// layer's transform).
     pub fn new(source: WaterSource) -> WaterRefraction {
-        WaterRefraction { source, strength: 12.0, shading: 0.3, light_angle: 225.0, light_elevation: 45.0, glints: None, caustics: None }
+        WaterRefraction { source, strength: 12.0, shading: 0.3, light_angle: 225.0, light_elevation: 45.0, glints: None, caustics: None, follows_layer: false }
     }
 
     /// Checks every value; the error names the one to change.

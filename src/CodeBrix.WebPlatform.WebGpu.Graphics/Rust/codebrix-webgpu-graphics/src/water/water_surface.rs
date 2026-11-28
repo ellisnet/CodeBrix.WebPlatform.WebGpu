@@ -1,13 +1,15 @@
 //! [`WaterSurface`]: one rectangle of water for a 3D scene - where it is, its grid, the wave field
 //! and the open-water waves that shape it, its fine ripples and its look - with the mapping
 //! between the world and a wave field's units for stirring ([`WaterSurface::field_point`]) and
-//! the CPU passthroughs that float things ([`WaterSurface::height_at`], [`WaterSurface::normal_at`])
-//! (Not in C#). [`WaterField`] hands a [`WaveField`]'s picture to the surface.
+//! the CPU passthroughs that float things ([`WaterSurface::height_at`], [`WaterSurface::normal_at`],
+//! [`WaterSurface::opacity_at`]) (Not in C#). [`WaterField`] hands a [`WaveField`]'s picture to the
+//! surface.
 
 use glam::{Vec2, Vec3};
 
 use crate::drawing3d::Ray;
 use crate::water::water_look::{WaterDetail, WaterLook};
+use crate::water::water_mask::WaterMask;
 use crate::water::water_math::rotate_y;
 use crate::water::{OpenWaterWaves, WaveField};
 
@@ -38,7 +40,8 @@ impl WaterField {
 /// SURFACE, not a fluid: a grid of `grid` x `grid` quads at the still water level, moved by a wave
 /// field's heights and by open-water waves, its normals from both plus fine ripples, and every
 /// pixel's colour worked out from the scene captured behind it (see the renderer for the look's
-/// parts and the limits).
+/// parts and the limits). A [`WaterMask`] gives it another shape inside its rectangle; a `flow`
+/// carries its fine detail along (a river).
 #[derive(Clone, Debug, PartialEq)]
 pub struct WaterSurface {
     /// The still surface's centre; its y is the water level. ZERO
@@ -57,11 +60,20 @@ pub struct WaterSurface {
     pub detail: WaterDetail,
     /// How it looks.
     pub look: WaterLook,
+    /// Where inside the rectangle there is water (a round pool, a pond's outline); None: all of
+    /// it. None
+    pub mask: Option<WaterMask>,
+    /// The flow, world units per second along world x and z (a river, a channel): it carries the
+    /// detail ripples, the caustic net and the sheen's bands downstream (exact in time, no jump
+    /// however long it runs). The wave field and the open-water waves do not flow: the field is
+    /// a picture fixed to the surface and its shores, and the open-water waves travel at their
+    /// own speeds in world space (shared by neighbouring surfaces). ZERO
+    pub flow: Vec2,
 }
 
 impl Default for WaterSurface {
     fn default() -> WaterSurface {
-        WaterSurface { center: Vec3::ZERO, size: Vec2::new(10.0, 10.0), rotation: 0.0, grid: 64, field: None, open_waves: None, detail: WaterDetail::default(), look: WaterLook::default() }
+        WaterSurface { center: Vec3::ZERO, size: Vec2::new(10.0, 10.0), rotation: 0.0, grid: 64, field: None, open_waves: None, detail: WaterDetail::default(), look: WaterLook::default(), mask: None, flow: Vec2::ZERO }
     }
 }
 
@@ -78,7 +90,9 @@ impl WaterSurface {
     /// Where a picking ray meets the STILL surface, in the field units of its [`WaterField`] (or
     /// of a field of the surface's own size without one), (0, 0) at the field's column 0, row 0 -
     /// for [`WaveField::stir`] and [`WaveField::drop`]; None when the ray misses the rectangle,
-    /// runs parallel to it or meets it behind its origin. In a layer's `input`:
+    /// runs parallel to it or meets it behind its origin, or meets it where a mask with CPU
+    /// coverage leaves no water ([`WaterSurface::opacity_at`] 0; a mask without it is not
+    /// consulted). In a layer's `input`:
     /// `field.stir(input, &stir, &|x, y| surface.field_point(&camera.canvas_to_ray(x as f32, y as f32, w, h)))`.
     pub fn field_point(&self, ray: &Ray) -> Option<Vec2> {
         if ray.direction.y.abs() < 1e-8 {
@@ -94,6 +108,11 @@ impl WaterSurface {
         if local.x.abs() > half.x || local.z.abs() > half.y {
             return None;
         }
+        if let Some(mask) = &self.mask {
+            if mask.opacity_at(self.to_mask(hit)) <= 0.0 {
+                return None;
+            }
+        }
         Some(self.to_field(hit))
     }
 
@@ -105,6 +124,27 @@ impl WaterSurface {
         (Vec2::new(local.x, local.z) + size * 0.5) / size * self.field_size()
     }
 
+    /// A world point's place in the mask's 0..1 coordinates ([`crate::WaterCoverage`]: u along
+    /// local X, v along local Z, (0, 0) at the corner of least local X and Z; its height is
+    /// ignored; outside 0..1 off the rectangle).
+    pub fn to_mask(&self, world: Vec3) -> Vec2 {
+        let local = rotate_y(world - self.center, -self.rotation);
+        let size = self.size.max(Vec2::splat(1e-6));
+        (Vec2::new(local.x, local.z) + size * 0.5) / size
+    }
+
+    /// How much water is drawn above the world point (x, z), 0..1: 0 off the rectangle and where
+    /// the mask leaves no water, the mask's edge fade, 1 elsewhere (everywhere on the rectangle
+    /// without a mask, or with a mask without CPU coverage) - so as not to float things on land.
+    /// The soft shore (which depends on the scene's depth) is not included.
+    pub fn opacity_at(&self, x: f32, z: f32) -> f32 {
+        let uv = self.to_mask(Vec3::new(x, self.center.y, z));
+        if !(0.0..=1.0).contains(&uv.x) || !(0.0..=1.0).contains(&uv.y) {
+            return 0.0;
+        }
+        self.mask.as_ref().map_or(1.0, |mask| mask.opacity_at(uv))
+    }
+
     /// A field point's place in the world, on the still surface.
     pub fn to_world(&self, field: Vec2) -> Vec3 {
         let local = field / self.field_size().max(Vec2::splat(1e-6)) * self.size - self.size * 0.5;
@@ -114,12 +154,16 @@ impl WaterSurface {
     /// The surface's height above the world point (x, z) at `seconds` (`frame.info.time`): the
     /// water level plus the open-water waves' height there - to float things. The WAVE FIELD's
     /// heights are not included: they live on the GPU (read its picture back if you need them).
+    /// Neither the rectangle nor the mask is consulted: anywhere it answers the height the water
+    /// would have there ([`WaterSurface::opacity_at`] says whether water is drawn); the flow does
+    /// not move the open-water waves.
     pub fn height_at(&self, x: f32, z: f32, seconds: f64) -> f32 {
         self.center.y + self.open_waves.as_ref().map_or(0.0, |waves| waves.height_at(x, z, seconds))
     }
 
     /// The surface's unit normal above the world point (x, z) at `seconds`, from the open-water
-    /// waves (+Y without them; the wave field is not included) - to tilt a floating thing.
+    /// waves (+Y without them; the wave field is not included) - to tilt a floating thing. Like
+    /// [`WaterSurface::height_at`], it does not consult the rectangle or the mask.
     pub fn normal_at(&self, x: f32, z: f32, seconds: f64) -> Vec3 {
         self.open_waves.as_ref().map_or(Vec3::Y, |waves| waves.normal_at(x, z, seconds))
     }

@@ -8,7 +8,7 @@ use glam::{Mat4, Vec3, Vec4};
 use crate::context::{GraphicsContext, GraphicsException};
 use crate::drawing3d::{AmbientLighting, Camera, SceneLighting};
 use crate::lighting::local_lights::select_local_lights;
-use crate::lighting::shadows::{select_shadowed_spots, spot_shadow_view, sun_shadow_view, ShadowView};
+use crate::lighting::shadows::{select_shadowed_spots, spot_shadow_view, sun_cascades, ShadowView};
 use crate::lighting::EnvironmentMap;
 use crate::frames::{BufferRange, DrawIndexedOptions, RenderPass};
 use crate::models::lod_instance::{lod_culled, lod_draws};
@@ -29,9 +29,15 @@ const MATRIX_SIZE: u64 = 64;
 
 /// A material's GPU state (C#: `PbrMaterial`).
 struct PbrMaterial {
-    _uniforms: GpuBuffer,
+    uniforms: GpuBuffer,
+    /// The bind group draws use: `own_group`, or the group of the textures the application put
+    /// in some slots ([`ModelRenderer::set_material_texture_override`]).
     group: GpuBindGroup,
     features: PbrFeatures,
+    /// The bind group of the model's own textures (Not in C#).
+    own_group: GpuBindGroup,
+    /// The textures slots sample instead of the model's, and the groups kept for them (Not in C#).
+    overrides: crate::models::material_textures::TextureOverrides<wgpu::TextureView, GpuBindGroup>,
 }
 
 /// What the renderer keeps per model: materials, draw items with their uniforms, morph deltas
@@ -70,7 +76,7 @@ struct Drawing {
     /// The shader features of the frame (Not in C#): LOCAL_LIGHTS when it has local lights,
     /// SHADOWS when it has shadow passes.
     features: PbrFeatures,
-    /// The pair's shadow passes, the sun's first (Not in C#).
+    /// The pair's shadow passes, the sun's (one per cascade) first (Not in C#).
     shadow_passes: Vec<(ShadowView, ShadowTarget)>,
     /// The shadow-map set of the pair, when it has shadow passes.
     shadow_set: Option<usize>,
@@ -93,10 +99,22 @@ struct Prepared {
 /// ([`ModelRenderer::frame_stats`]; Not in C#).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ModelRenderStats {
-    /// Draw calls issued (both halves of every pair; a blended double-sided part counts two).
+    /// Draw calls issued (both halves of every pair; a blended double-sided part counts two):
+    /// [`ModelRenderStats::opaque_draw_calls`] + [`ModelRenderStats::blended_draw_calls`].
     pub draw_calls: usize,
-    /// Primitive instances drawn (one per part and instance drawn, however many draws it took).
+    /// The draw calls of the opaque half ([`ModelRenderer::end_opaque`]: opaque and alpha-tested
+    /// parts; Not in C#).
+    pub opaque_draw_calls: usize,
+    /// The draw calls of the blended half ([`ModelRenderer::end_blended`]: blended parts, fading
+    /// ones and every part of an instance whose alpha is below 1; Not in C#).
+    pub blended_draw_calls: usize,
+    /// Primitive instances drawn (one per part and instance drawn, however many draws it took):
+    /// [`ModelRenderStats::opaque_instances`] + [`ModelRenderStats::blended_instances`].
     pub instances: usize,
+    /// The primitive instances the opaque half drew (Not in C#).
+    pub opaque_instances: usize,
+    /// The primitive instances the blended half drew (Not in C#).
+    pub blended_instances: usize,
     /// Instances culled: queued with `draw` but entirely outside the camera's view, so not drawn
     /// in it (an instance that still casts into a shadow map is uploaded for its shadow pass;
     /// any other is neither uploaded nor drawn).
@@ -496,7 +514,7 @@ impl ModelRenderer {
         let chosen = select_local_lights(&lighting.local_lights, camera.position, &volume, SceneLighting::MAX_LOCAL_LIGHTS);
         let mut shadow_passes: Vec<(ShadowView, ShadowTarget)> = Vec::new();
         let sun_settings = &lighting.sun_shadows;
-        let sun = if sun_settings.enabled && PbrFrameUniforms::key_light_shades(lighting) { sun_shadow_view(lighting.light_direction, sun_settings.region_min, sun_settings.region_max, sun_settings.map_size.texels()) } else { None };
+        let sun = if sun_settings.enabled && PbrFrameUniforms::key_light_shades(lighting) { sun_cascades(sun_settings, lighting.light_direction, camera, aspect_ratio) } else { None };
         let mut spot_layers: Vec<Option<usize>> = vec![None; chosen.len()];
         let mut spot_views: Vec<ShadowView> = Vec::new();
         let spot_texels = lighting.spot_shadows.map_size.texels();
@@ -507,14 +525,18 @@ impl ModelRenderer {
             }
         }
         frame.set_local_lights(&lighting.local_lights, &chosen, &spot_layers, &spot_views);
-        frame.set_shadows(lighting, sun.as_ref(), &spot_views);
-        let sun_texels = sun.as_ref().map(|_| sun_settings.map_size.texels());
-        if let Some(view) = sun {
-            shadow_passes.push((view, ShadowTarget::Sun));
+        frame.set_shadows(lighting, sun.as_ref().and_then(|cascades| cascades.views.first()), &spot_views);
+        if let Some(cascades) = &sun {
+            frame.set_sun_cascades(cascades);
+        }
+        // The sun's map: its size and one layer per cascade.
+        let sun_map = sun.as_ref().map(|cascades| (sun_settings.map_size.texels(), cascades.views.len() as u32));
+        if let Some(cascades) = sun {
+            shadow_passes.extend(cascades.views.into_iter().enumerate().map(|(layer, view)| (view, ShadowTarget::Sun(layer as u32))));
         }
         let spot_count = spot_views.len();
         shadow_passes.extend(spot_views.into_iter().enumerate().map(|(layer, view)| (view, ShadowTarget::Spot(layer as u32))));
-        let shadow_set = if shadow_passes.is_empty() { None } else { Some(self.shadows.take_set(sun_texels, (spot_count > 0).then_some(spot_texels))) };
+        let shadow_set = if shadow_passes.is_empty() { None } else { Some(self.shadows.take_set(sun_map, (spot_count > 0).then_some(spot_texels))) };
         let mut features = PbrFeatures::NONE;
         if !chosen.is_empty() {
             features |= PbrFeatures::LOCAL_LIGHTS;
@@ -770,12 +792,12 @@ impl ModelRenderer {
         self.weight_cursor += planned.weights.len() as u64;
         let prepared = Prepared { plan: planned, model_ids, frame_offset, base, opaque_drawn: false };
         self.draw_shadow_passes(&prepared)?;
-        // The sun's map, now drawn, for receivers of the application's or the crate's own.
+        // The sun's map, now drawn, for receivers of the application's or the crate's own: the
+        // single map, or the last cascade's layer (it covers the whole view out to the reach).
         let drawing = self.drawing.as_ref().expect("checked");
         if let (Some(set), Some(numbers)) = (drawing.shadow_set, sun_shadow_numbers(&drawing.frame)) {
-            if drawing.shadow_passes.iter().any(|(_, target)| *target == ShadowTarget::Sun) {
-                let view = self.shadows.sampled_views(Some(set)).0.clone();
-                self.sun_shadow = Some(numbers.with_view(view));
+            if let Some(view) = self.shadows.target_view(set, ShadowTarget::Sun(numbers.layer)) {
+                self.sun_shadow = Some(numbers.with_view(view.clone()));
             }
         }
         self.drawing.as_mut().expect("checked").prepared = Some(prepared);
@@ -862,11 +884,17 @@ impl ModelRenderer {
         let encode = if needs_shader_encoding(formats.color) { PbrFeatures::ENCODE_SRGB } else { PbrFeatures::NONE };
         let mut recorder = Recorder { pipeline: None, model: None, material: None };
         let draws: &[PlannedDraw] = if blended { &prepared.plan.blended } else { &prepared.plan.opaque };
+        let before = (self.frame_stats.draw_calls, self.frame_stats.instances);
+        let mut result = Ok(());
         for planned in draws {
             let model_id = prepared.model_ids[planned.bucket];
-            self.record(pass, &mut recorder, prepared.frame_offset, model_id, planned, prepared.base, (encode, frame_features), formats)?;
+            result = self.record(pass, &mut recorder, prepared.frame_offset, model_id, planned, prepared.base, (encode, frame_features), formats);
+            if result.is_err() {
+                break;
+            }
         }
-        Ok(())
+        count_half(&mut self.frame_stats, blended, before);
+        result
     }
 
     /// The frame bind group for an environment, or for the hemisphere (None), and a shadow-map
@@ -899,6 +927,109 @@ impl ModelRenderer {
     /// with it the renderer's hold on the model (C#: `Forget(model)`).
     pub fn forget(&mut self, model: &Model) {
         self.models.remove(&model.id());
+    }
+
+    /// Sets the texture-coordinate transform of one texture slot of a model's material IN PLACE,
+    /// for animated textures - a river's water scrolling and turning, a conveyor belt, a
+    /// flickering sign (Not in C#, whose material uniforms are made once). `material` is an index
+    /// into [`Model::materials`], or None for the glTF default material; `transform` takes the
+    /// slot's texture coordinates to the ones sampled, as
+    /// [`ModelTextureSlot::transform_affine`](crate::ModelTextureSlot::transform_affine) gives the
+    /// file's KHR_texture_transform - it REPLACES that transform (compose with it yourself to
+    /// keep it: `scroll * slot.transform_affine()`; pass `slot.transform_affine()` to restore it).
+    ///
+    /// WHAT IS CHANGED: this renderer's copy of the material (the renderer owns the GPU state; the
+    /// [`Model`] is not changed, so it may be shared). The material is identified by the MODEL -
+    /// any handle of it, the same model however many clones - and the material's index: EVERY
+    /// instance of that model drawn by this renderer shows the change (and the shadows of its
+    /// alpha-tested parts follow it); another model, even one loaded from the same file or
+    /// sharing its textures through a [`crate::GltfModelSet`], is not changed, nor is the model
+    /// in another [`ModelRenderer`]. To animate instances differently, load the model once per
+    /// look. [`ModelRenderer::forget`] drops the change with the rest of the model's state.
+    /// Callable before the model is first drawn (the renderer then holds the model as after a
+    /// draw, so [`Model::material_mut`] refuses from then on: make such changes first).
+    ///
+    /// ONE VALUE PER FRAME: the transform is written into the material's uniform buffer, which
+    /// the GPU reads when the work is submitted - the frame's draws of the material (in every
+    /// begin/end pair) see one value, the last one set before the frame was submitted, and a
+    /// pair's shadow passes (submitted by its first finishing call) the last one set before that.
+    /// Set it once per frame, before the frame's first `begin`; different values for different
+    /// pairs of one frame are not possible.
+    ///
+    /// Only for a slot that HAS a texture (one the model loaded, or one put in with
+    /// [`Model::set_material_texture`]); an error otherwise, and for a material index out of range
+    /// or a transform that is not finite.
+    pub fn set_material_texture_transform(&mut self, model: &Model, material: Option<usize>, slot: crate::models::ModelTextureKind, transform: glam::Affine2) -> Result<(), GraphicsException> {
+        if !transform.is_finite() {
+            return Err(GraphicsException::new(format!("ModelRenderer::set_material_texture_transform was given a transform that is not finite ({transform:?}); pass a transform of finite numbers, for example Affine2::from_translation(Vec2::new(time * speed, 0.0)).")));
+        }
+        let number = self.texture_slot(model, material, slot, "set_material_texture_transform")?;
+        let state = &self.models[&model.id()];
+        let target = material.map_or(&state.fallback, |m| &state.materials[m]);
+        let rows = crate::models::material_textures::uv_rows(crate::models::material_textures::matrix3x2(transform));
+        target.uniforms.write(&rows, crate::models::material_textures::uv_rows_offset(number))
+    }
+
+    /// Makes one texture slot of a model's material sample `texture` instead of the model's own
+    /// texture, or the model's own again with None (Not in C#) - for flipbooks: pass an
+    /// [`crate::AnimatedTexture`]'s [`crate::AnimatedTexture::get_frame_texture`] every frame.
+    /// The slot keeps its sampler, texture-coordinate set and transform. The renderer keeps a
+    /// material bind group per combination of textures it was given for the material (the last
+    /// thirty-two, enough for the frames of a flipbook: going round the frames makes no new
+    /// groups) and so HOLDS those textures until the groups are dropped (by
+    /// [`ModelRenderer::forget`], or as newer combinations replace them).
+    ///
+    /// The material is identified as for [`ModelRenderer::set_material_texture_transform`]: the
+    /// model (any handle of it) and the material's index, in this renderer; every instance of the
+    /// model shows the texture, and the [`Model`] itself is not changed. ONE TEXTURE PER FRAME:
+    /// the texture is bound when the material's draws are recorded; set it once per frame,
+    /// before the frame's first `begin`, and keep the texture's pixels unchanged until the frame
+    /// is submitted.
+    ///
+    /// Only for a slot that HAS a texture (one the model loaded, or one put in with
+    /// [`Model::set_material_texture`]): whether a slot has a texture can decide the shader (a
+    /// normal map), so it is not changed here. `texture` must be a single-sampled 2D texture of
+    /// one layer (an animated texture's frames are) with `TEXTURE_BINDING` and a filterable
+    /// colour format - sRGB for the base colour and emissive slots, linear for the others, as for
+    /// [`Model::set_material_texture`]. An error otherwise, and for a material index out of range.
+    pub fn set_material_texture_override(&mut self, model: &Model, material: Option<usize>, slot: crate::models::ModelTextureKind, texture: Option<&GpuTexture>) -> Result<(), GraphicsException> {
+        if let Some(texture) = texture {
+            check_override_texture(texture)?;
+        }
+        let number = self.texture_slot(model, material, slot, "set_material_texture_override")?;
+        let mut state = self.models.remove(&model.id()).expect("made by texture_slot");
+        let source = material.map_or(state.model.default_material(), |m| &state.model.materials()[m]).clone();
+        let target = match material {
+            Some(m) => &mut state.materials[m],
+            None => &mut state.fallback,
+        };
+        target.overrides.set(number, texture.map(|t| t.view().clone()));
+        let label = format!("{} material {} textures", state.model.label(), material.map_or("default".to_string(), |m| m.to_string()));
+        let (overrides, uniforms) = (&mut target.overrides, &target.uniforms);
+        let group = overrides.group(|views| self.material_group(&state.model, &source, uniforms, views, &label));
+        target.group = group.unwrap_or_else(|| target.own_group.clone());
+        self.models.insert(model.id(), state);
+        Ok(())
+    }
+
+    /// Checks a material and a texture slot of `model` for the two calls above - the index in
+    /// range, the slot with a texture - makes the model's GPU state if it has none yet, and
+    /// returns the slot's number.
+    fn texture_slot(&mut self, model: &Model, material: Option<usize>, slot: crate::models::ModelTextureKind, call: &str) -> Result<usize, GraphicsException> {
+        let count = model.materials().len();
+        let source = match material {
+            Some(index) if index >= count => return Err(GraphicsException::new(format!("ModelRenderer::{call}: the model has {count} material(s), so there is no material {index}; pass an index below that, or None for the default material."))),
+            Some(index) => &model.materials()[index],
+            None => model.default_material(),
+        };
+        if model.slot_texture(source.slot(slot)).is_none() {
+            return Err(GraphicsException::new(format!("ModelRenderer::{call}: the {slot:?} slot of {source} has no texture, and only a slot with a texture can be changed here (whether a slot has a texture decides the shader). Put a texture in right after loading with Model::set_material_texture.")));
+        }
+        if !self.models.contains_key(&model.id()) {
+            let state = self.create_state(model)?;
+            self.models.insert(model.id(), state);
+        }
+        Ok(crate::models::material_textures::slot_number(slot))
     }
 
     /// Writes this end's instance records, matrices and weights after what earlier begin/end
@@ -1090,19 +1221,26 @@ impl ModelRenderer {
     /// (C#: `CreateMaterial`).
     fn create_material(&self, model: &Model, source: &ModelMaterial, label: &str) -> Result<PbrMaterial, GraphicsException> {
         let uniforms = self.context.create_uniform_buffer_from(&PbrMaterialUniforms::new(source), Some(&format!("{label} uniforms")))?;
+        let group = self.material_group(model, source, &uniforms, &std::array::from_fn(|_| None), label);
+        Ok(PbrMaterial { uniforms, group: group.clone(), features: material_features(source, model.slot_texture(&source.normal_texture).is_some()), own_group: group, overrides: crate::models::material_textures::TextureOverrides::new() })
+    }
+
+    /// A material's bind group: its uniforms, each slot's texture - the view in `overrides` when
+    /// there is one (Not in C#), else the model's, else the context's white texture - and each
+    /// slot's sampler.
+    fn material_group(&self, model: &Model, source: &ModelMaterial, uniforms: &GpuBuffer, overrides: &[Option<wgpu::TextureView>; crate::models::material_textures::SLOT_COUNT], label: &str) -> GpuBindGroup {
         let (_, white) = self.context.white_texture();
         let slots = source.slots();
-        let mut entries = vec![BindingEntry::for_buffer(0, &uniforms)];
+        let mut entries = vec![BindingEntry::for_buffer(0, uniforms)];
         for (index, slot) in slots.iter().enumerate() {
-            let view = model.slot_texture(slot).map_or(&white, |t| t.view());
+            let view = overrides[index].as_ref().unwrap_or_else(|| model.slot_texture(slot).map_or(&white, |t| t.view()));
             entries.push(BindingEntry::for_texture_view(index as u32 + 1, view));
         }
         for (index, slot) in slots.iter().enumerate() {
             let sampler = model.slot_sampler(slot).filter(|_| model.slot_texture(slot).is_some()).unwrap_or(&self.default_sampler);
             entries.push(BindingEntry::for_sampler(index as u32 + 6, sampler));
         }
-        let group = self.context.create_bind_group(&self.material_layout, Some(label), &entries);
-        Ok(PbrMaterial { _uniforms: uniforms, group, features: material_features(source, model.slot_texture(&source.normal_texture).is_some()) })
+        self.context.create_bind_group(&self.material_layout, Some(label), &entries)
     }
 }
 
@@ -1111,6 +1249,37 @@ impl ModelRenderer {
 fn count_lights(stats: &mut ModelRenderStats, local_lights: usize, shadowed_spotlights: usize) {
     stats.local_lights = stats.local_lights.max(local_lights);
     stats.shadowed_spotlights = stats.shadowed_spotlights.max(shadowed_spotlights);
+}
+
+/// The error for a texture a material slot cannot sample in place of its own (Not in C#).
+fn check_override_texture(texture: &GpuTexture) -> Result<(), GraphicsException> {
+    let refuse = |what: String| Err(GraphicsException::new(format!("ModelRenderer::set_material_texture_override: the texture{} {what}.", texture.label().map(|l| format!(" '{l}'")).unwrap_or_default())));
+    if texture.sample_count() > 1 {
+        return refuse(format!("is multisampled ({} samples); a material samples a single-sampled texture - give it the resolved texture", texture.sample_count()));
+    }
+    if texture.dimension() != wgpu::TextureDimension::D2 || texture.array_layer_count() != 1 {
+        return refuse(format!("has {} array layers; a material samples a 2D texture of one layer - give it one layer's view (create_layer_view, or an animated texture's get_frame_texture)", texture.array_layer_count()));
+    }
+    if !texture.usage().contains(wgpu::TextureUsages::TEXTURE_BINDING) {
+        return refuse("was made without TEXTURE_BINDING, so no shader can sample it; make it with that usage".to_string());
+    }
+    if texture.format().sample_type(None, None) != Some(wgpu::TextureSampleType::Float { filterable: true }) {
+        return refuse(format!("has the format {:?}, which a material cannot sample with filtering; use a colour format such as Rgba8UnormSrgb (base colour, emissive) or Rgba8Unorm (the others)", texture.format()));
+    }
+    Ok(())
+}
+
+/// Adds what one half of a pair recorded - the frame's draw calls and instances since `before`
+/// (the two totals when the half began) - to that half's figures (Not in C#).
+fn count_half(stats: &mut ModelRenderStats, blended: bool, (draw_calls_before, instances_before): (usize, usize)) {
+    let (draw_calls, instances) = (stats.draw_calls - draw_calls_before, stats.instances - instances_before);
+    if blended {
+        stats.blended_draw_calls += draw_calls;
+        stats.blended_instances += instances;
+    } else {
+        stats.opaque_draw_calls += draw_calls;
+        stats.opaque_instances += instances;
+    }
 }
 
 /// True when a finishing call may record into a pass of frame `pass_frame` for a pair begun in
@@ -1245,5 +1414,48 @@ mod msaa_tests {
             keys.insert((features, formats(count)));
         }
         assert_eq!(keys.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod stats_tests {
+    use super::{count_half, ModelRenderStats};
+
+    /// What `record` adds for one draw: a draw call, and its instances unless it is the back
+    /// faces of a two-pass part.
+    fn record(stats: &mut ModelRenderStats, count: usize, back_faces: bool) {
+        stats.draw_calls += 1;
+        if !back_faces {
+            stats.instances += count;
+        }
+    }
+
+    #[test]
+    fn the_draws_are_counted_per_half_and_the_totals_are_their_sums() {
+        let mut stats = ModelRenderStats::default();
+        // Pair 1: three opaque draws of 4, 1 and 2 instances; a blended two-pass part of 3
+        // instances (two draws, counted once) and one blended draw of 1.
+        let before = (stats.draw_calls, stats.instances);
+        record(&mut stats, 4, false);
+        record(&mut stats, 1, false);
+        record(&mut stats, 2, false);
+        count_half(&mut stats, false, before);
+        let before = (stats.draw_calls, stats.instances);
+        record(&mut stats, 3, true);
+        record(&mut stats, 3, false);
+        record(&mut stats, 1, false);
+        count_half(&mut stats, true, before);
+        assert_eq!((stats.opaque_draw_calls, stats.opaque_instances, stats.blended_draw_calls, stats.blended_instances), (3, 7, 3, 4));
+        // Pair 2 of the same frame: blended only (end_blended without end_opaque), then an empty
+        // opaque half of pair 3.
+        let before = (stats.draw_calls, stats.instances);
+        record(&mut stats, 5, false);
+        count_half(&mut stats, true, before);
+        let before = (stats.draw_calls, stats.instances);
+        count_half(&mut stats, false, before);
+        assert_eq!((stats.opaque_draw_calls, stats.blended_draw_calls, stats.blended_instances), (3, 4, 9));
+        assert_eq!(stats.draw_calls, stats.opaque_draw_calls + stats.blended_draw_calls);
+        assert_eq!(stats.instances, stats.opaque_instances + stats.blended_instances);
+        assert_eq!((stats.draw_calls, stats.instances), (7, 16));
     }
 }

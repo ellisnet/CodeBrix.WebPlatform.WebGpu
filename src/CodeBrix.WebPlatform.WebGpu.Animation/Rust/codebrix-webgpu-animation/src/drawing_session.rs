@@ -23,7 +23,7 @@ use crate::rendering::{CanvasCalibration, DebugOverlay, VectorScene};
 use crate::images::{ImageSampling, ImageSource, SpriteSheet};
 use crate::layout::DrawingLayout;
 use crate::safe_areas::SafeAreaOverlay;
-use crate::shapes::{encode_masked, AnimatedShape, ArrowShape, ArrowShapeOptions, CircleShape, DrawingShape, EllipseShape, EncodeContext, ImageShape, ImageShapeOptions, LineShape, LineShapeOptions, PathShape, PolylineShape, PolylineShapeOptions, RectangleShape, RectangleShapeOptions, ShapeKind, ShapeOptions, SpriteShape, SpriteShapeOptions, TextBlockShape, TextShape, TextShapeOptions};
+use crate::shapes::{encode_masked, CullArea, AnimatedShape, ArrowShape, ArrowShapeOptions, CircleShape, DrawingShape, EllipseShape, EncodeContext, ImageShape, ImageShapeOptions, LineShape, LineShapeOptions, PathShape, PolylineShape, PolylineShapeOptions, RectangleShape, RectangleShapeOptions, ShapeKind, ShapeOptions, SpriteShape, SpriteShapeOptions, TextBlockShape, TextShape, TextShapeOptions};
 use crate::text::{FontRegistry, TextLayoutEngine, TextLayoutOptions, TextLayoutResult, TextRunDescriptor};
 
 /// A drawing: a calibrated drawing space (aspect-fit into whatever canvas it is drawn on),
@@ -54,6 +54,14 @@ pub struct DrawingSession {
 pub(crate) struct SessionReports {
     pending: Vec<String>,
     seen: std::collections::HashSet<String>,
+    /// True to put each drawn SVG or Lottie document's warnings into the reports at its first
+    /// encode ([`DrawingSession::set_reports_document_warnings`]; off by default).
+    documents: bool,
+    /// The documents whose warnings were put in already. Weak handles: they keep the address of
+    /// a dropped document from being reused by a new one (which would then go unreported),
+    /// without keeping the document alive.
+    svg_seen: Vec<std::sync::Weak<crate::svg::DrawingSvg>>,
+    lottie_seen: Vec<std::sync::Weak<crate::lottie::DrawingLottie>>,
 }
 
 impl SessionReports {
@@ -61,6 +69,28 @@ impl SessionReports {
     pub(crate) fn report(&mut self, message: String) {
         if self.seen.insert(message.clone()) {
             self.pending.push(message);
+        }
+    }
+
+    /// An SVG document is being drawn: its warnings, once, when document reports are on.
+    pub(crate) fn note_svg(&mut self, svg: &std::sync::Arc<crate::svg::DrawingSvg>) {
+        if !self.documents || self.svg_seen.iter().any(|w| std::ptr::eq(w.as_ptr(), std::sync::Arc::as_ptr(svg))) {
+            return;
+        }
+        self.svg_seen.push(std::sync::Arc::downgrade(svg));
+        for line in svg.report() {
+            self.report(format!("SVG document: {line}"));
+        }
+    }
+
+    /// A Lottie document is being drawn: its warnings, once, when document reports are on.
+    pub(crate) fn note_lottie(&mut self, lottie: &std::sync::Arc<crate::lottie::DrawingLottie>) {
+        if !self.documents || self.lottie_seen.iter().any(|w| std::ptr::eq(w.as_ptr(), std::sync::Arc::as_ptr(lottie))) {
+            return;
+        }
+        self.lottie_seen.push(std::sync::Arc::downgrade(lottie));
+        for line in lottie.report() {
+            self.report(format!("Lottie document: {line}"));
         }
     }
 }
@@ -111,11 +141,28 @@ pub struct SessionRenderOptions {
     /// are calibrated units under the camera (parallax 1). An unusable refraction is not drawn and
     /// is reported once ([`DrawingSession::take_reports`]). No C# equivalent.
     pub refraction: Option<crate::water::WaterRefraction>,
+    /// Device pixels per CSS pixel of the canvas (default 1): pass the frame's
+    /// `frame.info.pixel_ratio`. It sizes the strokes given in CSS pixels
+    /// ([`StrokeWidthMode::CssPixels`](crate::paths::StrokeWidthMode::CssPixels): a width of 1 is
+    /// one CSS pixel, two device pixels on a 2x screen) and changes nothing else. A value that is
+    /// not finite or not above 0 counts as 1. Not in C#.
+    pub pixel_ratio: f64,
+    /// The part of the canvas that matters, canvas pixels (default None: all of it): an element
+    /// that cannot draw inside it is not encoded at all, which saves the CPU and GPU work of what
+    /// is off screen (a big scrolling picture, one side of a wipe). The test is CONSERVATIVE -
+    /// nothing that would show inside the rectangle is ever left out: each element's cheap bounds
+    /// (its box through its transforms; a path's control points) grown by the reach of its
+    /// stroke, its effects, its groups' and layer's effects and the layer's (or the session's)
+    /// water, a reflection's mirror image included. Groups are not tested as a whole: their
+    /// children are, one by one. SVG and Lottie documents, stroke sets and particles are always
+    /// encoded. What is drawn outside the rectangle may be incomplete: use it with a clip, a
+    /// `target`, or for a canvas that shows only that part. Not in C#.
+    pub cull: Option<RectangleF>,
 }
 
 impl Default for SessionRenderOptions {
     fn default() -> SessionRenderOptions {
-        SessionRenderOptions { include_background: false, target: None, blend: SessionBlendMode::Normal, opacity: 1.0, paint: SessionPaint::AsAuthored, effects: true, authored_layers: Vec::new(), refraction: None }
+        SessionRenderOptions { include_background: false, target: None, blend: SessionBlendMode::Normal, opacity: 1.0, paint: SessionPaint::AsAuthored, effects: true, authored_layers: Vec::new(), refraction: None, pixel_ratio: 1.0, cull: None }
     }
 }
 
@@ -578,11 +625,39 @@ impl DrawingSession {
 
     /// Takes the problems found while drawing since the last call, each reported ONCE in the
     /// session's life: a layer matte ([`DrawingMask::from_layer`](crate::effects::DrawingMask::from_layer))
-    /// naming a layer the session does not have, for example (it covers nothing). Take them after
+    /// naming a layer the session does not have, for example (it covers nothing); the warnings of
+    /// the SVG and Lottie documents it draws when asked
+    /// ([`set_reports_document_warnings`](DrawingSession::set_reports_document_warnings)); and the
+    /// application's own ([`add_report`](DrawingSession::add_report)). Take them after
     /// drawing and show or log them beside the device's errors
     /// (`GpuContext::subscribe_errors`) - the WebGPU error queue itself takes only WebGPU's.
     pub fn take_reports(&self) -> Vec<String> {
         std::mem::take(&mut self.reports.borrow_mut().pending)
+    }
+
+    /// Adds a message of the application's own to the session's reports (Not in C#): it is
+    /// taken by [`take_reports`](DrawingSession::take_reports) with the session's own, and, like
+    /// them, a message already reported in the session's life is not reported again. Use it to
+    /// gather an application's drawing problems in the one place they are read.
+    pub fn add_report(&self, message: impl Into<String>) {
+        self.reports.borrow_mut().report(message.into());
+    }
+
+    /// True when the warnings of the SVG and Lottie documents the session draws are put into
+    /// its reports ([`set_reports_document_warnings`](DrawingSession::set_reports_document_warnings);
+    /// false by default). Not in C#.
+    pub fn reports_document_warnings(&self) -> bool {
+        self.reports.borrow().documents
+    }
+
+    /// Puts the warnings of every SVG and Lottie document the session draws into its reports
+    /// (true), or leaves them to [`DrawingSvg::report`](crate::svg::DrawingSvg::report) and
+    /// [`DrawingLottie::report`](crate::lottie::DrawingLottie::report) alone (false, THE
+    /// DEFAULT). When on, each document's lines are reported once, the first time it is drawn,
+    /// each prefixed "SVG document: " or "Lottie document: " - a document shared by several
+    /// shapes counts once. Not in C#.
+    pub fn set_reports_document_warnings(&mut self, value: bool) {
+        self.reports.get_mut().documents = value;
     }
 
     /// Draws the session WITH its background fill under the layers (C#'s `Render` as it is): the
@@ -631,7 +706,10 @@ impl DrawingSession {
             if draws_background {
                 scene.fill(Fill::NonZero, transform, &Brush::Solid(background.to_peniko(1.0)), None, &Rect::new(0.0, 0.0, cw as f64, ch as f64));
             }
-            self.render_layers(scene, transform, area, layers_alpha, options);
+            // The cull rectangle, grown by the session water's largest offset.
+            let water_reach = water.and_then(|w| w.refraction).map_or(0.0, |r| r.reach.ceil() as f64);
+            let cull = options.cull.map(|c| Rect::new(c.x as f64, c.y as f64, c.right() as f64, c.bottom() as f64).inflate(water_reach, water_reach));
+            self.render_layers(scene, transform, area, layers_alpha, options, cull);
             if water.is_some() {
                 scene.pop_layer();
             }
@@ -655,13 +733,13 @@ impl DrawingSession {
         }
         let camera = self.camera.as_ref().map_or(Affine::IDENTITY, |c| c.get_matrix(self.options.calibration_size, 1.0));
         let reports = &self.reports;
-        crate::effects::effect_sizes::record_water(scene, Some(refraction), None, transform * camera, self.time, &mut |m| reports.borrow_mut().report(m))
+        crate::effects::effect_sizes::record_water(scene, Some(refraction), None, transform * camera, Affine::IDENTITY, self.time, &mut |m| reports.borrow_mut().report(m))
     }
 
     /// The layers (each a group at its alpha, through its effects, mask and transition), all of
     /// them in one group at `opacity` when it is below 1; each layer's content under the options'
     /// look (paint and effects) unless the layer is one of the authored exceptions.
-    fn render_layers(&self, scene: &mut VectorScene, transform: Affine, area: Rect, opacity: f32, options: &SessionRenderOptions) {
+    fn render_layers(&self, scene: &mut VectorScene, transform: Affine, area: Rect, opacity: f32, options: &SessionRenderOptions, cull: Option<Rect>) {
         let outer_look = scene.look.take();
         let has_look = options.paint != SessionPaint::AsAuthored || !options.effects;
         let (cw, ch) = self.options.calibration_size;
@@ -673,7 +751,7 @@ impl DrawingSession {
                 scene.push_layer(BlendMode::default(), opacity, Affine::IDENTITY, &area);
             }
             for layer in &self.layers {
-                if !layer.is_visible() {
+                if !layer.is_visible_at(self.time) {
                     continue;
                 }
                 let alpha = (self.options.layer_opacity as f32 * layer.opacity()).round() / 255.0;
@@ -690,10 +768,11 @@ impl DrawingSession {
                 }
                 let c = camera.as_coeffs();
                 let drawing = shift * transform * camera;
-                let ctx = EncodeContext { time: self.time, area, scene_rotation: c[1].atan2(c[0]), layers: &self.layers, drawing, reports: &self.reports };
+                let pixel_ratio = if options.pixel_ratio.is_finite() && options.pixel_ratio > 0.0 { options.pixel_ratio } else { 1.0 };
+                let mut ctx = EncodeContext { time: self.time, area, scene_rotation: c[1].atan2(c[0]), layers: &self.layers, drawing, reports: &self.reports, pixel_ratio, cull: None };
                 // The look applies to the layer's group (its effects) and its content.
                 let exempt = options.authored_layers.iter().any(|n| n == layer.name());
-                scene.look = if has_look && !exempt { Some(SceneLook { paint: options.paint.clone(), effects: options.effects, drawing }) } else { None };
+                scene.look = if has_look && !exempt { Some(SceneLook { paint: options.paint.clone(), effects: options.effects, drawing, pixel_ratio }) } else { None };
                 // A layer is one group at its alpha - or, with effects, one group through its
                 // effects at that alpha (C#'s ApplyToLayer); its mask applies to its content first.
                 let effects = layer.effects().and_then(|e| EffectParams::new(&e, layer_transform, ctx.scene_rotation));
@@ -704,9 +783,10 @@ impl DrawingSession {
                 let paints_as_authored = scene.look.as_ref().map_or(true, |l| l.paint == SessionPaint::AsAuthored);
                 let finish = layer.surface_finish().filter(|_| paints_as_authored).and_then(|f| crate::effects::surface_finish::finish_params(&f, layer_transform));
                 // And the layer's water (Not in C#): its refraction and reflection, in the layer's
-                // drawing space (under every look and with effects off: they are passes).
+                // drawing space - or its own space, when they follow the layer (under every look
+                // and with effects off: they are passes).
                 let reports = &self.reports;
-                let water = crate::effects::effect_sizes::record_water(scene, layer.refraction(), layer.reflection(), drawing, self.time, &mut |m| reports.borrow_mut().report(m));
+                let water = crate::effects::effect_sizes::record_water(scene, layer.refraction(), layer.reflection(), drawing, layer.transform().to_matrix(), self.time, &mut |m| reports.borrow_mut().report(m));
                 let effects = match (effects, frame, finish, water) {
                     (None, None, None, None) => None,
                     (e, f, finish, water) => {
@@ -717,8 +797,19 @@ impl DrawingSession {
                         Some(p)
                     }
                 };
+                // The cull rectangle, grown by what the layer's group reads beyond each pixel.
+                ctx.cull = cull.map(|c| layer_cull(c, effects.as_ref()));
+                // A layer's blend mode (Not in C#): the layer's group put down in it - with
+                // effects, a group of the blend around the effects' group.
+                let blend = layer.blend_mode();
+                let blended_effects = blend != SessionBlendMode::Normal && effects.is_some();
                 match effects {
+                    Some(params) if blended_effects => {
+                        scene.push_layer(blend.to_peniko(), alpha, Affine::IDENTITY, &area);
+                        scene.push_effects(params, 1.0);
+                    }
                     Some(params) => scene.push_effects(params, alpha),
+                    None if blend != SessionBlendMode::Normal => scene.push_layer(blend.to_peniko(), alpha, Affine::IDENTITY, &area),
                     None => scene.push_layer(BlendMode::default(), alpha, Affine::IDENTITY, &area),
                 }
                 encode_masked(scene, layer.mask(), layer_transform, &ctx, true, &mut |scene| {
@@ -729,6 +820,9 @@ impl DrawingSession {
                     }
                 });
                 scene.pop_layer();
+                if blended_effects {
+                    scene.pop_layer();
+                }
                 scene.look = None;
                 if moved {
                     scene.pop_layer();
@@ -772,6 +866,24 @@ impl DrawingSession {
             overlay.render_at(scene, area, self.time);
         }
     }
+}
+
+/// What a layer's content is tested against (device pixels): `cull` grown by the reach of the
+/// layer's group - its blur, glow, shadow, bloom and refraction offset - and, with a reflection,
+/// the mirror image of that grown rectangle (what reflects into it), grown by the streak and the
+/// reflection water's largest offset, as a second rectangle.
+fn layer_cull(cull: Rect, effects: Option<&EffectParams>) -> CullArea {
+    let Some(params) = effects else { return CullArea { main: cull, mirror: None } };
+    let reach = params.reach();
+    let grown = cull.inflate(reach, reach);
+    let mirror = params.water.and_then(|w| w.reflection).map(|r| {
+        let corners = [[grown.x0, grown.y0], [grown.x1, grown.y0], [grown.x1, grown.y1], [grown.x0, grown.y1]];
+        let m = corners.map(|p| r.mirror(p));
+        let mirrored = m.iter().skip(1).fold(Rect::new(m[0][0], m[0][1], m[0][0], m[0][1]), |a, q| a.union_pt(kurbo::Point::new(q[0], q[1])));
+        let extra = (r.streak * 0.5 + r.reach) as f64 + reach + 1.0;
+        mirrored.inflate(extra, extra)
+    });
+    CullArea { main: grown, mirror }
 }
 
 #[cfg(test)]
@@ -824,5 +936,44 @@ mod tests {
         scene.reset();
         s.render_with(&mut scene, 1000, 1000, &SessionRenderOptions { include_background: true, target: Some(RectangleF::new(100.0, 200.0, 400.0, 200.0)), ..SessionRenderOptions::default() });
         assert_eq!(scene.item_kinds(), "CFLFPP", "clipped to the part");
+    }
+
+    #[test]
+    fn a_layer_is_drawn_only_inside_its_time_window() {
+        //Arrange
+        let mut s = session();
+        s.get_layer_mut("A").unwrap().set_time_window(Some(1.0), Some(2.0));
+        let mut seen = Vec::new();
+        //Act
+        for t in [0.5, 1.0, 1.999, 2.0] {
+            s.set_time(t);
+            let mut scene = VectorScene::new();
+            s.render(&mut scene, 100, 100);
+            seen.push(scene.item_kinds());
+        }
+        //Assert
+        assert_eq!(seen, vec!["", "LFP", "LFP", ""]);
+        let layer = s.get_layer("A").unwrap();
+        assert_eq!((layer.start_time(), layer.end_time()), (Some(1.0), Some(2.0)));
+        assert!(layer.is_visible_at(1.5) && !layer.is_visible_at(0.0));
+        assert!(DrawingLayer::new("B", Color::WHITE).is_visible_at(-1.0e9), "no window: always shown, as before");
+        let mut hidden = DrawingLayer::new("C", Color::WHITE).with_time_window(None, Some(5.0));
+        hidden.set_is_visible(false);
+        assert!(!hidden.is_visible_at(1.0), "a hidden layer is not shown inside its window");
+    }
+
+    #[test]
+    fn a_matte_layer_ignores_its_time_window_as_it_ignores_its_visibility() {
+        //Arrange
+        let mut s = session();
+        s.add_layer("Matte", Color::WHITE).set_time_window(Some(10.0), None);
+        s.draw_circle(50.0, 50.0, 5.0, None, None, true).unwrap();
+        s.get_layer_mut("A").unwrap().set_mask(Some(crate::effects::DrawingMask::from_layer("Matte", false)));
+        s.set_time(0.0);
+        let mut scene = VectorScene::new();
+        //Act
+        s.render(&mut scene, 100, 100);
+        //Assert
+        assert_eq!(scene.item_kinds(), "LFLFPP", "the matte layer itself is not drawn, but it still mattes A");
     }
 }

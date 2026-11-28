@@ -12,6 +12,7 @@ mod path_fill_rule;
 mod path_geometry;
 mod path_geometry_combine;
 mod path_geometry_queries;
+mod path_geometry_reduce;
 mod path_geometry_travel;
 mod path_measure;
 mod path_morph;
@@ -31,6 +32,8 @@ mod tests_dash;
 mod tests_fixed_width;
 #[cfg(test)]
 mod tests_queries;
+#[cfg(test)]
+mod tests_reduce;
 #[cfg(test)]
 mod tests_sketch;
 

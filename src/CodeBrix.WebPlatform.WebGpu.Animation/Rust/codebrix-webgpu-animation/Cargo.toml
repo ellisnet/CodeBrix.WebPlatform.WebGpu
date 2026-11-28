@@ -16,7 +16,7 @@
 # a name and version from a vendor folder as unchanging.
 [package]
 name = "codebrix-webgpu-animation"
-version = "1.8.0"
+version = "1.9.0"
 edition = "2021"
 publish = false
 description = "Real-time 2D animation for CodeBrix.WebPlatform frontends: the drawing session, shapes, text, gradient fills, fades, keyframe tracks bound to elements, layers and a camera, transforms, groups, layout, path draw-on, motion along paths, morphs, pictures and sprites from decoded pixels, the picture-pixels form and PNG and JPEG files, masks, blur, glow and drop-shadow effects, text blocks with reveals, staggers, captions from SRT and WebVTT and text along paths, path combining and path queries, combined bindings, rolling and trains along paths, formations, safe areas, SVG documents with per-part animation and their own SMIL and CSS animations, pixel planes with filters, transitions, noise, particles and motion blur (CPU), noise drawn on the GPU, particles drawn instanced, GPU frame operations and layer transitions, animated brush strokes, ownership maps, keyframe players and hard-edged masks (CPU), easing, colour ramps and timelines of CodeBrix.Imaging.Drawing.NoSkia, Lottie animations, render-time looks (session blend modes and opacity, line and flat paint, effects off) with soft wipes between renders, fixed-width strokes and sketched paths, painterly stroke sets of tens of thousands of brushstrokes in one GPU draw (brush tips, boil and flow, anchors, direction fields, stroke layouts, painting timelines, colour rules and perceptual mixing, colours picked live from a picture, a picture target or an application texture, a lit surface finish, a checkpoint cache of a still painting, stroke-level transitions), water (ripple fields as a function of time, a layer or session seen through water with glints and caustic light, a layer mirrored below a waterline, a caustics noise kind), drawn on the GPU by a stencil-then-cover renderer as a layer of the codebrix-webgpu canvas host."
@@ -27,7 +27,7 @@ repository = "https://github.com/ellisnet/CodeBrix.WebPlatform.WebGpu"
 # The canvas host this crate's renderer is a LAYER of (the frame, its clock time, the target's
 # format and blending convention), the GPU context, wgpu itself (re-exported by it), and the PNG
 # and JPEG decoders behind ImageSource::from_png and from_jpeg (decode_png, decode_jpeg).
-codebrix-webgpu = "=1.3.0"
+codebrix-webgpu = "=1.4.0"
 # Curves: flattening, stroke expansion with joins, caps, miter limit and dashes.
 kurbo = "=0.13.1"
 # The brush, gradient, image, blend and fill-rule vocabulary the renderer speaks (velato speaks

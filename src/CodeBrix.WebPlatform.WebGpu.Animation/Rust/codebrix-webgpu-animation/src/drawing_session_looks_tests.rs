@@ -210,6 +210,38 @@ fn a_fixed_width_line_style_keeps_one_line_weight_under_the_elements_scaling() {
 }
 
 #[test]
+fn a_css_pixel_line_style_is_width_times_the_pixel_ratio_whatever_the_zoom_or_the_elements_scaling() {
+    //Arrange: drawing units of 2 canvas pixels (100 x 100 drawn at 200 x 200), a camera zoomed
+    // 1.5 times, a circle and a scaled group; a 1-CSS-pixel line look at a 2x pixel ratio.
+    let mut s = session();
+    let mut group = DrawingGroup::new(None);
+    group.add(CircleShape::new(10.0, 10.0, 4.0, ShapeOptions { is_filled: true, ..ShapeOptions::default() }).unwrap());
+    s.draw_shape(DrawingShape::from(group).with_transform(DrawingTransform::IDENTITY.with_scale_xy(3.0, 7.0)));
+    let mut camera = crate::models::DrawingCamera::new();
+    camera.set_zoom(1.5).unwrap();
+    s.set_camera(Some(camera));
+    let look = |ratio: f64| SessionRenderOptions { paint: SessionPaint::Line(line_paint(1.0, StrokeWidthMode::CssPixels)), pixel_ratio: ratio, ..SessionRenderOptions::default() };
+    let record_at = |options: &SessionRenderOptions| {
+        let mut scene = VectorScene::new();
+        s.render_with(&mut scene, 200, 200, options);
+        scene
+    };
+    //Act
+    let two = record_at(&look(2.0));
+    let one = record_at(&look(1.0));
+    //Assert: every outline is expanded in the CSS pixel - recorded under the ratio's scale, its
+    // width in CSS pixels - so it is 2 device pixels wide at 2x and 1 at 1x.
+    for (scene, ratio) in [(&two, 2.0), (&one, 1.0)] {
+        let strokes: Vec<(kurbo::Affine, f64)> = scene.items.iter().filter_map(|i| if let Item::Stroke { transform, stroke, .. } = i { Some((*transform, scene.strokes[*stroke as usize].width)) } else { None }).collect();
+        assert_eq!(strokes.len(), 2);
+        for (t, w) in strokes {
+            assert_eq!(t, kurbo::Affine::scale(ratio), "expanded in the CSS pixel at {ratio}x");
+            assert_eq!(w, 1.0);
+        }
+    }
+}
+
+#[test]
 fn flat_mode_paints_a_gradient_its_average_colour_and_keeps_outlines_as_authored() {
     //Arrange: a black-to-white gradient rectangle and a red outline.
     let mut s = session();
@@ -498,4 +530,97 @@ fn one_session_can_be_wiped_between_two_looks() {
     SessionWipe::new(0.5, WipeEdge::Circle { center: PointF::new(50.0, 50.0) }, 10.0).render_sessions(&mut scene, 100, 100, (&s, &SessionRenderOptions::default()), (&s, &lines));
     //Assert: the circle filled under, outlined over.
     assert_eq!(scene.item_kinds(), "CCLFPPLLSPLFPPP");
+}
+
+// ---- BLEND MODES PER LAYER AND PER ELEMENT (Not in C#) ----
+
+/// The alpha of every recorded effects group, in order.
+fn effect_alphas(scene: &VectorScene) -> Vec<f32> {
+    scene.items.iter().filter_map(|i| if let Item::PushEffects { alpha, .. } = i { Some(*alpha) } else { None }).collect()
+}
+
+#[test]
+fn a_normal_element_or_layer_draws_as_before_with_no_extra_group() {
+    //Arrange
+    let mut s = session();
+    let before = record(&s, &SessionRenderOptions::default());
+    //Act
+    s.get_layer_mut("A").unwrap().set_blend_mode(SessionBlendMode::Normal);
+    let id = s.layers()[0].get_elements()[0].id();
+    s.find_element_mut(id).unwrap().set_blend_mode(SessionBlendMode::Normal);
+    let after = record(&s, &SessionRenderOptions::default());
+    //Assert
+    assert_eq!(s.get_layer("A").unwrap().blend_mode(), SessionBlendMode::Normal);
+    assert_eq!(crate::models::DrawingLayer::new("B", Color::WHITE).blend_mode(), SessionBlendMode::Normal);
+    assert_eq!(DrawingShape::from(CircleShape::new(1.0, 1.0, 1.0, ShapeOptions::default()).unwrap()).blend_mode(), SessionBlendMode::Normal);
+    assert_eq!(after.item_kinds(), before.item_kinds());
+    assert_eq!(groups(&after), groups(&before));
+}
+
+#[test]
+fn a_blended_element_is_one_group_in_its_mode_at_its_opacity_and_drawn_inside_at_full_opacity() {
+    //Arrange
+    let mut s = session();
+    s.draw_shape(DrawingShape::from(CircleShape::new(30.0, 30.0, 10.0, ShapeOptions { is_filled: true, ..ShapeOptions::default() }).unwrap()).with_blend_mode(SessionBlendMode::Multiply).with_opacity(0.5));
+    //Act
+    let scene = record(&s, &SessionRenderOptions::default());
+    //Assert: the layer's group, the first circle, the blend's group around the second.
+    assert_eq!(scene.item_kinds(), "LFLFPP");
+    let g = groups(&scene);
+    assert_eq!(g[1], (BlendMode::new(Mix::Multiply, Compose::SrcOver), 0.5));
+    let last = scene.brushes.last().unwrap();
+    assert!(matches!(last, peniko::Brush::Solid(c) if (c.components[3] - 1.0).abs() < 1e-6), "drawn at full opacity inside: {last:?}");
+}
+
+#[test]
+fn a_blended_element_with_effects_puts_the_blend_group_around_the_effects_group() {
+    //Arrange
+    let mut s = session();
+    let id = s.draw_rectangle(10.0, 10.0, 20.0, 20.0, None, None, true, 0.0).unwrap();
+    let e = s.find_element_mut(id).unwrap();
+    e.set_effects(Some(DrawingEffects::blur(4.0).unwrap()));
+    e.set_blend_mode(SessionBlendMode::Screen);
+    e.set_opacity(0.25);
+    //Act
+    let scene = record(&s, &SessionRenderOptions::default());
+    //Assert
+    assert_eq!(scene.item_kinds(), "LFLEFPPP");
+    assert_eq!(groups(&scene)[1], (BlendMode::new(Mix::Screen, Compose::SrcOver), 0.25));
+    assert_eq!(effect_alphas(&scene), vec![1.0], "the effects at full opacity inside the blend");
+}
+
+#[test]
+fn a_blended_faded_group_folds_its_fade_into_the_blend_group() {
+    //Arrange
+    let mut s = session();
+    let mut group = DrawingGroup::new(None);
+    group.add(RectangleShape::new(10.0, 10.0, 20.0, 20.0, RectangleShapeOptions { is_filled: true, ..RectangleShapeOptions::default() }).unwrap());
+    group.add(RectangleShape::new(20.0, 20.0, 20.0, 20.0, RectangleShapeOptions { is_filled: true, ..RectangleShapeOptions::default() }).unwrap());
+    s.draw_shape(DrawingShape::from(group).with_opacity(0.5).with_blend_mode(SessionBlendMode::Darken));
+    //Act
+    let scene = record(&s, &SessionRenderOptions::default());
+    //Assert: one group (the blend's, at 0.5) - not a fade group inside it.
+    assert_eq!(scene.item_kinds(), "LFLFFPP");
+    assert_eq!(groups(&scene)[1], (BlendMode::new(Mix::Darken, Compose::SrcOver), 0.5));
+}
+
+#[test]
+fn a_blended_layer_puts_its_own_group_down_in_its_mode_and_around_its_effects_with_them() {
+    //Arrange
+    let mut s = session();
+    s.get_layer_mut("A").unwrap().set_blend_mode(SessionBlendMode::Add);
+    //Act
+    let plain = record(&s, &SessionRenderOptions::default());
+    s.get_layer_mut("A").unwrap().set_effects(Some(DrawingEffects::glow(5.0, Color::WHITE, 1.0).unwrap()));
+    s.get_layer_mut("A").unwrap().set_opacity(0.5);
+    let with_effects = record(&s, &SessionRenderOptions::default());
+    //Assert
+    assert_eq!(plain.item_kinds(), "LFP", "no extra group: the layer's own is blended");
+    assert_eq!(groups(&plain)[0].0, BlendMode::new(Mix::Normal, Compose::Plus));
+    assert_eq!(with_effects.item_kinds(), "LEFPP");
+    assert_eq!(groups(&with_effects)[0].0, BlendMode::new(Mix::Normal, Compose::Plus));
+    assert!((groups(&with_effects)[0].1 - 0.5).abs() < 0.01, "the layer's alpha on the blend's group");
+    assert_eq!(effect_alphas(&with_effects), vec![1.0]);
+    let built = crate::models::DrawingLayer::new("B", Color::WHITE).with_blend_mode(SessionBlendMode::Lighten);
+    assert_eq!(built.blend_mode(), SessionBlendMode::Lighten);
 }

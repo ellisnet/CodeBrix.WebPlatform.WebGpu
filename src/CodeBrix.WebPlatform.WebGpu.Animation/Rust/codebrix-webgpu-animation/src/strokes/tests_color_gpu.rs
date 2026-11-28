@@ -16,7 +16,7 @@ use crate::rendering::picture_target::{read_too_early, set_canvas_frame};
 use crate::rendering::{PictureTarget, VectorScene};
 use crate::shapes::{BrushStrokesOptions, BrushStrokesShape, ImageShape};
 use crate::strokes::stroke_color::SourceTexels;
-use crate::strokes::stroke_color_gpu::mirror::{decode, encode, linear_to_oklab, oklab_to_linear, picked_colour, pickup_points, source_texel, tap_offsets};
+use crate::strokes::stroke_color_gpu::mirror::{decode, encode, linear_to_oklab, oklab_to_linear, picked_colour, picked_colour_weighted, pickup_points, source_texel, tap_offsets};
 use crate::strokes::stroke_color_gpu::{colour_words, PICK_BROKEN, PICK_MIX_OF_TWO, PICK_ON, PICK_PALETTE};
 use crate::strokes::{BrushStrokeRecord, BrushStrokeSet, StrokeColor, StrokeColorSource, StrokePickup};
 use crate::{Color, DrawingSession, DrawingSessionOptions, PointF};
@@ -170,6 +170,25 @@ fn the_picked_colour_is_the_alpha_weighted_mean_then_the_rules_then_the_oklab_mi
     assert!(close(encode(b), [expected[0], expected[1], expected[2]], 5e-4), "{:?} vs {expected:?}", encode(b));
     assert!((alpha_b - 0.625).abs() < 1e-6, "the source's alpha mixed towards 1 by the own weight");
     assert!(close(empty, own, 1e-6) && alpha_empty == 0.0, "an empty source: nothing painted");
+}
+
+#[test]
+fn a_strokes_own_weight_scales_the_pickups_and_weight_one_is_the_pickups_exactly() {
+    //Arrange
+    let own = decode([0.9, 0.1, 0.1]);
+    let texels = [[0.2, 0.5, 0.8, 1.0], [0.0, 0.0, 0.0, 0.0]];
+    let base = StrokePickup { taps: 3, ..pickup(StrokeColorSource::Picture(picture())) };
+    let half = StrokePickup { own_weight: 0.5, ..base.clone() };
+    let full = StrokePickup { own_weight: 1.0, ..base.clone() };
+    let quarter = StrokePickup { own_weight: 0.25, ..base.clone() };
+    //Act + Assert
+    assert_eq!(picked_colour_weighted(own, &texels, SourceTexels::SrgbStraight, &half, 7, 1.0), picked_colour(own, &texels, SourceTexels::SrgbStraight, &half, 7), "weight 1: the pickup's own weight, bit for bit");
+    assert_eq!(picked_colour_weighted(own, &texels, SourceTexels::SrgbStraight, &half, 7, 0.5), picked_colour(own, &texels, SourceTexels::SrgbStraight, &quarter, 7), "0.5 of 0.5 is 0.25");
+    assert_eq!(picked_colour_weighted(own, &texels, SourceTexels::SrgbStraight, &full, 7, 0.25), picked_colour(own, &texels, SourceTexels::SrgbStraight, &quarter, 7), "a pickup of 1: the stroke's weight itself");
+    assert_eq!(picked_colour_weighted(own, &texels, SourceTexels::SrgbStraight, &half, 7, 0.0), picked_colour(own, &texels, SourceTexels::SrgbStraight, &base, 7), "weight 0: the picked colour alone");
+    assert_eq!(picked_colour_weighted(own, &texels, SourceTexels::SrgbStraight, &base, 7, 1.0), picked_colour(own, &texels, SourceTexels::SrgbStraight, &base, 7), "a pickup of 0 gives no stroke its own colour");
+    let (rgb, alpha) = picked_colour_weighted(own, &[[0.0; 4]], SourceTexels::SrgbStraight, &full, 7, 1.0);
+    assert!(close(rgb, own, 1e-5) && alpha == 1.0, "own weight 1 in full over an empty source: the own colour, opaque");
 }
 
 #[test]

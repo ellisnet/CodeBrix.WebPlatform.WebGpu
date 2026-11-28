@@ -12,6 +12,7 @@ use crate::frames::{DrawOptions, GraphicsFrame, RenderPass};
 use crate::lighting::local_lights::select_local_lights;
 use crate::lighting::EnvironmentMap;
 use crate::models::pbr_data::{needs_shader_encoding, PbrFrameUniforms};
+use crate::models::SunShadowNumbers;
 use crate::models::SunShadowMap;
 use crate::pipelines::{ColorTargetOptions, DepthOptions, DepthPreset, GpuRenderPipeline};
 use crate::presentation::{HeadlessRenderTarget, TargetFormats};
@@ -19,7 +20,8 @@ use crate::resources::{BindingEntry, BindingLayoutEntry, GpuBindGroup, GpuBindGr
 use crate::shaders::WaterShaders;
 use crate::visibility::CullVolume;
 use crate::water::scene_capture::SceneCapture;
-use crate::water::water_math::{caustic_phases, detail_phases, detail_waves, draw_refusal, sheen_phases, WaterUniforms, WATER_SLOT_SIZE, WATER_UNIFORM_SIZE};
+use crate::water::water_math::{caustic_flow, caustic_phases, detail_phases_flowing, detail_waves, draw_refusal, sheen_flow_rate, sheen_phases_flowing, WaterUniforms, WATER_SLOT_SIZE, WATER_UNIFORM_SIZE};
+use crate::water::water_mask::WaterMask;
 use crate::water::water_surface::WaterSurface;
 use crate::water::OpenWaterWaves;
 
@@ -37,7 +39,7 @@ pub struct WaterFrame<'a> {
     /// open-water waves are exact functions of it (pause and seek are exact).
     pub time: f64,
     /// The sun's shadow map ([`crate::ModelRenderer::sun_shadow_map`]); None for no shadow on the
-    /// water.
+    /// water. With the sun's cascades the water picks between them as the models do.
     pub sun_shadow: Option<&'a SunShadowMap>,
 }
 
@@ -77,14 +79,18 @@ pub struct WaterRenderStats {
 /// (`bottom * exp(-absorption * path) + scattering * (1 - exp(-turbidity * path))`, the path from
 /// the surface to the bottom found in the captured depth); with CAUSTICS on the bottom
 /// ([`crate::WaterCaustics`], seen through the water only); a Fresnel REFLECTION (Schlick, F0
-/// 0.02) of the environment (its prefiltered cube at the look's roughness, or the hemisphere) and,
+/// 0.02) of the environment (its prefiltered cube at the look's roughness, or the hemisphere; or
+/// the renderer's [`WaterRenderer::set_reflection_environment`] whatever the ambient) and,
 /// with `screen_reflections` (on by default), of what is ON SCREEN (a 24-step march of the
 /// reflected ray against the captured depth, 4 refinement steps); HIGHLIGHTS of the key light
 /// (GGX; HDR, so they bloom) and of up to 16 local lights; the sun's SHADOW on the glints and
-/// caustics through [`WaterFrame::sun_shadow`]; an optional thin-film SHEEN
+/// caustics through [`WaterFrame::sun_shadow`] (with the sun's cascades, the one each point's
+/// depth picks, blended as the model shader blends them); an optional thin-film SHEEN
 /// ([`crate::WaterSheen`], off by default); and a SOFT SHORE where the water is thin. The surface
 /// writes its depth (things drawn after it - blended parts, glows, particles - are hidden under
-/// it or drawn over it correctly).
+/// it or drawn over it correctly). A [`crate::WaterMask`] shapes it inside its rectangle (no
+/// colour or depth where it leaves no water, a soft edge); [`WaterSurface::flow`] carries the
+/// detail ripples, caustics and sheen downstream.
 ///
 /// MULTISAMPLING: 1 or 4 samples (pipelines by the pass's [`TargetFormats`]); the capture reads
 /// the resolved colour and depth sample 0, and the water's fragment stage runs once per pixel.
@@ -96,19 +102,23 @@ pub struct WaterRenderStats {
 /// other things are not reflected and fall back to the environment; the water is not reflected
 /// in itself; the march can show a ragged edge where an object's reflection is cut off); NO
 /// SPOTLIGHT SHADOWS ON THE WATER (only the sun's); A SURFACE, NOT A FLUID (no splashes, spray,
-/// foam, breaking waves or flow around objects); the camera must be ABOVE the water (no
+/// foam, breaking waves or flow around objects: a flow carries the detail of the whole surface
+/// one way); LEVEL WATER ONLY (no slopes or falls); the camera must be ABOVE the water (no
 /// underwater view); refraction is a screen-space shift (just outside the screen's edge nothing
 /// is seen through the water; strong slopes can show a seam where the fallback switches);
 /// caustics are seen only through the water; the plane is finite.
 pub struct WaterRenderer {
     context: GraphicsContext,
     shader: GpuShader,
+    cascaded_shader: Option<GpuShader>,
     capture: SceneCapture,
     uniform_layout: GpuBindGroupLayout,
     capture_layout: GpuBindGroupLayout,
     scene_layout: GpuBindGroupLayout,
+    masked_scene_layout: GpuBindGroupLayout,
     shadow_layout: GpuBindGroupLayout,
-    pipelines: HashMap<TargetFormats, GpuRenderPipeline>,
+    cascaded_shadow_layout: GpuBindGroupLayout,
+    pipelines: HashMap<PipelineKey, GpuRenderPipeline>,
     uniforms: GpuBuffer,
     uniform_group: GpuBindGroup,
     capacity: u64,
@@ -120,9 +130,23 @@ pub struct WaterRenderer {
     placeholder_field: GpuTexture,
     placeholder_sun: wgpu::TextureView,
     capture_group: Option<(u64, GpuBindGroup)>,
-    scene_groups: Vec<(Option<EnvironmentMap>, Option<wgpu::TextureView>, GpuBindGroup)>,
-    shadow_groups: Vec<(wgpu::TextureView, GpuBindGroup)>,
+    scene_groups: Vec<KeptSceneGroup>,
+    shadow_groups: Vec<(wgpu::TextureView, bool, GpuBindGroup)>,
+    reflection_environment: Option<EnvironmentMap>,
     stats: WaterRenderStats,
+}
+
+/// A scene bind group kept with what it binds: the cube's environment, the field's view, the mask's view.
+type KeptSceneGroup = (Option<EnvironmentMap>, Option<wgpu::TextureView>, Option<wgpu::TextureView>, GpuBindGroup);
+
+/// What a surface pipeline is made for: the target's formats, whether it is shaped by a mask
+/// (`fs_masked`, the mask in the scene group) and whether it reads the sun's cascades (the
+/// cascaded shader, a 2D-array sun map).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct PipelineKey {
+    pub(crate) formats: TargetFormats,
+    pub(crate) masked: bool,
+    pub(crate) cascaded: bool,
 }
 
 impl WaterRenderer {
@@ -142,9 +166,14 @@ impl WaterRenderer {
             ],
         );
         let scene_layout = context.create_bind_group_layout(Some("water scene"), &[BindingLayoutEntry::texture(0, fragment).with_view_dimension(wgpu::TextureViewDimension::Cube), BindingLayoutEntry::texture(1, both)]);
+        let masked_scene_layout = context.create_bind_group_layout(Some("water scene masked"), &[BindingLayoutEntry::texture(0, fragment).with_view_dimension(wgpu::TextureViewDimension::Cube), BindingLayoutEntry::texture(1, both), BindingLayoutEntry::texture(2, fragment)]);
         let shadow_layout = context.create_bind_group_layout(
             Some("water sun shadow"),
             &[BindingLayoutEntry::texture(0, fragment).with_sample_type(wgpu::TextureSampleType::Depth), BindingLayoutEntry::sampler(1, fragment).with_sampler_type(wgpu::SamplerBindingType::Comparison)],
+        );
+        let cascaded_shadow_layout = context.create_bind_group_layout(
+            Some("water sun cascades"),
+            &[BindingLayoutEntry::texture(0, fragment).with_sample_type(wgpu::TextureSampleType::Depth).with_view_dimension(wgpu::TextureViewDimension::D2Array), BindingLayoutEntry::sampler(1, fragment).with_sampler_type(wgpu::SamplerBindingType::Comparison)],
         );
         let capacity = 4;
         let uniforms = context.create_buffer(capacity * WATER_SLOT_SIZE, wgpu::BufferUsages::UNIFORM, Some("water uniforms"))?;
@@ -178,11 +207,14 @@ impl WaterRenderer {
         Ok(WaterRenderer {
             context: context.clone(),
             shader,
+            cascaded_shader: None,
             capture: SceneCapture::new(context),
             uniform_layout,
             capture_layout,
             scene_layout,
+            masked_scene_layout,
             shadow_layout,
+            cascaded_shadow_layout,
             pipelines: HashMap::new(),
             uniforms,
             uniform_group,
@@ -197,8 +229,26 @@ impl WaterRenderer {
             capture_group: None,
             scene_groups: Vec::new(),
             shadow_groups: Vec::new(),
+            reflection_environment: None,
             stats: WaterRenderStats::default(),
         })
+    }
+
+    /// The environment the water REFLECTS, whatever the lighting's ambient mode (Not in C#): a
+    /// sky in the water under [`AmbientLighting::Hemisphere`] without a second lighting. Its
+    /// prefiltered cube is sampled at the look's roughness, turned and scaled by the lighting's
+    /// `environment_rotation` and `environment_intensity`, for the off-screen part of the
+    /// reflection (the screen-space part is unchanged). Under the hemisphere the water's own light
+    /// (what its scattering colour is lit by) stays the hemisphere's; under
+    /// [`AmbientLighting::Environment`] it is read from this map too (the water binds one cube).
+    /// None (the default): the lighting's environment, or the hemisphere.
+    pub fn set_reflection_environment(&mut self, environment: Option<&EnvironmentMap>) {
+        self.reflection_environment = environment.cloned();
+    }
+
+    /// The environment set by [`WaterRenderer::set_reflection_environment`].
+    pub fn reflection_environment(&self) -> Option<&EnvironmentMap> {
+        self.reflection_environment.as_ref()
     }
 
     /// The context.
@@ -221,7 +271,8 @@ impl WaterRenderer {
 
     /// Draws one surface into `pass` (a pass on the target captured this frame). Err without a
     /// capture this frame, for a pass on another target, or for a grid outside 1 to
-    /// [`WaterSurface::MAX_GRID`]. One draw call of `6 * grid * grid` vertices.
+    /// [`WaterSurface::MAX_GRID`]. One draw call of `6 * grid * grid` vertices (with a mask, its
+    /// pixels where the mask leaves no water stop after one read of the mask).
     pub fn draw(&mut self, pass: &mut RenderPass<'_>, frame: &WaterFrame<'_>, surface: &WaterSurface) -> Result<(), GraphicsException> {
         if let Some(message) = draw_refusal(self.capture.captured_frame(), pass.frame_id(), self.capture.is_target(pass.target())) {
             return Err(GraphicsException::new(message));
@@ -232,14 +283,20 @@ impl WaterRenderer {
         self.start_frame(pass.frame_id());
         let defaults = SceneLighting::default();
         let lighting = frame.lighting.unwrap_or(&defaults);
-        let environment = match (lighting.ambient, &lighting.environment) {
+        let ambient = match (lighting.ambient, &lighting.environment) {
             (AmbientLighting::Environment, Some(environment)) => Some(environment.clone()),
             (AmbientLighting::Environment, None) => Some(self.context.default_environment()?),
             (AmbientLighting::Hemisphere, _) => None,
         };
+        let reflection = self.reflection_environment.clone();
+        let (ambient_levels, reflection_levels) = environment_levels(ambient.as_ref().map(EnvironmentMap::prefiltered_mip_levels), reflection.as_ref().map(EnvironmentMap::prefiltered_mip_levels));
+        // One cube is bound: the reflection environment when there is one, else the ambient's.
+        let environment = reflection.or(ambient);
         let target = pass.target().clone();
         let picture = PackTarget { format: target.color_format(), width: target.width(), height: target.height() };
-        let (uniforms, local_lights) = pack_uniforms(frame.camera, lighting, environment.as_ref().map(EnvironmentMap::prefiltered_mip_levels), surface, frame.time, frame.sun_shadow, picture);
+        let sun_numbers = frame.sun_shadow.map(SunShadowMap::numbers);
+        let (uniforms, local_lights) = pack_uniforms(frame.camera, lighting, ambient_levels, reflection_levels, surface.mask.as_ref().map(WaterMask::shader_threshold), surface, frame.time, sun_numbers.as_ref(), picture);
+        let key = PipelineKey { formats: target.formats(), masked: surface.mask.is_some(), cascaded: uniforms.extra[0] > 1 };
         if self.slot >= self.capacity {
             // Work already recorded keeps the old buffer (the web backend's Drop does nothing).
             self.capacity *= 2;
@@ -250,10 +307,10 @@ impl WaterRenderer {
         let offset = self.slot * WATER_SLOT_SIZE;
         self.uniforms.write_value(&uniforms, offset)?;
         self.slot += 1;
-        let pipeline = self.pipeline(target.formats())?;
+        let pipeline = self.pipeline(key)?;
         let capture_group = self.capture_group();
-        let scene_group = self.scene_group(environment.as_ref(), surface.field.as_ref().map(|field| &field.view));
-        let shadow_group = self.shadow_group(frame.sun_shadow.map(|sun| &sun.view));
+        let scene_group = self.scene_group(environment.as_ref(), surface.field.as_ref().map(|field| &field.view), surface.mask.as_ref().map(|mask| &mask.view));
+        let shadow_group = self.shadow_group(frame.sun_shadow.map(|sun| &sun.view), key.cascaded);
         pass.set_pipeline(&pipeline);
         pass.set_bind_group_with_offsets(0, &self.uniform_group, &[offset as u32]);
         pass.set_bind_group(1, &capture_group);
@@ -273,7 +330,8 @@ impl WaterRenderer {
     }
 
     /// The pipelines made so far: one per target format combination and sample count for the
-    /// surface, plus the capture's (at most two: 1 and 4 samples).
+    /// surface (and again for masked surfaces and for the sun's cascades), plus the capture's (at
+    /// most two: 1 and 4 samples).
     pub fn pipeline_count(&self) -> usize {
         self.pipelines.len() + self.capture.pipeline_count()
     }
@@ -286,24 +344,34 @@ impl WaterRenderer {
         }
     }
 
-    fn pipeline(&mut self, formats: TargetFormats) -> Result<GpuRenderPipeline, GraphicsException> {
-        if let Some(pipeline) = self.pipelines.get(&formats) {
+    fn pipeline(&mut self, key: PipelineKey) -> Result<GpuRenderPipeline, GraphicsException> {
+        if let Some(pipeline) = self.pipelines.get(&key) {
             return Ok(pipeline.clone());
         }
+        let formats = key.formats;
+        if key.cascaded && self.cascaded_shader.is_none() {
+            self.cascaded_shader = Some(self.context.create_shader(WaterShaders::SURFACE_CASCADED, Some("water surface cascaded")));
+        }
+        let shader = if key.cascaded { self.cascaded_shader.as_ref().expect("made above") } else { &self.shader };
+        let scene_layout = if key.masked { &self.masked_scene_layout } else { &self.scene_layout };
+        let shadow_layout = if key.cascaded { &self.cascaded_shadow_layout } else { &self.shadow_layout };
         let mut builder = self
             .context
-            .create_render_pipeline(&self.shader)
-            .with_label(&format!("water surface {formats}"))
+            .create_render_pipeline(shader)
+            .with_label(&format!("water surface {formats}{}{}", if key.masked { " masked" } else { "" }, if key.cascaded { " cascaded" } else { "" }))
             .with_color_target(formats.color, ColorTargetOptions::default())
-            .with_bind_group_layouts(&[&self.uniform_layout, &self.capture_layout, &self.scene_layout, &self.shadow_layout])
+            .with_bind_group_layouts(&[&self.uniform_layout, &self.capture_layout, scene_layout, shadow_layout])
             .with_sample_count(formats.sample_count);
+        if key.masked {
+            builder = builder.with_fragment_entry("fs_masked", None);
+        }
         if let Some(depth) = formats.depth {
             // The water hides what lies under it and is hidden by what is above it; it writes its
             // depth, so things drawn after it sort against it.
             builder = builder.with_depth(depth, DepthOptions { preset: DepthPreset::ReadWriteLessEqual, ..DepthOptions::default() });
         }
         let pipeline = builder.build()?;
-        self.pipelines.insert(formats, pipeline.clone());
+        self.pipelines.insert(key, pipeline.clone());
         Ok(pipeline)
     }
 
@@ -323,31 +391,41 @@ impl WaterRenderer {
         group
     }
 
-    fn scene_group(&mut self, environment: Option<&EnvironmentMap>, field: Option<&wgpu::TextureView>) -> GpuBindGroup {
+    fn scene_group(&mut self, environment: Option<&EnvironmentMap>, field: Option<&wgpu::TextureView>, mask: Option<&wgpu::TextureView>) -> GpuBindGroup {
         let environment_id = environment.map(EnvironmentMap::id);
-        if let Some((_, _, group)) = self.scene_groups.iter().find(|(e, f, _)| e.as_ref().map(EnvironmentMap::id) == environment_id && f.as_ref() == field) {
+        if let Some((_, _, _, group)) = self.scene_groups.iter().find(|(e, f, m, _)| e.as_ref().map(EnvironmentMap::id) == environment_id && f.as_ref() == field && m.as_ref() == mask) {
             return group.clone();
         }
         let cube = environment.map_or(&self.placeholder_cube, |e| e.prefiltered());
         let field_view = field.unwrap_or(self.placeholder_field.view());
-        let group = self.context.create_bind_group(&self.scene_layout, Some("water scene"), &[BindingEntry::for_texture_view(0, cube), BindingEntry::for_texture_view(1, field_view)]);
+        let group = match mask {
+            None => self.context.create_bind_group(&self.scene_layout, Some("water scene"), &[BindingEntry::for_texture_view(0, cube), BindingEntry::for_texture_view(1, field_view)]),
+            Some(mask) => self.context.create_bind_group(&self.masked_scene_layout, Some("water scene masked"), &[BindingEntry::for_texture_view(0, cube), BindingEntry::for_texture_view(1, field_view), BindingEntry::for_texture_view(2, mask)]),
+        };
         if self.scene_groups.len() >= KEPT_GROUPS {
             self.scene_groups.remove(0);
         }
-        self.scene_groups.push((environment.cloned(), field.cloned(), group.clone()));
+        self.scene_groups.push((environment.cloned(), field.cloned(), mask.cloned(), group.clone()));
         group
     }
 
-    fn shadow_group(&mut self, sun: Option<&wgpu::TextureView>) -> GpuBindGroup {
+    /// The sun's group: the map's 2D view (or the placeholder), or with `cascaded` a 2D-array view
+    /// of every layer of the map's texture (made once per map: kept by the map's own view).
+    fn shadow_group(&mut self, sun: Option<&wgpu::TextureView>, cascaded: bool) -> GpuBindGroup {
         let view = sun.unwrap_or(&self.placeholder_sun).clone();
-        if let Some((_, group)) = self.shadow_groups.iter().find(|(kept, _)| *kept == view) {
+        if let Some((_, _, group)) = self.shadow_groups.iter().find(|(kept, c, _)| *kept == view && *c == cascaded) {
             return group.clone();
         }
-        let group = self.context.create_bind_group(&self.shadow_layout, Some("water sun shadow"), &[BindingEntry::for_texture_view(0, &view), BindingEntry::for_sampler(1, &self.comparison_sampler)]);
+        let group = if cascaded {
+            let layers = view.texture().create_view(&wgpu::TextureViewDescriptor { label: Some("water sun cascades"), dimension: Some(wgpu::TextureViewDimension::D2Array), ..wgpu::TextureViewDescriptor::default() });
+            self.context.create_bind_group(&self.cascaded_shadow_layout, Some("water sun cascades"), &[BindingEntry::for_texture_view(0, &layers), BindingEntry::for_sampler(1, &self.comparison_sampler)])
+        } else {
+            self.context.create_bind_group(&self.shadow_layout, Some("water sun shadow"), &[BindingEntry::for_texture_view(0, &view), BindingEntry::for_sampler(1, &self.comparison_sampler)])
+        };
         if self.shadow_groups.len() >= KEPT_GROUPS {
             self.shadow_groups.remove(0);
         }
-        self.shadow_groups.push((view, group.clone()));
+        self.shadow_groups.push((view, cascaded, group.clone()));
         group
     }
 }
@@ -364,9 +442,20 @@ pub(crate) struct PackTarget {
     pub(crate) height: u32,
 }
 
+/// The prefiltered mip counts the packing is given, from the ambient environment's (None: the
+/// hemisphere) and the reflection environment's (None: none set): ONE cube is bound - the
+/// reflection environment when there is one - so under the environment ambient the water's own
+/// light is read from it too; the reflection's count is passed on as it is.
+pub(crate) fn environment_levels(ambient: Option<u32>, reflection: Option<u32>) -> (Option<u32>, Option<u32>) {
+    (ambient.map(|levels| reflection.unwrap_or(levels)), reflection)
+}
+
 /// The uniforms of one surface's draw, and how many local lights it highlights. `environment`
-/// is the environment's prefiltered mip count (None: the hemispheric ambient).
-pub(crate) fn pack_uniforms(camera: &Camera, lighting: &SceneLighting, environment: Option<u32>, surface: &WaterSurface, time: f64, sun: Option<&SunShadowMap>, target: PackTarget) -> (WaterUniforms, usize) {
+/// is the bound cube's prefiltered mip count under the environment ambient (None: the
+/// hemispheric ambient); `reflection` the reflection environment's (None: none set); `mask` the
+/// surface's mask threshold as the shader uses it (None: no mask).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pack_uniforms(camera: &Camera, lighting: &SceneLighting, environment: Option<u32>, reflection: Option<u32>, mask: Option<f32>, surface: &WaterSurface, time: f64, sun: Option<&SunShadowNumbers>, target: PackTarget) -> (WaterUniforms, usize) {
     let aspect = if target.height == 0 { 1.0 } else { target.width as f32 / target.height as f32 };
     let mut frame = PbrFrameUniforms::new(camera, lighting, aspect);
     let view_projection = frame.view_projection;
@@ -401,17 +490,25 @@ pub(crate) fn pack_uniforms(camera: &Camera, lighting: &SceneLighting, environme
     u.absorption = look.absorption.extend(look.turbidity);
     u.scattering = look.scattering_color.extend(look.refraction);
     u.look = Vec4::new(look.reflectivity, look.roughness, look.sun_glint, look.soft_shore);
+    // A flow that is not finite does not flow.
+    let flow = if surface.flow.is_finite() { surface.flow } else { glam::Vec2::ZERO };
+    u.flow = Vec4::new(flow.x, flow.y, 0.0, 0.0);
     if let Some(caustics) = look.caustics {
         u.caustics = Vec4::new(caustics.strength.max(0.0), caustics.scale, caustics.focus, caustics.depth_fade);
         let (a, b) = caustic_phases(time, caustics.speed);
-        u.caustic_phase = Vec4::new(a, b, 0.0, 0.0);
+        let moved = caustic_flow(flow, caustics.scale, time);
+        u.caustic_phase = Vec4::new(a, b, moved.shifts.x, moved.shifts.y);
+        u.flow.z = moved.fraction.x;
+        u.flow.w = moved.fraction.y;
+        u.extra[1] = moved.cells[0] as u32;
+        u.extra[2] = moved.cells[1] as u32;
     }
     let detail = &surface.detail;
     u.detail_waves = detail_waves(detail.strength, detail.wavelength, detail.seed);
-    u.detail_phase = detail_phases(&u.detail_waves, detail.speed, time);
+    u.detail_phase = detail_phases_flowing(&u.detail_waves, detail.speed, flow, time);
     let sheen = &look.sheen;
     u.sheen = Vec4::new(sheen.strength.max(0.0), sheen.scale, sheen.slope_gain, sheen.height_gain);
-    let (drift, band) = sheen_phases(time, sheen.drift);
+    let (drift, band) = sheen_phases_flowing(time, sheen.drift, sheen_flow_rate(flow, sheen.scale));
     u.sheen_phase = Vec4::new(drift, band, 0.0, 0.0);
     let shadowed = look.receives_shadows && sun.is_some();
     u.switches = [look.screen_reflections as u32, look.local_light_highlights as u32, shadowed as u32, needs_shader_encoding(target.format) as u32];
@@ -428,6 +525,20 @@ pub(crate) fn pack_uniforms(camera: &Camera, lighting: &SceneLighting, environme
         u.counts[2] = sun.softness.clamp(1, 5);
         u.sun_matrix = sun.matrix;
         u.sun_shadow = Vec4::new(sun.strength.clamp(0.0, 1.0), sun.texel, sun.depth_bias, sun.normal_offset);
+        if let Some(cascades) = sun.cascades.filter(|c| c.count > 1) {
+            u.extra[0] = cascades.count.min(4);
+            u.sun_view = cascades.view_axis.extend(cascades.blend);
+            u.sun_splits = Vec4::from_array(cascades.splits);
+            u.sun_biases = Vec4::from_array(cascades.depth_biases);
+            u.sun_offsets = Vec4::from_array(cascades.normal_offsets);
+            u.sun_cascade_matrices = cascades.matrices;
+        }
+    }
+    if let Some(threshold) = mask {
+        u.mask = Vec4::new(1.0, threshold, 0.0, 0.0);
+    }
+    if let Some(levels) = reflection {
+        u.reflection = Vec4::new(1.0, lighting.environment_intensity, levels.saturating_sub(1) as f32, lighting.environment_rotation);
     }
     (u, local_count)
 }

@@ -53,7 +53,9 @@
 //! It draws on the GPU with its own renderer (stencil-then-cover with 4x MSAA, on kurbo, with
 //! blend, gradient and style pieces taken from vello) as a LAYER of the codebrix-webgpu canvas
 //! host: [`AnimationLayer`](rendering::AnimationLayer) draws over what the layers below drew -
-//! a 3D scene of the Graphics package, for example - into the frame it is handed.
+//! a 3D scene of the Graphics package, for example - into the frame it is handed. Without a
+//! canvas, [`OffscreenRenderer`](rendering::OffscreenRenderer) draws the same into a texture of
+//! the application's own (Not in C#).
 //!
 //! PIXEL PLANES ([`planes`]: float planes and images with filters, blends, transitions, noise,
 //! particles and motion blur, computed on the CPU - one thread - with NoSkia's values), with GPU
@@ -118,6 +120,8 @@ mod drawing_session_paint;
 mod drawing_session_wipe;
 #[cfg(test)]
 mod drawing_session_looks_tests;
+#[cfg(test)]
+mod drawing_session_cull_tests;
 mod drawing_session_options;
 mod drawing_session_painting;
 mod drawing_session_transitions;

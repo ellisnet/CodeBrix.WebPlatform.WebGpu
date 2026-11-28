@@ -1,24 +1,32 @@
 // The particle system's step (Not in C#): one invocation per particle slot. Slots in the spawn
 // range are given new particles, every other live particle is moved and aged, and each slot's
-// glow-instance record (the glow shader's layout) is written for drawing. The arithmetic is the
-// crate's effects/particle_math.rs (the same formulas; the random bits exactly): keep the two in
-// step.
+// glow-instance record (the glow shader's layout, the velocity in the pulse's yzw) is written for
+// drawing. The spawn range is shared by the emitters that spawn in this step: each has a record
+// with its first order in the range (the prefix sum of the counts before it) and its count, and a
+// spawned slot finds its emitter by a binary search of those firsts. The arithmetic is the crate's
+// effects/particle_math.rs (the same formulas; the random bits exactly): keep the two in step.
 
 struct Params {
-    emitter: vec4<f32>,
-    previous: vec4<f32>,
-    direction: vec4<f32>,
-    shape: vec4<f32>,
-    speed_life: vec4<f32>,
     forces: vec4<f32>,
     size: vec4<f32>,
     birth: vec4<f32>,
     death: vec4<f32>,
     step: vec4<f32>,
-    // First slot, count, index of the first spawned particle, seed.
+    // First slot, count (of every emitter together), index of the first spawned particle, seed.
     spawn: vec4<u32>,
-    // x: capacity.
+    // x: capacity; y: the emitter records of this step (those that spawn).
     counts: vec4<u32>,
+};
+
+struct Emitter {
+    // xyz: the centre now; w: the shape (0 point, 1 sphere, 2 box, 3 cone).
+    center: vec4<f32>,
+    previous: vec4<f32>,
+    direction: vec4<f32>,
+    shape: vec4<f32>,
+    speed_life: vec4<f32>,
+    // x: the emitter's first order in the spawn range; y: its count.
+    spawn: vec4<u32>,
 };
 
 struct Particle {
@@ -35,6 +43,7 @@ struct Instance {
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(2) var<storage, read_write> instances: array<Instance>;
+@group(0) @binding(3) var<storage, read> emitters: array<Emitter>;
 
 const PI: f32 = 3.14159265358979;
 const TAU: f32 = 6.28318530718;
@@ -70,18 +79,18 @@ fn direction_in_cone(axis: vec3<f32>, spread: f32, u: f32, v: f32) -> vec3<f32> 
     return frame.t * (sin_theta * cos(phi)) + frame.b * (sin_theta * sin(phi)) + axis * cos_theta;
 }
 
-fn sample_position(center: vec3<f32>, axis: vec3<f32>, r0: f32, r1: f32, r2: f32) -> vec3<f32> {
-    let kind = u32(p.emitter.w + 0.5);
+fn sample_position(e: Emitter, center: vec3<f32>, axis: vec3<f32>, r0: f32, r1: f32, r2: f32) -> vec3<f32> {
+    let kind = u32(e.center.w + 0.5);
     switch kind {
         case 1u: {
-            return center + direction_in_cone(vec3<f32>(0.0, 1.0, 0.0), PI, r0, r1) * (max(p.shape.x, 0.0) * pow(r2, 1.0 / 3.0));
+            return center + direction_in_cone(vec3<f32>(0.0, 1.0, 0.0), PI, r0, r1) * (max(e.shape.x, 0.0) * pow(r2, 1.0 / 3.0));
         }
         case 2u: {
-            return center + vec3<f32>(2.0 * r0 - 1.0, 2.0 * r1 - 1.0, 2.0 * r2 - 1.0) * max(p.shape.xyz, vec3<f32>(0.0));
+            return center + vec3<f32>(2.0 * r0 - 1.0, 2.0 * r1 - 1.0, 2.0 * r2 - 1.0) * max(e.shape.xyz, vec3<f32>(0.0));
         }
         case 3u: {
             let frame = basis(axis);
-            let distance = max(p.shape.x, 0.0) * sqrt(r0);
+            let distance = max(e.shape.x, 0.0) * sqrt(r0);
             let angle = TAU * r1;
             return center + (frame.t * cos(angle) + frame.b * sin(angle)) * distance;
         }
@@ -101,15 +110,37 @@ fn integrate(position: vec3<f32>, velocity: vec3<f32>, dt: f32) -> Motion {
     return Motion(position + v * dt, v);
 }
 
-fn spawn(index: u32, order: u32, count: u32, dt: f32) -> Particle {
+// The emitter record of the spawn order `order`: the last whose first order is at most `order`
+// (records with no particles are never written, so it is the one whose range holds it).
+fn find_emitter(order: u32) -> u32 {
+    var low = 0u;
+    var high = p.counts.y;
+    loop {
+        if (low >= high) {
+            break;
+        }
+        let middle = (low + high) / 2u;
+        if (emitters[middle].spawn.x <= order) {
+            low = middle + 1u;
+        } else {
+            high = middle;
+        }
+    }
+    return max(low, 1u) - 1u;
+}
+
+fn spawn(index: u32, total_order: u32, dt: f32) -> Particle {
+    let e = emitters[find_emitter(total_order)];
+    let order = total_order - e.spawn.x;
+    let count = e.spawn.y;
     let seed = p.spawn.w;
     let birth = (f32(order) + 0.5) / f32(max(count, 1u));
-    let center = mix(p.previous.xyz, p.emitter.xyz, birth);
-    let axis = p.direction.xyz;
-    let position = sample_position(center, axis, random(seed, index, 0u), random(seed, index, 1u), random(seed, index, 2u));
-    let direction = direction_in_cone(axis, p.direction.w, random(seed, index, 3u), random(seed, index, 4u));
-    let velocity = direction * (p.speed_life.x + (p.speed_life.y - p.speed_life.x) * random(seed, index, 5u));
-    let lifetime = max(p.speed_life.z + (p.speed_life.w - p.speed_life.z) * random(seed, index, 6u), 1e-3);
+    let center = mix(e.previous.xyz, e.center.xyz, birth);
+    let axis = e.direction.xyz;
+    let position = sample_position(e, center, axis, random(seed, index, 0u), random(seed, index, 1u), random(seed, index, 2u));
+    let direction = direction_in_cone(axis, e.direction.w, random(seed, index, 3u), random(seed, index, 4u));
+    let velocity = direction * (e.speed_life.x + (e.speed_life.y - e.speed_life.x) * random(seed, index, 5u));
+    let lifetime = max(e.speed_life.z + (e.speed_life.w - e.speed_life.z) * random(seed, index, 6u), 1e-3);
     let remaining = dt * (1.0 - birth);
     let motion = integrate(position, velocity, remaining);
     return Particle(vec4<f32>(motion.position, remaining), vec4<f32>(motion.velocity, lifetime));
@@ -127,7 +158,7 @@ fn step_particles(@builtin(global_invocation_id) id: vec3<u32>) {
     let order = (slot + capacity - p.spawn.x) % capacity;
     let count = p.spawn.y;
     if (order < count) {
-        particle = spawn(p.spawn.z + order, order, count, dt);
+        particle = spawn(p.spawn.z + order, order, dt);
     } else if (particle.velocity_life.w > 0.0 && particle.position_age.w < particle.velocity_life.w) {
         let motion = integrate(particle.position_age.xyz, particle.velocity_life.xyz, dt);
         particle.position_age = vec4<f32>(motion.position, particle.position_age.w + dt);
@@ -146,7 +177,7 @@ fn step_particles(@builtin(global_invocation_id) id: vec3<u32>) {
         let x = select(1.0, clamp((1.0 - t) / max(fade, 1e-6), 0.0, 1.0), fade > 0.0);
         instance.position_size = vec4<f32>(particle.position_age.xyz, size);
         instance.color = vec4<f32>(color, clamp(opacity, 0.0, 1.0) * x * x * (3.0 - 2.0 * x));
-        instance.pulse = vec4<f32>(1.0, 0.0, 0.0, 0.0);
+        instance.pulse = vec4<f32>(1.0, particle.velocity_life.xyz);
     } else {
         instance.position_size = vec4<f32>(0.0);
         instance.color = vec4<f32>(0.0);

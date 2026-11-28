@@ -28,6 +28,9 @@ pub enum BoundTrack {
     /// shadow's colour - without a keyframe track (for example `ColorMix::mix(a, b, ease(t),
     /// ColorInterpolation::Oklab)`).
     ColorFn(Rc<dyn Fn(f64) -> Color>),
+    /// A bool function of the time (no C# equivalent): binds wherever a bool track binds - a
+    /// layer's IsVisible - without a keyframe track (for example `|t| t < 2.0`).
+    BoolFn(Rc<dyn Fn(f64) -> bool>),
 }
 
 /// A binding's value at one time.
@@ -56,13 +59,19 @@ impl BoundTrack {
         BoundTrack::ColorFn(Rc::new(value_at))
     }
 
+    /// A bool function of the time (no C# equivalent; it must not read a clock: the time is
+    /// given) - see [`BoundTrack::BoolFn`].
+    pub fn bool_fn(value_at: impl Fn(f64) -> bool + 'static) -> BoundTrack {
+        BoundTrack::BoolFn(Rc::new(value_at))
+    }
+
     /// "float", "point", "color" or "bool" (for messages).
     pub(crate) fn kind_name(&self) -> &'static str {
         match self {
             BoundTrack::Float(_) | BoundTrack::FloatFn(_) => "float",
             BoundTrack::Point(_) | BoundTrack::PointFn(_) => "point",
             BoundTrack::Color(_) | BoundTrack::ColorFn(_) => "color",
-            BoundTrack::Bool(_) => "bool",
+            BoundTrack::Bool(_) | BoundTrack::BoolFn(_) => "bool",
         }
     }
 
@@ -76,6 +85,7 @@ impl BoundTrack {
             BoundTrack::FloatFn(f) => Some(BoundValue::Float(f(seconds))),
             BoundTrack::PointFn(f) => Some(BoundValue::Point(f(seconds))),
             BoundTrack::ColorFn(f) => Some(BoundValue::Color(f(seconds))),
+            BoundTrack::BoolFn(f) => Some(BoundValue::Bool(f(seconds))),
         }
     }
 }
@@ -114,6 +124,7 @@ impl fmt::Debug for BoundTrack {
             BoundTrack::FloatFn(_) => f.write_str("FloatFn"),
             BoundTrack::PointFn(_) => f.write_str("PointFn"),
             BoundTrack::ColorFn(_) => f.write_str("ColorFn"),
+            BoundTrack::BoolFn(_) => f.write_str("BoolFn"),
         }
     }
 }

@@ -79,8 +79,33 @@ pub struct TextBlockShape {
     stroke_placement: TextStrokePlacement,
     merge_overlaps: bool,
     /// Each cluster's merged outline at the block's place (MergeOverlaps), made once and shared
-    /// by clones and pieces (same layout, same place).
+    /// by clones and pieces (same layout, same place). Made when merging is switched on (and by
+    /// [`get_outline`](TextBlockShape::get_outline)), never while the block is recorded.
     merged: Rc<RefCell<HashMap<usize, Rc<BezPath>>>>,
+    /// The outline batches an outlined or merged block recorded last, kept while what it shows
+    /// is unchanged (the paths are not assembled again, their geometry keys not hashed again).
+    batches: RefCell<Option<Rc<OutlineBatches>>>,
+}
+
+/// An outlined or merged block's batches for one reveal state: fully shown clusters in one
+/// batch per paint, partly shown ones alone, each path with its geometry key.
+#[derive(Debug)]
+struct OutlineBatches {
+    /// The clusters shown (and how much) when they were assembled.
+    shown: Vec<RevealedCluster>,
+    /// How many merged outlines the shared map held then (a later one changes the paths).
+    merged: usize,
+    /// Whether merging was on.
+    merge_overlaps: bool,
+    /// Per batch: the run it paints with (None: the block's paint), its reveal alpha, its path
+    /// in block-placed drawing units and the path's geometry key.
+    batches: Vec<(Option<usize>, f32, BezPath, u64)>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Counters of the work a block does (tests): merged outlines made, batches assembled.
+    pub(crate) static TEXT_BLOCK_WORK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 impl PartialEq for TextBlockShape {
@@ -164,7 +189,7 @@ impl TextBlockShape {
         let total = layout.cluster_count();
         let first = first.min(total);
         let count = count.map_or(total - first, |c| c.min(total - first));
-        Ok(TextBlockShape { layout, x, y, stroke_style, color, fill_color, fill, is_filled, first, count, reveal_unit: TextUnit::Character, reveal: f32::INFINITY, reveal_softness: 0.0, stroke_placement: TextStrokePlacement::Center, merge_overlaps: false, merged: Rc::new(RefCell::new(HashMap::new())) })
+        Ok(TextBlockShape { layout, x, y, stroke_style, color, fill_color, fill, is_filled, first, count, reveal_unit: TextUnit::Character, reveal: f32::INFINITY, reveal_softness: 0.0, stroke_placement: TextStrokePlacement::Center, merge_overlaps: false, merged: Rc::new(RefCell::new(HashMap::new())), batches: RefCell::new(None) })
     }
 
     /// The laid-out text it draws.
@@ -237,9 +262,13 @@ impl TextBlockShape {
         self.merge_overlaps
     }
 
-    /// Sets whether overlapping contours are merged.
+    /// Sets whether overlapping contours are merged. Switching it on merges the outlines of
+    /// every cluster of its range now (shared with its clones and pieces), so drawing never does.
     pub fn set_merge_overlaps(&mut self, merge: bool) {
         self.merge_overlaps = merge;
+        if merge {
+            self.merge_range();
+        }
     }
 
     /// The first cluster it draws (a piece's; 0 for a whole block).
@@ -439,6 +468,9 @@ impl TextBlockShape {
     /// the non-zero rule - merged per glyph when [`merge_overlaps`](TextBlockShape::merge_overlaps)
     /// is set (C# `GetOutline`).
     pub fn get_outline(&self) -> PathGeometry {
+        if self.merge_overlaps {
+            self.merge_range();
+        }
         let mut path = BezPath::new();
         for shown in self.get_revealed_clusters() {
             self.append_cluster(&mut path, shown.cluster);
@@ -462,24 +494,71 @@ impl TextBlockShape {
         }
     }
 
-    /// One cluster's outline at the block's place: the font's contours, or the merged ones.
-    fn append_cluster(&self, path: &mut BezPath, index: usize) {
-        let cluster = &self.layout.clusters()[index];
-        if !self.merge_overlaps {
-            cluster.append_outline(path, self.x, self.y);
-            return;
-        }
-        let merged = self.merged.borrow().get(&index).cloned();
-        let merged = merged.unwrap_or_else(|| {
+    /// Merges the outline of every cluster with ink in its range that the shared map does not
+    /// hold yet.
+    fn merge_range(&self) {
+        let clusters = self.layout.clusters();
+        let mut merged = self.merged.borrow_mut();
+        for cluster in &clusters[self.first..self.first + self.count] {
+            if !cluster.has_ink() || merged.contains_key(&cluster.index) {
+                continue;
+            }
             let mut own = BezPath::new();
             cluster.append_outline(&mut own, self.x, self.y);
             let geometry = PathGeometry::from_bez_path(own, PathFillRule::NonZero);
             let simplified = geometry.simplify(Some(TextBlockShape::MERGE_TOLERANCE)).unwrap_or(geometry);
-            let shared = Rc::new(simplified.bez_path().clone());
-            self.merged.borrow_mut().insert(index, shared.clone());
-            shared
-        });
-        path.extend(merged.iter());
+            merged.insert(cluster.index, Rc::new(simplified.bez_path().clone()));
+            #[cfg(test)]
+            TEXT_BLOCK_WORK.with(|w| w.set((w.get().0 + 1, w.get().1)));
+        }
+    }
+
+    /// One cluster's outline at the block's place: the font's contours, or the merged ones (the
+    /// font's when the merged one has not been made: it is never made here).
+    fn append_cluster(&self, path: &mut BezPath, index: usize) {
+        let cluster = &self.layout.clusters()[index];
+        if self.merge_overlaps {
+            if let Some(merged) = self.merged.borrow().get(&index) {
+                path.extend(merged.iter());
+                return;
+            }
+        }
+        cluster.append_outline(path, self.x, self.y);
+    }
+
+    /// The outline batches for the clusters shown now: the ones kept from the last recording
+    /// when it showed the same, else assembled (C#'s batches: fully shown clusters in one batch
+    /// per paint, partly shown ones alone) and kept.
+    fn outline_batches(&self, shown: Vec<RevealedCluster>) -> Rc<OutlineBatches> {
+        let merged = if self.merge_overlaps { self.merged.borrow().len() } else { 0 };
+        if let Some(kept) = self.batches.borrow().as_ref() {
+            if kept.shown == shown && kept.merged == merged && kept.merge_overlaps == self.merge_overlaps {
+                return kept.clone();
+            }
+        }
+        #[cfg(test)]
+        TEXT_BLOCK_WORK.with(|w| w.set((w.get().0, w.get().1 + 1)));
+        let clusters = self.layout.clusters();
+        let mut batches: Vec<(Option<usize>, f32, BezPath, u64)> = Vec::new();
+        for s in &shown {
+            let cluster = &clusters[s.cluster];
+            let key = self.own_run(cluster).map(|_| cluster.run_index());
+            if s.alpha >= 1.0 {
+                if let Some(batch) = batches.iter_mut().find(|b| b.1 >= 1.0 && b.0 == key) {
+                    self.append_cluster(&mut batch.2, s.cluster);
+                    continue;
+                }
+            }
+            let mut path = BezPath::new();
+            self.append_cluster(&mut path, s.cluster);
+            batches.push((key, s.alpha, path, 0));
+        }
+        for batch in &mut batches {
+            batch.3 = VectorScene::shape_key(&batch.2);
+        }
+        let kept = Rc::new(OutlineBatches { shown, merged, merge_overlaps: self.merge_overlaps, batches });
+        *self.batches.borrow_mut() = Some(kept.clone());
+        kept
     }
 
     /// The run a cluster paints with when it paints differently from the block (C#'s
@@ -495,7 +574,8 @@ impl TextBlockShape {
     /// outline or merging draws each glyph from the renderer's geometry cache; an outlined or
     /// merged block draws its clusters' outlines as paths: an OUTSIDE outline in a layer of its
     /// own with the glyphs cut out of it (destination-out), then the fill; a CENTRED outline over
-    /// the fill.
+    /// the fill. The outlined or merged block's batches are kept while the reveal shows the same
+    /// clusters, and recorded under their kept geometry keys.
     pub(crate) fn encode(&self, scene: &mut VectorScene, transform: Affine, layer_color: Color, opacity: f32, ctx: &EncodeContext<'_>) {
         let color = self.color.unwrap_or(layer_color);
         let shown = self.get_revealed_clusters();
@@ -524,23 +604,10 @@ impl TextBlockShape {
             return;
         }
         // Fully shown clusters in one batch per paint (C#'s batches), partly shown ones alone.
-        let mut batches: Vec<(Option<usize>, f32, BezPath)> = Vec::new();
-        for s in &shown {
-            let cluster = &clusters[s.cluster];
-            let key = self.own_run(cluster).map(|_| cluster.run_index());
-            if s.alpha >= 1.0 {
-                if let Some(batch) = batches.iter_mut().find(|b| b.1 >= 1.0 && b.0 == key) {
-                    self.append_cluster(&mut batch.2, s.cluster);
-                    continue;
-                }
-            }
-            let mut path = BezPath::new();
-            self.append_cluster(&mut path, s.cluster);
-            batches.push((key, s.alpha, path));
-        }
-        for (key, alpha, path) in &batches {
+        let batches = self.outline_batches(shown);
+        for (key, alpha, path, geometry) in &batches.batches {
             let run = key.map(|k| &self.layout.runs()[k]);
-            self.paint(scene, transform, path, run, color, opacity * alpha, ctx);
+            self.paint(scene, transform, path, *geometry, run, color, opacity * alpha, ctx);
         }
     }
 
@@ -558,26 +625,27 @@ impl TextBlockShape {
         }
     }
 
-    /// C#'s `Paint` for one batch of glyph outlines in block-placed drawing units.
+    /// C#'s `Paint` for one batch of glyph outlines in block-placed drawing units, `key` the
+    /// path's geometry key.
     #[allow(clippy::too_many_arguments)]
-    fn paint(&self, scene: &mut VectorScene, transform: Affine, path: &BezPath, run: Option<&TextRunDescriptor>, color: Color, alpha: f32, ctx: &EncodeContext<'_>) {
+    fn paint(&self, scene: &mut VectorScene, transform: Affine, path: &BezPath, key: u64, run: Option<&TextRunDescriptor>, color: Color, alpha: f32, ctx: &EncodeContext<'_>) {
         let run_color = run.and_then(|r| r.color()).unwrap_or(color);
         let stroke_color = if run.is_some() && !self.is_filled { run_color } else { color };
         let outside = self.stroke_style.is_some() && self.stroke_placement == TextStrokePlacement::Outside;
         if let (true, Some(style)) = (outside, &self.stroke_style) {
             scene.push_layer(BlendMode::default(), 1.0, Affine::IDENTITY, &ctx.area);
-            scene.stroke_with_style(style, transform, ctx.drawing, &Brush::Solid(stroke_color.to_peniko(alpha)), None, path);
+            scene.stroke_with_style_keyed(style, transform, ctx.stroke_reference(Some(style)), &Brush::Solid(stroke_color.to_peniko(alpha)), None, path, key);
             scene.push_layer(Compose::DestOut, 1.0, Affine::IDENTITY, &ctx.area);
-            scene.fill(Fill::NonZero, transform, &Brush::Solid(Color::WHITE.to_peniko(1.0)), None, path);
+            scene.fill_keyed(Fill::NonZero, transform, &Brush::Solid(Color::WHITE.to_peniko(1.0)), None, path, key);
             scene.pop_layer();
             scene.pop_layer();
         }
         if self.is_filled {
             let (brush, _) = self.fill_brush(run, color, alpha);
-            scene.fill(Fill::NonZero, transform, &brush, None, path);
+            scene.fill_keyed(Fill::NonZero, transform, &brush, None, path, key);
         }
         if let (false, Some(style)) = (outside, &self.stroke_style) {
-            scene.stroke_with_style(style, transform, ctx.drawing, &Brush::Solid(stroke_color.to_peniko(alpha)), None, path);
+            scene.stroke_with_style_keyed(style, transform, ctx.stroke_reference(Some(style)), &Brush::Solid(stroke_color.to_peniko(alpha)), None, path, key);
         }
     }
 }

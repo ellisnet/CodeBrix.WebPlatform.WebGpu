@@ -30,7 +30,7 @@ pub use brush_stroke_shape::{BrushStrokeShape, BrushStrokeShapeOptions};
 pub use brush_strokes_shape::{BrushStrokesOptions, BrushStrokesShape};
 pub use drawing_group::DrawingGroup;
 pub use drawing_shape::{DrawingShape, ShapeKind};
-pub(crate) use drawing_shape::{encode_masked, EncodeContext};
+pub(crate) use drawing_shape::{encode_masked, CullArea, EncodeContext};
 pub use image_shape::{ImageShape, ImageShapeOptions};
 pub use noise_shape::{NoiseShape, NoiseShapeOptions};
 pub use ownership_shape::{OwnershipShape, OwnershipShapeOptions};

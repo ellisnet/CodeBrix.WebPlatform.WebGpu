@@ -6,8 +6,10 @@
 pub struct EffectShaders;
 
 impl EffectShaders {
-    /// The glow layer's camera-facing instanced quads (also how particles are drawn): entry
-    /// points `vs_main` and `fs_main`.
+    /// The glow layer's instanced quads (also how particles are drawn): vertex entry points
+    /// `vs_main` (camera-facing), `vs_lit` (camera-facing and lit, for lit particles) and
+    /// `vs_oriented` (fixed in the scene by a second instance stream of axes), and the fragment
+    /// entry point `fs_main`.
     pub const GLOW: &'static str = include_str!("wgsl/glow.wgsl");
     /// Bloom's steps: `vs_main` (a full-screen triangle) with `fs_bright`, `fs_down` and `fs_up`.
     pub const BLOOM: &'static str = include_str!("wgsl/bloom.wgsl");
@@ -25,7 +27,9 @@ mod tests {
 
     #[test]
     fn every_effect_shader_has_its_entry_points() {
-        assert!(EffectShaders::GLOW.contains("fn vs_main(") && EffectShaders::GLOW.contains("fn fs_main("));
+        for entry in ["fn vs_main(", "fn vs_lit(", "fn vs_oriented(", "fn fs_main("] {
+            assert!(EffectShaders::GLOW.contains(entry), "{entry}");
+        }
         for entry in ["fn vs_main(", "fn fs_bright(", "fn fs_down(", "fn fs_up("] {
             assert!(EffectShaders::BLOOM.contains(entry));
         }

@@ -38,7 +38,13 @@
 //! a stroke-level transition between two sets with a spread, its fraction bound to a track; and
 //! WATER (the marked WATER A2 block): a layer seen through a ripple field with glints and caustic
 //! light, a layer mirrored below a waterline, height pictures as water (decoded pixels, a picture
-//! target, an application texture) and a session seen through water.
+//! target, an application texture) and a session seen through water; and DRAWING WITHOUT A
+//! CANVAS (the marked OFFSCREEN block): a session drawn by the OffscreenRenderer into a texture of
+//! the application's own; and (the marked ANI-A, ANI-B, ANI-C and GPU TIMING AND LIVE PICTURE
+//! blocks) document reports, a bool function binding, layer time windows and blend modes, element
+//! blend modes, edge detail options, CSS-pixel strokes, the cull rectangle and the culled wipe,
+//! water that follows its layer, point reduction, per-stroke own weights, the GPU timing and a
+//! live picture, with the geometry cache's budget and content-sized targets (ANI-E lines).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -725,6 +731,246 @@ mod water_a2 {
 }
 // ---- WATER A2 END ----
 
+// ---- OFFSCREEN BEGIN: the renderer without a canvas (OffscreenRenderer drawing a session into a
+// texture of the application's own, on the application's encoder, cleared by the application) ----
+mod offscreen {
+    use codebrix_webgpu::{wgpu, GpuContext};
+    use codebrix_webgpu_animation::rendering::{OffscreenRenderer, RenderStats, VectorScene};
+    use codebrix_webgpu_animation::{Color, DrawingSession, DrawingSessionOptions};
+
+    /// One still of a session at 2 s, drawn into a 320 x 180 sRGB texture that the application
+    /// then reads or samples; the draw's counters.
+    pub(super) fn still(context: &GpuContext) -> Result<RenderStats, String> {
+        let (width, height) = (320, 180);
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let texture = context.device().create_texture(&wgpu::TextureDescriptor {
+            label: Some("still"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut session = DrawingSession::new(DrawingSessionOptions::default());
+        session.draw_rectangle(40.0, 40.0, 400.0, 200.0, None, Some(Color::from_rgb(214, 96, 120)), true, 24.0)?;
+        session.set_time(2.0);
+        let mut scene = VectorScene::new();
+        session.render_with_background(&mut scene, width, height);
+        let mut renderer = OffscreenRenderer::new(context, format);
+        // The defaults: canvas-sized internal targets, the 32 MiB geometry cache (ANI-E).
+        let _ = (renderer.content_sized_targets(), renderer.geometry_cache_budget());
+        let mut encoder = context.device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("still") });
+        {
+            // The renderer loads the view: the application clears it first, as the host clears a canvas.
+            let _clear = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("still clear"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        }
+        let stats = renderer.render(context, &mut encoder, &view, width, height, &scene);
+        context.queue().submit([encoder.finish()]);
+        let _ = renderer.format();
+        Ok(stats)
+    }
+}
+// ---- OFFSCREEN END ----
+
+// ---- ANI-A BEGIN: the session's document reports and messages of its own, a bool function
+// binding, a layer's time window and blend mode, an element's blend mode, edge detail options,
+// strokes in CSS pixels (a path and the line look) with the frame's pixel ratio, the cull rectangle
+// and the culled wipe, water that follows its layer. ----
+mod ani_a {
+    use codebrix_webgpu::RendererHandle;
+    use codebrix_webgpu_animation::models::{AnimatedProperty, BindingTarget, BoundTrack, DrawingLayer};
+    use codebrix_webgpu_animation::painting::{DetailMap, EdgeDetailOptions};
+    use codebrix_webgpu_animation::paths::{PathGeometry, PathStrokeStyle, PathStrokeStyleOptions, StrokeWidthMode};
+    use codebrix_webgpu_animation::planes::DrawingPlaneImage;
+    use codebrix_webgpu_animation::rendering::AnimationLayer;
+    use codebrix_webgpu_animation::shapes::{CircleShape, DrawingShape, PathShape, ShapeOptions};
+    use codebrix_webgpu_animation::water::{RippleField, RippleOptions, WaterReflection, WaterRefraction, WaterSource};
+    use codebrix_webgpu_animation::{Color, DrawingSession, DrawingSessionOptions, LinePaint, PointF, RectangleF, SessionBlendMode, SessionPaint, SessionRenderOptions, SessionWipe, WipeEdge};
+
+    fn options() -> DrawingSessionOptions {
+        DrawingSessionOptions { calibration_size: (1280, 720), layer_opacity: 255, ..Default::default() }
+    }
+
+    /// A session with a timed, blended, water-carrying layer and a blended element.
+    fn session(hairline: &PathStrokeStyle) -> Result<DrawingSession, String> {
+        let mut session = DrawingSession::new(options());
+        session.set_reports_document_warnings(true);
+        let _on: bool = session.reports_document_warnings();
+        session.add_report("frontend: a message of its own");
+        let field = RippleField::new(RectangleF::new(0.0, 0.0, 1280.0, 720.0), RippleOptions::default())?;
+        {
+            let layer = session.add_layer("Probe", Color::WHITE);
+            layer.set_time_window(Some(0.0), Some(10.0));
+            layer.set_blend_mode(SessionBlendMode::Multiply);
+            let _ = (layer.start_time(), layer.end_time(), layer.is_visible_at(1.0), layer.blend_mode());
+            // The water placed in the layer's own space, so the layer's transform carries it.
+            layer.set_refraction(Some(WaterRefraction { follows_layer: true, ..WaterRefraction::new(WaterSource::Ripples(field.clone())) }))?;
+            layer.set_reflection(Some(WaterReflection { follows_layer: true, water: Some(WaterSource::Ripples(field)), ..WaterReflection::new(300.0) }))?;
+        }
+        let _other = DrawingLayer::new("Other", Color::WHITE).with_time_window(None, Some(2.0)).with_blend_mode(SessionBlendMode::Screen);
+        session.animations_mut().bind(BindingTarget::layer("Probe"), AnimatedProperty::IsVisible, BoundTrack::bool_fn(|t| t < 5.0))?;
+        let id = session.draw_circle(50.0, 50.0, 10.0, None, None, true)?;
+        if let Some(e) = session.find_element_mut(id) {
+            e.set_blend_mode(SessionBlendMode::Screen);
+            let _ = e.blend_mode();
+        }
+        let shape = CircleShape::new(200.0, 200.0, 40.0, ShapeOptions { is_filled: true, ..Default::default() })?;
+        session.draw_shape(DrawingShape::from(shape).with_blend_mode(SessionBlendMode::Add));
+        session.draw_shape(PathShape::with_style(PathGeometry::circle(PointF::new(640.0, 360.0), 120.0), hairline.clone(), Some(Color::WHITE), None, None));
+        let picture = DrawingPlaneImage::new(16, 16)?;
+        let _detail = DetailMap::from_picture_edges_with(&picture, &EdgeDetailOptions { smoothing: 1.0, full_detail_percentile: 0.9 })?;
+        let _ = EdgeDetailOptions::default();
+        Ok(session)
+    }
+
+    /// The session drawn culled to the canvas at the frame's pixel ratio, again as a line drawing
+    /// in CSS pixels, and a culled wipe into a second session.
+    pub(super) fn layers() -> Result<Vec<RendererHandle>, String> {
+        let hairline = PathStrokeStyle::new(1.0, PathStrokeStyleOptions { width_mode: StrokeWidthMode::CssPixels, ..Default::default() })?;
+        let _ = (hairline.is_fixed_width(), hairline.width_mode());
+        let mut session = session(&hairline)?;
+        let mut other = DrawingSession::new(options());
+        other.draw_circle(640.0, 360.0, 200.0, None, Some(Color::from_rgb(240, 180, 60)), true)?;
+        let layer = AnimationLayer::new(move |frame, scene| {
+            let (w, h) = (frame.info.width, frame.info.height);
+            session.set_time(frame.info.time);
+            let options = SessionRenderOptions { pixel_ratio: frame.info.pixel_ratio, cull: Some(RectangleF::new(0.0, 0.0, w as f32, h as f32)), ..Default::default() };
+            session.render_with(scene, w, h, &options);
+            let line_look = SessionRenderOptions { paint: SessionPaint::Line(LinePaint::new(hairline.clone(), Color::BLACK)), pixel_ratio: frame.info.pixel_ratio, ..Default::default() };
+            session.render_with(scene, w, h, &line_look);
+            SessionWipe::new(0.5, WipeEdge::Line { angle_degrees: 0.0 }, 48.0).render_sessions_culled(scene, w, h, (&session, &options), (&other, &options));
+            let _reports: Vec<String> = session.take_reports();
+        });
+        Ok(vec![RendererHandle::new(layer)])
+    }
+}
+// ---- ANI-A END ----
+
+// ---- ANI-B BEGIN: point reduction of a dense combined path, drawn small ----
+mod ani_b {
+    use codebrix_webgpu_animation::paths::{PathGeometry, PathStrokeStyle, PathStrokeStyleOptions};
+    use codebrix_webgpu_animation::shapes::PathShape;
+    use codebrix_webgpu_animation::{Color, DrawingSession, PointF};
+
+    /// A union of two circles reduced within half a unit, drawn into the session; its contours.
+    pub(super) fn reduced(session: &mut DrawingSession) -> Result<usize, String> {
+        let dense = PathGeometry::circle(PointF::new(0.0, 0.0), 400.0).union(&PathGeometry::circle(PointF::new(320.0, 0.0), 400.0), None)?;
+        let reduced: PathGeometry = dense.reduce_points(0.5);
+        let contours = reduced.contour_count();
+        session.draw_path(PathShape::with_style(reduced, PathStrokeStyle::new(2.0, PathStrokeStyleOptions::default())?, Some(Color::WHITE), None, None));
+        Ok(contours)
+    }
+}
+// ---- ANI-B END ----
+
+// ---- ANI-C BEGIN: a picked-colour stroke set whose strokes lean towards their own colour by
+// weights of their own (the pickup's own weight 1, so the strokes' weights apply as they are) ----
+mod ani_c {
+    use codebrix_webgpu_animation::images::ImageSource;
+    use codebrix_webgpu_animation::shapes::{BrushStrokesOptions, BrushStrokesShape};
+    use codebrix_webgpu_animation::strokes::{BrushStrokeRecord, BrushStrokeSet, StrokeColor, StrokeColorSource, StrokePickup};
+    use codebrix_webgpu_animation::{Color, DrawingSession, DrawingSessionOptions, PointF, RectangleF};
+
+    pub(super) fn session() -> Result<DrawingSession, String> {
+        let records = (0..300u32).map(|i| {
+            let mut r = BrushStrokeRecord::new(PointF::new(40.0 + (i % 30) as f32 * 40.0, 40.0 + (i / 30) as f32 * 60.0), 30.0, 9.0, (i * 37 % 180) as f32, Color::from_rgb(200, 80, 60));
+            r.seed = i;
+            r
+        });
+        let set = BrushStrokeSet::new(records.collect())?;
+        // Weights in the set's order, computed from each record (after any schedule).
+        let weights: Vec<f32> = set.records().iter().map(|r| if r.seed % 9 == 0 { 0.55 } else { 0.0 }).collect();
+        let set: BrushStrokeSet = set.with_own_weights(weights)?;
+        let _first: Option<f32> = set.own_weight(0);
+        let picture = ImageSource::from_rgba(&[220, 80, 60, 255, 60, 80, 220, 255, 240, 220, 90, 255, 40, 140, 70, 255], 2, 2)?;
+        let pickup = StrokePickup { own_weight: 1.0, ..StrokePickup::new(StrokeColorSource::Picture(picture), RectangleF::new(0.0, 0.0, 1280.0, 720.0)) };
+        let mut s = DrawingSession::new(DrawingSessionOptions { calibration_size: (1280, 720), layer_opacity: 255, ..Default::default() });
+        s.add_layer("Leaning", Color::WHITE);
+        s.draw_brush_strokes(BrushStrokesShape::new(set, BrushStrokesOptions::default())?.with_color(StrokeColor::Picked(pickup))?);
+        Ok(s)
+    }
+}
+// ---- ANI-C END ----
+
+// ---- GPU TIMING AND LIVE PICTURE BEGIN: a layer timed on the GPU drawing a live picture written
+// every frame, and an offscreen still timed the same way ----
+mod timing_and_live {
+    use codebrix_webgpu::{wgpu, GpuContext};
+    use codebrix_webgpu_animation::images::{ImageSampling, LivePicture};
+    use codebrix_webgpu_animation::rendering::{AnimationLayer, AnimationLayerControl, OffscreenRenderer, VectorScene};
+    use codebrix_webgpu_animation::shapes::{ImageShape, ImageShapeOptions};
+    use codebrix_webgpu_animation::{Color, DrawingSession, DrawingSessionOptions, Rectangle, RectangleF};
+
+    pub(super) fn layer() -> Result<(AnimationLayer, AnimationLayerControl, LivePicture), String> {
+        let live = LivePicture::new(64, 32)?;
+        live.write(&vec![255u8; 64 * 32 * 4])?;
+        let mut session = DrawingSession::new(DrawingSessionOptions::default());
+        session.add_layer("Live", Color::WHITE);
+        session.draw_shape(ImageShape::new(live.image_source(), RectangleF::new(20.0, 20.0, 256.0, 128.0), ImageShapeOptions { source_rectangle: None, sampling: ImageSampling::Nearest, tint: None })?);
+        // A clone is the same picture: the layer keeps it alive while it shows it.
+        let picture = live.clone();
+        let layer = AnimationLayer::new(move |frame, scene| {
+            let shade = (frame.info.time.fract() * 255.0) as u8;
+            let _ = picture.write_region(Rectangle::new(8, 8, 16, 16), &[shade, 64, 200, 255].repeat(16 * 16));
+            session.set_time(frame.info.time);
+            session.render(scene, frame.info.width, frame.info.height);
+        });
+        let control = layer.control();
+        control.set_gpu_timing(true);
+        let _: (bool, bool, Option<f64>) = (control.gpu_timing(), control.gpu_timing_supported(), control.stats().gpu_ms);
+        let _: (usize, usize) = (control.stats().live_picture_writes, control.stats().live_picture_write_bytes);
+        let _: (u32, u32, Vec<u8>) = (live.size().0, LivePicture::MAX_SIZE, live.to_rgba());
+        // ---- ANI-E: the geometry cache's budget, and internal targets sized to this small drawing ----
+        control.set_geometry_cache_budget(16 << 20);
+        let _budget: usize = control.geometry_cache_budget();
+        control.set_content_sized_targets(true);
+        let _sized: bool = control.content_sized_targets();
+        Ok((layer, control, live))
+    }
+
+    /// A still drawn into a texture of the application's own, timed on the GPU.
+    pub(super) fn timed_still(context: &GpuContext) -> Option<f64> {
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let texture = context.device().create_texture(&wgpu::TextureDescriptor {
+            label: Some("timed still"),
+            size: wgpu::Extent3d { width: 320, height: 180, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let scene = VectorScene::new();
+        let mut renderer = OffscreenRenderer::new(context, format);
+        renderer.set_gpu_timing(true);
+        let _ = (renderer.gpu_timing(), renderer.gpu_timing_supported());
+        // ---- ANI-E: the same two settings on the offscreen renderer ----
+        renderer.set_geometry_cache_budget(16 << 20);
+        let _budget: usize = renderer.geometry_cache_budget();
+        renderer.set_content_sized_targets(true);
+        let _sized: bool = renderer.content_sized_targets();
+        let mut encoder = context.device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("timed still") });
+        let stats = renderer.render(context, &mut encoder, &view, 320, 180, &scene);
+        context.queue().submit([encoder.finish()]);
+        // After the submit: the renderer may then map its results (natively after device.poll).
+        renderer.encoder_submitted();
+        stats.gpu_ms.or(renderer.gpu_ms())
+    }
+}
+// ---- GPU TIMING AND LIVE PICTURE END ----
+
 /// The timeline of the first layer, its playback following the frame's time.
 fn timeline() -> Result<PlaybackController, String> {
     let mut timeline = AnimationTimeline::new(8.0, 30.0)?;
@@ -850,6 +1096,27 @@ fn Scene(context: GpuContext) -> Element {
         // ---- WATER A2 BEGIN: the water layers (picture target first), after the other layers ----
         let live = live.into_iter().chain(water_a2::layers(&context).unwrap_or_default()).collect::<Vec<_>>();
         // ---- WATER A2 END ----
+        // ---- ANI-A BEGIN: culled, CSS-pixel, blended and timed layers, after the other layers ----
+        let live = live.into_iter().chain(ani_a::layers().unwrap_or_default()).collect::<Vec<_>>();
+        // ---- ANI-A END ----
+        // ---- ANI-B BEGIN: a reduced combined path, in a session of its own ----
+        let mut reduced_session = DrawingSession::new(DrawingSessionOptions::default());
+        reduced_session.add_layer("Reduced", Color::WHITE);
+        let _contours = ani_b::reduced(&mut reduced_session).ok();
+        let reduced = AnimationLayer::new(move |frame, scene| reduced_session.render(scene, frame.info.width, frame.info.height));
+        // ---- ANI-B END ----
+        // ---- ANI-C BEGIN: strokes leaning towards their own colour by weights of their own ----
+        let leaning_session = ani_c::session().ok();
+        let leaning = AnimationLayer::new(move |frame, scene| {
+            if let Some(session) = leaning_session.as_ref() {
+                session.render(scene, frame.info.width, frame.info.height);
+            }
+        });
+        let live = live.into_iter().chain([RendererHandle::new(reduced), RendererHandle::new(leaning)]).collect::<Vec<_>>();
+        // ---- ANI-C END ----
+        // ---- GPU TIMING AND LIVE PICTURE BEGIN: a timed layer drawing a live picture ----
+        let live = live.into_iter().chain(timing_and_live::layer().ok().map(|(layer, _control, _live)| RendererHandle::new(layer))).collect::<Vec<_>>();
+        // ---- GPU TIMING AND LIVE PICTURE END ----
         let control = direct.control();
         let stats = control.stats();
         let _ = (stats.record_ms, stats.build_ms, stats.encode_ms, stats.cpu_ms());
@@ -857,6 +1124,12 @@ fn Scene(context: GpuContext) -> Element {
         let _ = (uploads.image_uploads, uploads.image_upload_bytes, uploads.color_table_uploads, uploads.color_table_upload_bytes, uploads.unsupported);
         CanvasLayers::new(vec![RendererHandle::new(shapes), RendererHandle::new(direct), RendererHandle::new(looked), RendererHandle::new(painted), RendererHandle::new(stroked), RendererHandle::new(pooled)].into_iter().chain(live).collect())
     });
+    // ---- OFFSCREEN BEGIN: a still drawn without the canvas, once ----
+    use_hook(|| offscreen::still(&context).map(|stats| stats.draw_calls).ok());
+    // ---- OFFSCREEN END ----
+    // ---- GPU TIMING AND LIVE PICTURE BEGIN: an offscreen still timed on the GPU, once ----
+    use_hook(|| timing_and_live::timed_still(&context));
+    // ---- GPU TIMING AND LIVE PICTURE END ----
     rsx! {
         WebGpuCanvas { context: context.clone(), layers, clock, class: "canvas" }
     }

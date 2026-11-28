@@ -15,9 +15,10 @@
 // PICKED COLOUR (StrokeColor::Picked): the vertex shader samples the colour source K times along
 // the stroke's centre line (in the set's coordinates, after boil, flow and anchors), averages in
 // linear light weighted by alpha, applies the colour rules in Oklab (palette, broken colour) and
-// mixes with the record's own colour by the own weight. The CPU mirrors of this arithmetic are in
-// strokes/stroke_color_gpu.rs (keep them equal; they are tested against painting/color_rules.rs
-// and painting/color_mix.rs).
+// mixes with the record's own colour by the own weight (the draw's times the stroke's own: word
+// 13's top byte holds 255 minus its 8-bit weight, so 0 there - a set without own weights - is
+// weight 1 exactly). The CPU mirrors of this arithmetic are in strokes/stroke_color_gpu.rs (keep
+// them equal; they are tested against painting/color_rules.rs and painting/color_mix.rs).
 //
 // PROGRESS is exactly 1 from a stroke's end on (a comparison, not a division): the CPU knows
 // exactly which strokes the GPU draws whole, which the checkpoint cache relies on (a checkpoint
@@ -30,7 +31,8 @@
 // delay) / (1 - spread), 0, 1); at 0 it is exactly its first stroke, at 1 exactly its second;
 // between, morph_record interpolates (centre, sizes, the angle the shorter way using the stroke's
 // 180-degree symmetry with the bend flipped, the colour in Oklab; tip, seed and anchors switch at
-// halfway). A plain set binds its records as the targets too (never read).
+// halfway; the own weight linearly, a stroke painting off or on keeping its own). A plain set
+// binds its records as the targets too (never read).
 //
 // HEIGHT (a layer's SurfaceFinish): fs_stroke_height draws the same coverage into the layer's
 // R16Float height record, additively: tip height x coverage x load x opacity x the layer's
@@ -40,7 +42,7 @@ struct StrokeRecord {
     a: vec4<f32>,  // centre x, y, angle (radians), length
     b: vec4<f32>,  // width, bend, profile, load
     c: vec4<f32>,  // start, end, anchor blend, 0
-    d: vec4<u32>,  // rgba8, tip | flags << 16, anchor0 | anchor1 << 16, seed
+    d: vec4<u32>,  // rgba8, tip | flags << 16 | (255 - own weight) << 24, anchor0 | anchor1 << 16, seed
 };
 
 struct StrokeDraw {
@@ -224,11 +226,18 @@ fn source_texel(t: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(srgb_to_linear(c.rgb) * c.a, c.a);
 }
 
+// A stroke's own weight from its record's word 13 (strokes/stroke_gpu.rs own_weight_of_word): the
+// top byte is 255 minus the 8-bit weight; 255 is exactly 1 (and 0 exactly 0).
+fn stroke_own_weight(word: u32) -> f32 {
+    let q = 255u - (word >> 24u);
+    return select(f32(q) / 255.0, 1.0, q == 255u);
+}
+
 // The stroke's picked colour (straight linear rgb, and the source's mean alpha): K taps along
 // the centre line q(s) = m0 (centre + dir len s + nrm bow (4 s^2 - 1)) + m1 at s from -0.4 to
 // 0.4, through the place onto the source, averaged premultiplied; then the rules, then the mix
-// with the own colour in Oklab.
-fn picked_colour(own: vec3<f32>, center: vec2<f32>, dir: vec2<f32>, nrm: vec2<f32>, len: f32, bow: f32, m0: vec4<f32>, m1: vec4<f32>, stroke_seed: u32) -> vec4<f32> {
+// with the own colour in Oklab by the draw's own weight times the stroke's (`own_w`).
+fn picked_colour(own: vec3<f32>, center: vec2<f32>, dir: vec2<f32>, nrm: vec2<f32>, len: f32, bow: f32, m0: vec4<f32>, m1: vec4<f32>, stroke_seed: u32, own_w: f32) -> vec4<f32> {
     let taps = clamp(draw.pick.z, 1u, 5u);
     var sum = vec4<f32>(0.0);
     for (var k = 0u; k < taps; k++) {
@@ -248,7 +257,7 @@ fn picked_colour(own: vec3<f32>, center: vec2<f32>, dir: vec2<f32>, nrm: vec2<f3
     if ((draw.pick.x & (PICK_PALETTE | PICK_BROKEN)) != 0u) {
         rgb = colour_rules(rgb, stroke_seed);
     }
-    let w = draw.rules.x;
+    let w = draw.rules.x * own_w;
     if (w > 0.0) {
         rgb = clamp(oklab_to_linear(mix(linear_to_oklab(rgb), linear_to_oklab(own), w)), vec3<f32>(0.0), vec3<f32>(1.0));
     }
@@ -303,10 +312,11 @@ fn vs_stroke(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -
     // A transition: the pair at its own fraction (exactly its first stroke at 0, its second at 1).
     var painted = 1.0;
     var own = record_colour(r.d.x);
+    var own_w = stroke_own_weight(r.d.y);
     var reversed = false;
     if ((flags & STROKE_MORPH) != 0u) {
         let q = targets[ii];
-        let kind = q.d.y >> 16u;
+        let kind = (q.d.y >> 16u) & 0xFFu;
         let f = clamp((draw.p.z - draw.p.w * q.c.w) / max(1.0 - draw.p.w, 1e-6), 0.0, 1.0);
         if (kind == 1u) {
             painted = 1.0 - f;
@@ -316,11 +326,13 @@ fn vs_stroke(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -
             r = q;
             r.d.y = q.d.y & 0xFFFFu;
             own = record_colour(r.d.x);
+            own_w = stroke_own_weight(q.d.y);
         } else if (f > 0.0) {
             let ca = record_colour(r.d.x);
             let cb = record_colour(q.d.x);
             reversed = f >= 0.5 && shorter_turn(r.a.z, q.a.z).y > 0.5;
             own = vec4<f32>(clamp(oklab_to_linear(mix(linear_to_oklab(ca.rgb), linear_to_oklab(cb.rgb), f)), vec3<f32>(0.0), vec3<f32>(1.0)), mix(ca.a, cb.a, f));
+            own_w = mix(own_w, stroke_own_weight(q.d.y), f);
             r = morph_record(r, q, f);
         }
     }
@@ -392,12 +404,12 @@ fn vs_stroke(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -
     }
     let across = select(ext.x - 1.0 / nl, ext.y + 1.0 / nl, (vi & 1u) == 1u);
     let pos = cd + ud * s + nd * across;
-    out.position = vec4<f32>(pos.x / view.size.x * 2.0 - 1.0, 1.0 - pos.y / view.size.y * 2.0, 0.0, 1.0);
+    out.position = to_clip(pos);
     out.local = vec2<f32>(s, across);
     var rgb = own.rgb;
     var ca = own.a * alpha;
     if ((draw.pick.x & PICK_ON) != 0u) {
-        let picked = picked_colour(rgb, center, dir, nrm, len, bow, m0, m1, r.d.w);
+        let picked = picked_colour(rgb, center, dir, nrm, len, bow, m0, m1, r.d.w, own_w);
         rgb = picked.rgb;
         ca *= picked.a;
     }

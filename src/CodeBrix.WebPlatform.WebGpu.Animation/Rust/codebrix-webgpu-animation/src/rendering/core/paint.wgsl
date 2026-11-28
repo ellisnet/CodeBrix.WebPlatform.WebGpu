@@ -164,7 +164,7 @@ fn vs_particle(@builtin(vertex_index) index: u32, @location(0) center: vec2<f32>
     let c = corners[index] * 1.08;
     let p = center + axes.xy * c.x + axes.zw * c.y;
     var out: ParticleOut;
-    out.position = vec4<f32>(p.x / view.size.x * 2.0 - 1.0, 1.0 - p.y / view.size.y * 2.0, 0.0, 1.0);
+    out.position = to_clip(p);
     out.local = c;
     out.color = color;
     out.softness = soft.x;
@@ -288,7 +288,9 @@ fn paint_color(i: u32, xy: vec2<f32>) -> vec4<f32> {
     return premul_srgb_to_linear(ramp_at(p.info.z, t.x)) * p.extra.x;
 }
 
+// The paints are evaluated at the fragment's CANVAS position (the paint matrices are canvas
+// pixels to paint space).
 @fragment
 fn fs_paint(in: VsOut) -> @location(0) vec4<f32> {
-    return paint_color(in.paint, in.position.xy);
+    return paint_color(in.paint, canvas_xy(in.position.xy));
 }

@@ -18,13 +18,15 @@ use crate::rendering::VectorScene;
 /// At most this many picture averages are kept (the cache is emptied when it would grow past).
 const MAX_AVERAGES: usize = 512;
 
-/// How a session's content is recorded: its paint override, whether effects are drawn, and the
-/// drawing-units-to-canvas transform a fixed-width line style is expanded in.
+/// How a session's content is recorded: its paint override, whether effects are drawn, the
+/// drawing-units-to-canvas transform a fixed-width line style is expanded in, and the device
+/// pixels per CSS pixel a line style in CSS pixels is expanded at.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SceneLook {
     pub(crate) paint: SessionPaint,
     pub(crate) effects: bool,
     pub(crate) drawing: Affine,
+    pub(crate) pixel_ratio: f64,
 }
 
 /// True for a compose that uses what it draws as coverage (a mask) rather than as paint.
@@ -156,12 +158,14 @@ impl VectorScene {
         a
     }
 
-    /// The line drawing's stroke of a shape (in the element's space, or fixed in the drawing's).
-    fn record_line(&mut self, line: &LinePaint, drawing: Affine, transform: Affine, alpha: f32, shape: &impl Shape) {
+    /// The line drawing's stroke of a shape (in the element's space, fixed in the drawing's, or
+    /// in CSS pixels: `width x pixel_ratio` device pixels).
+    fn record_line(&mut self, line: &LinePaint, look: &SceneLook, transform: Affine, alpha: f32, shape: &impl Shape) {
         let brush = Brush::Solid(line.color.to_peniko(alpha));
         let stroke = line.stroke.to_kurbo();
         if line.stroke.is_fixed_width() {
-            self.record_stroke_fixed(&stroke, transform, drawing, &brush, None, shape);
+            let reference = if line.stroke.width_mode() == crate::paths::StrokeWidthMode::CssPixels { Affine::scale(look.pixel_ratio) } else { look.drawing };
+            self.record_stroke_fixed(&stroke, transform, reference, &brush, None, shape);
         } else {
             self.record_stroke(&stroke, transform, &brush, None, shape);
         }
@@ -179,7 +183,7 @@ impl VectorScene {
                 if let Some(paper) = line.fill {
                     self.record_fill(rule, transform, &Brush::Solid(paper.to_peniko(alpha)), None, shape);
                 }
-                self.record_line(line, look.drawing, transform, alpha, shape);
+                self.record_line(line, look, transform, alpha, shape);
             }
             SessionPaint::Flat => {
                 let brush = self.representative(brush);
@@ -200,7 +204,7 @@ impl VectorScene {
                     self.record_fill_cached(rule, element * local, &Brush::Solid(paper.to_peniko(alpha)), None, elements, key);
                 }
                 let outline = BezPath::from_vec(elements.iter().map(|e| local * *e).collect());
-                self.record_line(line, look.drawing, element, alpha, &outline);
+                self.record_line(line, look, element, alpha, &outline);
             }
             SessionPaint::Flat => {
                 let brush = self.representative(brush);
@@ -216,7 +220,7 @@ impl VectorScene {
         match (&look.paint, reference) {
             (SessionPaint::Line(line), _) => {
                 let alpha = brush_alpha(brush);
-                self.record_line(line, look.drawing, transform, alpha, shape);
+                self.record_line(line, look, transform, alpha, shape);
             }
             (_, Some(reference)) => self.record_stroke_fixed(style, transform, reference, brush, brush_transform, shape),
             (_, None) => self.record_stroke(style, transform, brush, brush_transform, shape),

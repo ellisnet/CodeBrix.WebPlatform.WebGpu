@@ -37,6 +37,11 @@ impl DragTracker {
         delta
     }
 
+    /// True while a pointer other than `id` is pressed (a second finger landing during a pinch).
+    pub(crate) fn others_pressed(&self, id: i32) -> bool {
+        self.pressed.iter().any(|(known, _, _)| *known != id)
+    }
+
     /// Pointer `id` went up or was cancelled.
     pub(crate) fn release(&mut self, id: i32) {
         self.pressed.retain(|(known, _, _)| *known != id);
@@ -87,5 +92,16 @@ mod tests {
         assert_eq!(drag.moved(2, 220.0, 101.0, true), (5.0, 1.0));
         drag.clear();
         assert_eq!(drag.moved(2, 230.0, 101.0, true), (0.0, 0.0));
+    }
+
+    #[test]
+    fn another_pressed_pointer_is_seen() {
+        let mut drag = DragTracker::default();
+        assert!(!drag.others_pressed(1));
+        drag.press(1, 0.0, 0.0);
+        assert!(!drag.others_pressed(1), "the pointer itself is no other");
+        assert!(drag.others_pressed(2));
+        drag.release(1);
+        assert!(!drag.others_pressed(2));
     }
 }

@@ -6,10 +6,10 @@
 //! drawn this frame: after its boil, flow and anchors) are mapped through `place` onto the source
 //! and sampled (bilinear, clamped to the source's edge), averaged in LINEAR light weighted by
 //! their alpha, then passed through the colour rules (palette, broken colour) and mixed with the
-//! record's own colour by `own_weight` in Oklab. The stroke's alpha is the record's times the
-//! source's mean alpha (mixed towards 1 by `own_weight`): strokes over an empty part of the
-//! source paint nothing. Every value is a function of the source as it is this frame and of the
-//! records: nothing reads a clock.
+//! record's own colour by `own_weight` (times the stroke's own weight, when its set has them) in
+//! Oklab. The stroke's alpha is the record's times the source's mean alpha (mixed towards 1 by
+//! that same weight): strokes over an empty part of the source paint nothing. Every value is a
+//! function of the source as it is this frame and of the records: nothing reads a clock.
 //!
 //! LIMITS: the mean of K point samples, NOT the exact area mean of
 //! [`DrawingOwnershipMap::get_mean_colors`](crate::painting::DrawingOwnershipMap::get_mean_colors)
@@ -47,7 +47,9 @@ pub struct StrokePickup {
     /// Samples along each stroke's centre line, averaged: 1 (the middle), 3 or 5 (from 40 % of
     /// the length before the middle to 40 % after it). 5.
     pub taps: u32,
-    /// 0 = the picked colour .. 1 = the record's own colour, mixed in Oklab. 0.
+    /// 0 = the picked colour .. 1 = the record's own colour, mixed in Oklab. 0. A set with own
+    /// weights per stroke ([`BrushStrokeSet::with_own_weights`](crate::strokes::BrushStrokeSet::with_own_weights))
+    /// scales it stroke by stroke: each stroke mixes by this times its own weight.
     pub own_weight: f32,
     /// A palette and broken colour applied to the picked colour (before the mix with the own
     /// colour) - the same rules as [`ColorRules::apply_float`] on the CPU. None.
